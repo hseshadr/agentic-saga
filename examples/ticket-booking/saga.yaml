@@ -1,0 +1,60 @@
+schema_version: "1.0"
+name: ticket_booking
+version: "1.0"
+objective: Book the requested itinerary or restore a verified state with no unintended booking.
+instructions:
+  - Explore authoritative itinerary availability and current provider evidence before acting.
+  - Choose one eligible tool at a time and reassess after every observed result.
+  - Treat holds as expiring external effects and verify their current status before relying on them.
+  - Compensate confirmed holds, payments, or tickets that must not remain after an abandoned goal.
+success_criteria:
+  - Exactly one acceptable ticket is issued and its payment is confirmed.
+  - Current invariant evidence proves the completed state.
+autonomy:
+  mode: guarded
+  instructions:
+    - Stay within the authorized fare and traveler constraints.
+    - Escalate rather than guessing when a provider outcome cannot be reconciled safely.
+budgets:
+  turn_limit: 18
+  tool_call_limit: 14
+  elapsed_ms_limit: 120000
+  token_limit: 10000
+tools:
+  catalog_sha256: "f05fcb81844ea3e7b351af79a0b15955292f2d200d998420d09c7f8842cc64f5"
+  allowed:
+    - charge_payment
+    - hold_itinerary
+    - issue_ticket
+    - refund_payment
+    - release_hold
+    - search_itineraries
+    - void_ticket
+checks:
+  policy:
+    - fare_within_limit
+    - traveler_authorized
+  success:
+    - payment_captured
+    - ticket_issued
+  compensation:
+    - hold_released
+    - payment_refunded
+  clean_abort:
+    - no_active_booking
+escalation:
+  conditions:
+    - A hold, charge, refund, or ticket remains unknown after safe reconciliation is exhausted.
+  instructions:
+    - Present the unresolved provider evidence and the next required operator decision.
+example_paths:
+  - name: itinerary booked normally
+    kind: happy_path
+    narrative:
+      - Current evidence can support a hold, payment, and ticket proposal for an acceptable option.
+      - Finish only after the ticket and payment checks pass against authoritative state.
+  - name: ticket issue fails after payment
+    kind: compensation_path
+    narrative:
+      - A confirmed payment and hold require repair if no acceptable ticket can be issued.
+      - Refund confirmed payment, release the hold, and prove no active booking remains.

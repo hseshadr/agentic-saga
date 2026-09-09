@@ -1,0 +1,26 @@
+name: Security audit
+
+on:
+  schedule:
+    - cron: "17 8 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read # Reusable checks read pull-request metadata.
+
+jobs:
+  history:
+    name: Full-history secret scan
+    uses: hseshadr/ci/.github/workflows/secret-scan.yml@8166345c9355dde54c12fa95d0457c4ea97d3e64 # ci-v3.3.0
+    with:
+      full-history: true
+
+  dependencies:
+    name: Locked dependency audit
+    uses: hseshadr/ci/.github/workflows/security-audit.yml@8166345c9355dde54c12fa95d0457c4ea97d3e64 # ci-v3.3.0
+    with:
+      run-python-audit: true
+      run-pnpm-audit: true
+      frontend-working-directory: web/flight-recorder
+      node-version: "24"

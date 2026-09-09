@@ -1,0 +1,173 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "agentic-saga"
+dynamic = ["version"]
+description = "Smart agent orchestration with deterministic Saga safety."
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+license = "Apache-2.0"
+keywords = ["agents", "saga-pattern", "distributed-transactions", "orchestration", "llm"]
+authors = [{ name = "Harish Seshadri" }]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Operating System :: POSIX",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Typing :: Typed",
+]
+dependencies = ["pydantic>=2.10,<3", "ruamel.yaml>=0.19,<0.20"]
+
+[project.urls]
+Homepage = "https://github.com/hseshadr/agentic-saga"
+Documentation = "https://github.com/hseshadr/agentic-saga#readme"
+Repository = "https://github.com/hseshadr/agentic-saga"
+Issues = "https://github.com/hseshadr/agentic-saga/issues"
+
+[project.optional-dependencies]
+agent = ["deepagents>=0.7.13,<0.8", "langchain-openrouter>=0.2.8,<0.3"]
+
+[project.scripts]
+agentic-saga = "agentic_saga.cli.main:entrypoint"
+
+[dependency-groups]
+dev = [
+  "deepagents>=0.7.13,<0.8",
+  "hatchling==1.27.0",
+  "hypothesis>=6.130,<7",
+  "langchain-openrouter>=0.2.8,<0.3",
+  "mutmut>=3.6,<4",
+  "mypy>=1.17,<2",
+  "pip>=25,<27",
+  "poethepoet>=0.37,<1",
+  "pytest-socket>=0.8.1,<1",
+  "pytest>=9,<10",
+  "pytest-asyncio>=1.2,<2",
+  "pytest-bdd>=8.1,<9",
+  "pytest-cov>=6,<8",
+  "pytest-xdist>=3.8,<4",
+  "ruff>=0.12,<1",
+  "xenon>=0.9.3,<1",
+]
+
+[tool.hatch.version]
+path = "src/agentic_saga/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agentic_saga"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"examples/ecommerce/flight-recorder/traces" = "agentic_saga/demo/traces"
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/CHANGELOG.md",
+  "/LICENSE",
+  "/README.md",
+  "/QUICKSTART.md",
+  "/SECURITY.md",
+  "/PROVENANCE.md",
+  "/docs/agent-adapter.md",
+  "/docs/architecture.html",
+  "/docs/context-manifest.md",
+  "/docs/flight-recorder.md",
+  "/docs/kernel-safety-contract.md",
+  "/docs/operations.md",
+  "/examples/ecommerce",
+  "/examples/ticket-booking/saga.yaml",
+  "/pyproject.toml",
+  "/src/agentic_saga",
+  "/src/agentic_saga/demo/static",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "C901", "B", "UP", "SIM", "N", "RUF", "ASYNC", "S", "PL"]
+ignore = ["N818", "RUF036"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 5
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["PLR2004", "S101", "S603", "S607"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers --disable-socket --allow-unix-socket --cov-report=json:.coverage.json"
+asyncio_mode = "strict"
+filterwarnings = [
+  "error::ResourceWarning",
+  "error::pytest.PytestUnraisableExceptionWarning",
+]
+pythonpath = ["."]
+markers = [
+  "bdd: executable product behavior",
+  "live_model: requires network access and an OpenRouter API key",
+  "network: requires network access and an explicit opt-in",
+  "offline: requires no network access or credentials",
+]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["agentic_saga"]
+
+[tool.mutmut]
+source_paths = ["src/agentic_saga"]
+only_mutate = [
+  "src/agentic_saga/kernel/identity.py",
+  "src/agentic_saga/kernel/invariants.py",
+  "src/agentic_saga/kernel/policy.py",
+  "src/agentic_saga/kernel/reducer.py",
+  "src/agentic_saga/kernel/runtime.py",
+  "src/agentic_saga/kernel/compensation.py",
+  "src/agentic_saga/execution/dispatcher.py",
+  "src/agentic_saga/execution/reconciliation.py",
+  "src/agentic_saga/execution/runtime.py",
+  "src/agentic_saga/execution/unwind.py",
+  "src/agentic_saga/contracts/redaction.py",
+  "src/agentic_saga/storage/sqlite.py",
+]
+pytest_add_cli_args_test_selection = [
+  "tests/unit/kernel",
+  "tests/unit/execution",
+  "tests/unit/evidence/test_redaction.py",
+  "tests/integration/kernel",
+  "tests/integration/execution",
+  "tests/integration/storage",
+  "tests/crash",
+  "tests/concurrency",
+  "tests/property",
+]
+mutate_only_covered_lines = true
+timeout_multiplier = 4.0
+timeout_constant = 1.0
+use_setproctitle = false
+
+[tool.poe.tasks]
+lint-check = "ruff check src tests examples scripts"
+format-check = "ruff format --check src tests examples scripts"
+typecheck = "mypy --strict src tests examples"
+typecheck-release = { cmd = "mypy --strict --explicit-package-bases scripts/measure_release.py scripts/release_contract.py scripts/release_runner.py", env = { MYPYPATH = "src" } }
+complexity = "xenon --max-absolute A --max-modules A --max-average A src examples scripts/measure_release.py scripts/release_contract.py scripts/release_runner.py"
+test = "pytest -m 'not live_model and not network' --cov=src/agentic_saga --cov-branch --cov-fail-under=90"
+core-coverage = "python -m scripts.release_runner --check-python-coverage .coverage.json"
+release-script-test = { cmd = "pytest -o addopts='' --strict-config --strict-markers --disable-socket --allow-unix-socket tests/test_measure_release.py tests/test_release_measurement_contract.py --cov=scripts.measure_release --cov=scripts.release_contract --cov=scripts.release_runner --cov-branch --cov-report=json:.coverage-release-scripts.json --cov-fail-under=90", env = { COVERAGE_FILE = ".coverage-release-scripts" } }
+release-script-coverage = "python -m scripts.release_runner --check-release-coverage .coverage-release-scripts.json"
+test-network = "pytest -m 'network' --force-enable-socket"
+mutation = "python scripts/run_kernel_mutation_gate.py"
+gate = ["lint-check", "format-check", "typecheck", "typecheck-release", "complexity", "test", "core-coverage", "release-script-test", "release-script-coverage"]
+artifacts = "bash scripts/build_release_artifacts.sh dist/release"
+release-candidate = "bash scripts/verify_release_candidate.sh dist/release"
+
+[tool.poe.tasks.lint]
+shell = "ruff check --fix . && ruff format ."

@@ -4,15 +4,31 @@
 
 **Goal:** Build the deterministic, crash-recoverable Saga kernel that gates typed side effects, records intent before effect, reconciles ambiguity, fences concurrent workers, compensates verified effects, and exports trustworthy run evidence.
 
-**Architecture:** Keep all safety decisions in pure contracts, reducers, policies, and invariant gates; keep SQLite as the single-host durable system of record; and isolate network/tool I/O behind a fenced dispatcher. The ledger is append-only and authoritative, the projection is rebuildable, every external delivery reuses a stable logical operation ID, and ambiguous outcomes remain nonterminal until reconciled or explicitly escalated.
+**Architecture:** Keep all safety decisions in pure contracts, reducers, policies, and invariant gates; keep SQLite as the single-host durable system of record; and route network/tool I/O through a fenced dispatcher. The ledger is append-only and authoritative, the projection is rebuildable, every external delivery reuses a stable logical operation ID, and ambiguous outcomes remain nonterminal until reconciled or explicitly escalated. Installed driver/adapter implementations are trusted, cancellation-cooperative application code invoked in process; their inputs and outputs remain untrusted.
 
 **Tech Stack:** Python 3.12+, Pydantic v2, standard-library `sqlite3`, `asyncio`, pytest, pytest-asyncio, Hypothesis, coverage.py, mutmut, Ruff, mypy, uv, hatchling
 
 **Spec:** `docs/superpowers/specs/2026-09-06-agentic-saga-design.md`
 
+> **Historical plan and supersession notice (2026-09-08):** This file records the implementation
+> path and original file map; it is not the current public API or operating contract. The original
+> draft included a fifth synthetic monetary budget and compatibility facades that were later
+> rejected. Shipped v0.1 has only `turn_limit`, `tool_call_limit`, `token_limit`, and
+> `elapsed_ms_limit`; token/time are deterministic per-turn maximum-output and agent-call-deadline
+> allocations, not actual usage or spend. There is no monetary meter or provider spend cap. Current
+> canonical homes and security boundaries are documented in
+> `docs/kernel-safety-contract.md` and `docs/operations.md`; those documents and source code
+> supersede paths, examples, test names, and status checkboxes below.
+
 ## Global Constraints
 
 - Core runtime targets Python 3.12+ and depends on Pydantic plus the standard library; LangGraph, Deep Agents, and provider packages must not be imported by core modules.
+- V0.1 does not sandbox installed Python plugins. Hostile or native integrations require an
+  application-owned process, container, or service boundary outside the core library.
+- Keep the kernel generic, lean, and composable: core owns only irreducible Saga semantics through
+  small typed interfaces. Ecommerce remains a separate sample workflow, and framework/provider
+  integrations stay outside core. Prefer maintained libraries and standard Python facilities over
+  custom infrastructure or framework duplication.
 - SQLite is the v0.1 single-host reference backend and must not be described as highly available or universally production-ready.
 - Use strict Pydantic models with `extra="forbid"`; free-form dictionaries, `TypedDict`, and `dict[str, Any]` are forbidden at safety boundaries.
 - Generate logical operation IDs inside the kernel from Saga ID, step instance, direction, and semantic generation; delivery attempts never alter the business idempotency key.
@@ -25,7 +41,8 @@
 - Ordinary ledger payloads must be redacted; secrets, raw payment data, and private chain-of-thought are never stored.
 - All clocks, ID sources, and failpoints used by safety-critical code are injectable and deterministic in tests.
 - Required offline gates run with network disabled and no model credentials.
-- Kernel, policy, state, and invariant modules require at least 90% branch coverage and at least an 85% mutation score.
+- Kernel, policy, state, and invariant modules require at least 90% branch coverage; a bounded,
+  explicitly named safety-critical function set requires at least an 85% mutation score.
 - Use `uv` for contributor commands and hatchling for packaging; do not publish to PyPI or any registry.
 - Follow the repository Python quality contract: typed boundaries, functions no longer than 15 lines, Radon Grade A, Ruff, strict mypy, and no hidden legacy exemptions.
 
@@ -516,7 +533,11 @@ Expected: collection fails because `PolicyEngine` is not defined.
 
 - [ ] **Step 3: Implement ordered fail-closed policy checks**
 
-`PolicyEngine.authorize` must check, in this order: Saga is mutable; proposal sequence is current; tool is registered; raw arguments validate into the tool-specific strict model; tenant/resource/currency/amount selectors pass; no conflicting unknown operation exists; no duplicate semantic effect exists; approval requirements pass; and turn/tool/time/token/cost budgets remain. Return a reason code and redacted explanation for every rejection.
+`PolicyEngine.authorize` must check, in this order: Saga is mutable; proposal sequence is current;
+tool is registered; raw arguments validate into the tool-specific strict model; no conflicting
+unknown or in-flight operation exists; no duplicate semantic effect exists; approval requirements
+pass; and turn/tool/output-token/agent-call-time allocations remain. Return a reason code and redacted explanation
+for every rejection.
 
 ```python
 class PolicyDecision(BaseModel):
@@ -527,7 +548,10 @@ class PolicyDecision(BaseModel):
     authorized_call: AuthorizedToolCall[BaseModel] | None
 ```
 
-Keep project-specific business predicates injectable as `PolicyRule` callables. Tool output is data in `PolicyContext`; it never adds capabilities or approval.
+Task 18 supersedes the original domain callback slots. Current domain constraints belong in strict
+tool schemas and adapters; the planned manifest integration may register named application policy
+checks outside the generic kernel. Tool output is data in `PolicyContext`; it never adds
+capabilities or approval.
 
 - [ ] **Step 4: Write and implement fresh invariant gating**
 
@@ -583,7 +607,9 @@ git commit -m "feat(kernel): enforce policy and terminal invariants"
 - [ ] **Step 1: Write the atomic intent/outbox/projection integration test**
 
 ```python
-def test_transition_atomically_appends_event_projection_and_outbox(store: SQLiteKernelStore) -> None:
+def test_transition_atomically_appends_event_projection_and_outbox(
+    store: SQLiteKernelStore,
+) -> None:
     snapshot = store.create_saga(saga_created(seq=1))
     batch = intent_batch(snapshot, effect_intent(seq=2), outbox_command())
     updated = store.commit_transition(batch)
@@ -829,13 +855,17 @@ Split each numbered responsibility into a typed private function no longer than 
 - [ ] **Step 4: Implement terminal assignment through fresh authoritative evidence**
 
 ```python
-def test_finish_rechecks_authoritative_invariants_at_current_sequence(kernel, evidence_provider) -> None:
+def test_finish_rechecks_authoritative_invariants_at_current_sequence(
+    kernel, evidence_provider
+) -> None:
     evidence_provider.return_passing(evaluated_at_seq=kernel.snapshot.seq)
     result = kernel.assign_terminal(SAGA_ID, SagaStatus.SUCCEEDED_VERIFIED, current_lease())
     assert result.accepted is True
 
 
-def test_finish_with_stale_or_failing_proof_creates_no_terminal_event(kernel, evidence_provider) -> None:
+def test_finish_with_stale_or_failing_proof_creates_no_terminal_event(
+    kernel, evidence_provider
+) -> None:
     evidence_provider.return_failing(evaluated_at_seq=kernel.snapshot.seq - 1)
     result = kernel.assign_terminal(SAGA_ID, SagaStatus.SUCCEEDED_VERIFIED, current_lease())
     assert result.accepted is False
@@ -920,6 +950,11 @@ async def _call_effect(
 ```
 
 Keep cancellation before adapter entry safe to release/requeue. Once adapter entry occurs, cancellation must persist unknown outcome under `asyncio.shield` before propagating.
+
+V0.1 invokes the registered trusted adapter in process under a bounded async timeout. Adapters must
+be cancellation-cooperative. A timeout or cancellation after durable dispatch is still ambiguous
+and records `OutcomeUnknown`; it never licenses a blind retry. Deliberately hostile or native code
+requires an application-owned external isolation boundary and is outside this library contract.
 
 Create the initial test support at this point, rather than relying on a later task. `DurableFakeTool`
 uses a SQLite file separate from the Saga ledger, uniquely stores `(tool_name, operation_id)`, and
@@ -1144,7 +1179,9 @@ def test_safe_confirmed_effects_choose_compensation(trigger, expected) -> None:
 
 
 def test_unknown_effect_chooses_reconciliation_not_compensation() -> None:
-    decision = EmergencyUnwinder().plan(snapshot_with_unknown_operation(), registry(), UnwindTrigger.BUDGET_EXHAUSTED)
+    decision = EmergencyUnwinder().plan(
+        snapshot_with_unknown_operation(), registry(), UnwindTrigger.BUDGET_EXHAUSTED
+    )
     assert decision.action == "reconcile"
 ```
 
@@ -1302,7 +1339,7 @@ class AgentDriver(Protocol):
         self,
         observation: SagaObservation,
         available_tools: Sequence[ToolDescriptor],
-    ) -> ToolCall | Finish | Escalate: ...
+    ) -> ToolCall | Finish | BeginCompensation | Escalate: ...
 
 
 class SagaRuntime:
@@ -1344,6 +1381,12 @@ human-required reason; it never declares a model-selected terminal outcome.
 input schema, reversibility, and currently relevant policy constraints. It never contains adapter
 objects, database handles, credentials, idempotency keys, or tools currently ineligible by policy.
 
+`SagaRuntime` accepts a trusted in-process `AgentDriver` implementation. Calls run under bounded
+async timeouts and drivers must cooperate with cancellation. The durable turn reservation remains
+authoritative: an exception, timeout, cancellation, or missing proposal never refunds the reserved
+budget and never permits replay of an unresolved turn. Hostile driver containment belongs to the
+embedding application, not the core runtime.
+
 - [ ] **Step 4: Implement one-proposal-per-turn orchestration without business branches**
 
 Write the red tests first:
@@ -1351,7 +1394,9 @@ Write the red tests first:
 ```python
 @pytest.mark.asyncio
 async def test_runtime_requests_one_action_after_each_observation(runtime, recording_agent) -> None:
-    result = await runtime.start(definition=generic_definition(), goal=generic_goal(), agent=recording_agent)
+    result = await runtime.start(
+        definition=generic_definition(), goal=generic_goal(), agent=recording_agent
+    )
     assert recording_agent.concurrent_calls == 0
     assert [item.saga_seq for item in recording_agent.observations] == sorted(
         item.saga_seq for item in recording_agent.observations
@@ -1391,8 +1436,12 @@ tool sequence. It may switch only on proposal kind, deterministic kernel state, 
 
 ```python
 @pytest.mark.asyncio
-@pytest.mark.parametrize("failure", ["agent_exception", "invalid_limit", "turn_limit", "cost_limit"])
-async def test_agent_failure_uses_deterministic_unwind_or_human(runtime_harness, failure: str) -> None:
+@pytest.mark.parametrize(
+    "failure", ["agent_exception", "invalid_limit", "turn_limit", "token_limit"]
+)
+async def test_agent_failure_uses_deterministic_unwind_or_human(
+    runtime_harness, failure: str
+) -> None:
     runtime_harness.inject_agent_failure(failure)
     result = await runtime_harness.run()
     assert result.state in {
@@ -1403,7 +1452,7 @@ async def test_agent_failure_uses_deterministic_unwind_or_human(runtime_harness,
     assert runtime_harness.unapproved_effect_count == 0
 ```
 
-Count turns, accepted/rejected tool calls, invalid outputs, elapsed time, tokens, and cost from
+Count turns, accepted/rejected tool calls, invalid outputs, agent-call time, and output tokens from
 durable events so restart cannot reset a budget. Agent exceptions, unavailable agent, malformed
 output, repeated invalid proposals, or any exhausted limit stop agent calls and invoke
 `EmergencyUnwinder`. Execute its deterministic reconciliation/compensation commands only while
@@ -1588,6 +1637,12 @@ class StorageContract:
 
 `ToolAdapterContract` verifies stable-key deduplication, same-key/different-command rejection, reconciliation of a lost response, fencing behavior when declared, explicit partial receipts, and idempotent compensation.
 
+The conformance suite treats installed adapters as trusted application code and provider data as
+untrusted. It covers malformed results, ordinary exceptions, cooperative timeouts, lost responses,
+privacy normalization, and recovery semantics. It does not claim containment of deliberately
+hostile Python/native implementations; applications needing that boundary must host the adapter in
+an external process, container, or service.
+
 - [ ] **Step 2: Run contract tests and observe missing harness failures**
 
 Run: `uv run pytest tests/contract -q`
@@ -1624,8 +1679,19 @@ git commit -m "test(kernel): add backend and adapter conformance suites"
 - Modify: `tests/support/kernel_harness.py`
 
 **Interfaces:**
-- Consumes: SQLite kernel, durable fake tool, dispatcher, reconciler, unwinder, and `AGENTIC_SAGA_FAILPOINT` test-only environment variable.
+- Consumes: SQLite kernel, durable fake tool, dispatcher, reconciler, unwinder, and
+  `AGENTIC_SAGA_FAILPOINT`, which the parent test sets and only the subprocess worker reads and
+  interprets.
 - Produces: a subprocess crash harness that terminates with `os._exit(91)` at named durability boundaries and returns only persisted evidence after restart.
+
+This task kills the whole application worker; it does not isolate trusted adapters. The environment
+variable is set by the parent harness, but only `tests/crash/worker.py` reads it or calls
+`os._exit`. Production objects accept only a typed
+failpoint dependency whose default implementation is a no-op. Checkpoints are injected at their
+actual durability owners: SQLite for transaction pre-commit, the kernel after intent commit, the
+dispatcher after dispatch/outcome commit, and the external durable fake after its effect commit.
+The reconciler and unwinder are exercised during fresh-process recovery but do not receive unused
+failpoint dependencies because none of the eight named checkpoints occurs inside them.
 
 - [ ] **Step 1: Write the parametrized crash matrix before adding failpoints**
 
@@ -1663,9 +1729,13 @@ Expected: tests fail because named failpoints are not yet wired to the worker/st
 
 - [ ] **Step 3: Add test-only failpoint injection without production branching**
 
-Define a `Failpoint` protocol injected into store, dispatcher, reconciler, and unwinder. Production uses `NoOpFailpoint`; the subprocess worker uses `ExitFailpoint.from_environment()` and calls `os._exit(91)` on an exact name. Do not call `os._exit` from library modules.
+Define a typed failpoint protocol and inject it only into components that own a named durability
+boundary. Production uses `NoOpFailpoint`; the subprocess worker uses
+`ExitFailpoint.from_environment()` and calls `os._exit(91)` on an exact name. Do not call
+`os._exit` or inspect the environment from library modules.
 
-Persist scenario configuration and external fake-service state before spawning. After death, open fresh processes and connections; never reuse in-memory objects from the killed run.
+Persist scenario configuration and initialize external fake-service state before spawning. After
+death, open fresh processes and connections; never reuse in-memory objects from the killed run.
 
 - [ ] **Step 4: Run crash recovery and SQLite integrity checks**
 
@@ -1717,7 +1787,10 @@ Expected: at least the stale provider-effect assertion fails until the fake prov
 
 - [ ] **Step 3: Complete downstream fence enforcement and stale-result reconciliation**
 
-The durable fake provider stores the highest accepted fence per resource and rejects lower fences before mutation. The dispatcher discards a stale local result for projection purposes but persists an audit event and schedules reconciliation because a nonconforming provider could still have changed externally.
+The durable fake provider stores the highest accepted fence per resource and rejects lower fences
+before mutation. A stale dispatcher discards its local result and cannot write after takeover. The
+current live dispatcher observes the prior durable dispatch, atomically records the unknown outcome,
+and schedules reconciliation because a nonconforming provider could still have changed externally.
 
 For a provider declaring `fencing_supported=False`, prove that the old and new deliveries share one operation ID and that compensation remains blocked until lookup reports a stable outcome.
 
@@ -1825,9 +1898,10 @@ git commit -m "test(kernel): model Saga safety properties with Hypothesis"
 ### Task 18: Full Kernel Quality, Mutation, and Claim Audit
 
 **Files:**
-- Modify: `pyproject.toml`
-- Modify: `uv.lock`
+- Modify: dependency/gate metadata, package facades, safety-critical runtime functions and their tests
+- Modify: `README.md`, `QUICKSTART.md`, `CHANGELOG.md`, `PROVENANCE.md`, and this design/plan
 - Create: `tests/integration/test_kernel_end_to_end.py`
+- Create: `scripts/run_kernel_mutation_gate.py`
 - Create: `docs/kernel-safety-contract.md`
 
 **Interfaces:**
@@ -1838,17 +1912,15 @@ git commit -m "test(kernel): model Saga safety properties with Hypothesis"
 
 ```python
 @pytest.mark.asyncio
-async def test_payment_then_inventory_failure_reaches_verified_compensation(tmp_path) -> None:
-    harness = KernelHarness.ecommerce(tmp_path)
-    harness.inventory.confirm_no_effect("out_of_stock")
-    await harness.run_scripted_actions(
-        ["create_order", "charge_payment", "reserve_inventory", "compensate"]
-    )
-    assert harness.snapshot.status is SagaStatus.COMPENSATED_VERIFIED
-    assert harness.orders.state == "cancelled"
-    assert harness.payments.state == "refunded"
-    assert harness.inventory.state == "not_reserved"
-    assert harness.store.rebuild_and_verify(harness.saga_id) == harness.snapshot
+async def test_generic_effect_compensates_and_reopens_with_verified_evidence(tmp_path) -> None:
+    harness = _initialize_harness(tmp_path)
+    harness.ensure_forward_intent()
+    await harness.settle(Direction.FORWARD)
+    harness.ensure_compensation_started()
+    harness.ensure_compensation_intent()
+    await harness.settle(Direction.COMPENSATION)
+    harness.finish(SagaStatus.COMPENSATED_VERIFIED)
+    _assert_reopened(harness, tmp_path / "backup.db")
 ```
 
 - [ ] **Step 2: Run the complete offline suite before changing thresholds**
@@ -1863,26 +1935,20 @@ Add mutmut to the development group and refresh the lock:
 
 Run: `uv add --dev "mutmut>=3.6,<4"`
 
-Add this exact current mutmut configuration; `source_paths` is the v3.6 name and must remain an array in TOML:
+The authoritative current configuration is `[tool.mutmut]` in `pyproject.toml`; repository tests
+lock its source files, covered-line behavior, test selection, timeout, and process settings.
+`scripts/run_kernel_mutation_gate.py` owns the exact selected function patterns across identity,
+authorization, terminal proof, effect outcomes, reconciliation, compensation, redaction, and
+SQLite authority. The plan deliberately does not duplicate that executable list.
 
-```toml
-[tool.mutmut]
-source_paths = ["src/agentic_saga/kernel"]
-pytest_add_cli_args_test_selection = [
-  "tests/unit/kernel",
-  "tests/property",
-  "tests/integration/test_kernel_end_to_end.py",
-]
-type_check_command = "mypy --strict src/agentic_saga/kernel"
-use_setproctitle = false
-```
-
-Configure coverage to require 90% branches for `src/agentic_saga/kernel`, including `policy.py`, `state.py`, and `invariants.py`. Exclude only abstract protocol bodies and defensive unreachable version guards, each with a line-specific rationale. The release gate derives the mutation percentage from mutmut's machine-readable badge output and fails below 85%:
+Configure coverage to require 90% branches for `src/agentic_saga/kernel`, including `policy.py`,
+`state.py`, and `invariants.py`. Exclude only abstract protocol bodies and defensive unreachable
+version guards, each with a line-specific rationale. The separate mutation gate reads mutmut's
+machine-readable CI statistics and fails below 85%, outside 300–500 executed mutants, or for any
+survivor, no-test, skipped, suspicious, timeout, interruption, or crash result:
 
 ```bash
-uv run mutmut run
-uv run mutmut badge --output /tmp/agentic-saga-mutation-score.json
-uv run python -c 'import json; from pathlib import Path; value=json.loads(Path("/tmp/agentic-saga-mutation-score.json").read_text())["message"]; score=float(value.removesuffix("%")); raise SystemExit(0 if score >= 85 else f"mutation score {score}% is below 85%")'
+uv run poe mutation
 ```
 
 Write `docs/kernel-safety-contract.md` with these exact claims:
@@ -1908,19 +1974,20 @@ uv run ruff check src tests
 uv run ruff format --check src tests
 uv run mypy src tests
 uv run pytest --cov=agentic_saga --cov-branch --cov-report=term-missing --cov-fail-under=90
-uv run mutmut run
-uv run mutmut badge --output /tmp/agentic-saga-mutation-score.json
-uv run python -c 'import json; from pathlib import Path; value=json.loads(Path("/tmp/agentic-saga-mutation-score.json").read_text())["message"]; score=float(value.removesuffix("%")); raise SystemExit(0 if score >= 85 else f"mutation score {score}% is below 85%")'
+uv run poe mutation
 uv run python -m compileall -q src
 ```
 
-Expected: lint, format, strict typing, compilation, and tests exit 0; branch coverage is at least 90% for the safety-critical modules; mutation score is at least 85%; no live-model suite runs.
+Expected: lint, format, strict typing, compilation, and tests exit 0; branch coverage is at least
+90%; the selected safety-critical mutation score is at least 85% with no blocking result; no
+live-model suite runs. This bounded score is not a whole-repository mutation claim.
 
 - [ ] **Step 5: Review the diff and commit the kernel gate**
 
 Run: `git diff --check && git status --short`
 
-Expected: no whitespace errors; only kernel/runtime/test files, `pyproject.toml`, and `docs/kernel-safety-contract.md` from this plan are changed.
+Expected: no whitespace errors; only the audited runtime/test, gate metadata, and claim-document
+files named above are changed.
 
 ```bash
 git add pyproject.toml uv.lock src/agentic_saga tests docs/kernel-safety-contract.md

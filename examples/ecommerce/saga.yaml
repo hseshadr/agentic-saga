@@ -1,0 +1,64 @@
+schema_version: "1.0"
+name: ecommerce_order
+version: "1.0"
+objective: Fulfill the requested order or restore a verified safe business state.
+instructions:
+  - Inspect authoritative order, inventory, payment, and fulfillment evidence before acting.
+  - Choose one eligible tool at a time and reassess after every observed result.
+  - Prefer a valid forward recovery when it can still satisfy the customer goal safely.
+  - Compensate every confirmed effect that must not remain when the goal cannot be completed.
+success_criteria:
+  - The order is fulfilled with one captured payment and the required inventory allocation.
+  - Current invariant evidence proves the completed state.
+autonomy:
+  mode: guarded
+  instructions:
+    - Act autonomously only while named policies authorize the proposal and evidence is current.
+    - Escalate rather than guessing when reconciliation cannot establish an external outcome.
+budgets:
+  turn_limit: 20
+  tool_call_limit: 16
+  elapsed_ms_limit: 120000
+  token_limit: 12000
+tools:
+  catalog_sha256: "8d9ed4f7a836eb3b68dfe28711fe73f5ea23ccf56d2c2a7ece52bbef85e02ce8"
+  allowed:
+    - cancel_fulfillment
+    - charge_payment
+    - check_inventory
+    - inspect_order
+    - refund_payment
+    - release_inventory
+    - reserve_inventory
+    - schedule_fulfillment
+checks:
+  policy:
+    - amount_within_limit
+    - customer_authorized
+  success:
+    - inventory_reserved
+    - order_fulfilled
+    - payment_captured
+  compensation:
+    - inventory_released
+    - order_cancelled
+    - payment_refunded
+  clean_abort:
+    - no_external_effects
+escalation:
+  conditions:
+    - An effect remains unknown after the registered adapter exhausts safe reconciliation.
+    - Required compensation cannot be proven or an approval-bound action lacks valid approval.
+  instructions:
+    - Summarize the unresolved decision and cite only durable redacted evidence for an operator.
+example_paths:
+  - name: inventory unavailable after payment
+    kind: compensation_path
+    narrative:
+      - A confirmed charge creates a compensation obligation if no safe inventory option remains.
+      - Refund confirmed payment and release any confirmed reservation, then prove the safe state.
+  - name: order fulfilled normally
+    kind: happy_path
+    narrative:
+      - Current evidence can support inventory reservation, payment, and fulfillment proposals.
+      - Finish only after all success checks pass against authoritative state.
