@@ -36,7 +36,7 @@ agentic-saga = "agentic_saga.cli.main:entrypoint"
 [dependency-groups]
 dev = [
   "deepagents>=0.7.13,<0.8",
-  "hatchling==1.27.0",
+  "hatchling==1.32.0",
   "hypothesis>=6.130,<7",
   "langchain-openrouter>=0.2.8,<0.3",
   "mutmut>=3.6,<4",
