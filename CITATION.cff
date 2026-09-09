@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+title: Agentic Saga
+type: software
+authors:
+  - family-names: Seshadri
+    given-names: Harish
+repository-code: https://github.com/hseshadr/agentic-saga
+license: Apache-2.0
+version: 0.1.0

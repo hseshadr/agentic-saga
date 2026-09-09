@@ -1,0 +1,51 @@
+{
+  "name": "@agentic-saga/flight-recorder",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@11.5.0",
+  "scripts": {
+    "assets:check": "node scripts/sync-package-assets.mjs --check",
+    "assets:sync": "node scripts/sync-package-assets.mjs --write",
+    "build": "tsc -b --pretty false && vite build",
+    "dev": "vite --host 127.0.0.1",
+    "format": "biome check --write .",
+    "gate": "pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm test:assets && pnpm build && pnpm assets:check && pnpm test:e2e",
+    "lint": "biome check .",
+    "test": "vitest run",
+    "test:assets": "node --test scripts/sync-package-assets.test.mjs",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test",
+    "test:e2e:packaged": "playwright test --config playwright.packaged.config.ts",
+    "test:watch": "vitest",
+    "typecheck": "tsc -b --pretty false"
+  },
+  "dependencies": {
+    "@noble/hashes": "^2.4.0",
+    "lossless-json": "^4.3.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
+    "@biomejs/biome": "^2.5.12",
+    "@playwright/test": "^1.63.0",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
+    "@types/node": "^26.4.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.1.1",
+    "@vitest/coverage-v8": "^5.0.0",
+    "axe-core": "^4.13.0",
+    "jsdom": "^30.0.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2",
+    "vitest": "^5.0.0"
+  }
+}

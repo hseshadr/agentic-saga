@@ -1,0 +1,752 @@
+import ast
+import importlib
+import inspect
+import json
+import pkgutil
+import tomllib
+from collections.abc import Iterator
+from pathlib import Path
+from types import ModuleType
+
+import agentic_saga
+from agentic_saga.agents import __all__ as agents_all
+from agentic_saga.agents import build_openrouter_driver
+from agentic_saga.contracts import __all__ as contracts_all
+from agentic_saga.demo import RecorderServer
+from agentic_saga.demo import __all__ as demo_all
+from agentic_saga.evidence import __all__ as evidence_all
+from agentic_saga.execution import ReconciliationResult
+from agentic_saga.execution import __all__ as execution_all
+from agentic_saga.kernel import __all__ as kernel_all
+from agentic_saga.storage import __all__ as storage_all
+
+ROOT = Path(__file__).parents[1]
+
+_ROOT_FACADE = (
+    "SagaContext",
+    "SagaDefinition",
+    "SagaGoal",
+    "SagaManifest",
+    "SagaRuntime",
+    "__version__",
+    "compose_runtime",
+    "load_saga_context",
+)
+_AGENTS_FACADE = ("DeepAgentsDriver", "OpenRouterSettings", "build_openrouter_driver")
+_DEMO_FACADE = ("RecorderServer", "materialize_recorder_site", "serve_recorder")
+
+_EXECUTION_FACADE = (
+    "DispatchResult",
+    "Dispatcher",
+    "EmergencyUnwinder",
+    "LeaseService",
+    "Reconciler",
+    "ReconciliationResult",
+    "SagaRuntime",
+    "compose_runtime",
+)
+_STORAGE_FACADE = ("SQLiteKernelStore",)
+
+
+def _agentic_saga_modules() -> Iterator[ModuleType]:
+    yield agentic_saga
+    for info in pkgutil.walk_packages(agentic_saga.__path__, "agentic_saga."):
+        yield importlib.import_module(info.name)
+
+
+def _supported_objects() -> Iterator[tuple[str, object]]:
+    seen: set[int] = set()
+    for module in _agentic_saga_modules():
+        for exported_name in getattr(module, "__all__", ()):
+            exported = getattr(module, exported_name)
+            if id(exported) in seen or not (
+                inspect.isclass(exported) or inspect.isfunction(exported)
+            ):
+                continue
+            seen.add(id(exported))
+            yield f"{exported.__module__}.{exported.__qualname__}", exported
+
+
+def _long_functions(path: Path) -> Iterator[str]:
+    tree = ast.parse(path.read_text())
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)) or not node.body:
+            continue
+        end_line = node.body[-1].end_lineno
+        if end_line is None:
+            continue
+        body_lines = end_line - node.body[0].lineno + 1
+        if body_lines > 15:
+            yield f"{path.relative_to(ROOT)}:{node.lineno} {node.name} ({body_lines})"
+
+
+def _direct_docstring(exported: object) -> str | None:
+    if inspect.isclass(exported):
+        value = vars(exported).get("__doc__")
+        return value if isinstance(value, str) else None
+    return exported.__doc__ if inspect.isfunction(exported) else None
+
+
+def _without_inline_comments(text: str) -> list[str]:
+    return [line.split("#", 1)[0].rstrip() for line in text.splitlines()]
+
+
+def _contains_sequence(text: str, expected: tuple[str, ...]) -> bool:
+    lines = _without_inline_comments(text)
+    width = len(expected)
+    for index in range(len(lines) - width + 1):
+        if lines[index : index + width] == list(expected):
+            return True
+    return False
+
+
+def _ecosystem_block(config: str, ecosystem: str) -> str:
+    lines = config.splitlines()
+    marker = f"  - package-ecosystem: {ecosystem}"
+    start = lines.index(marker)
+    end = next(
+        (
+            index
+            for index in range(start + 1, len(lines))
+            if lines[index].startswith("  - package-ecosystem:")
+        ),
+        len(lines),
+    )
+    return "\n".join(lines[start:end])
+
+
+def test_required_oss_files_exist() -> None:
+    required = {
+        "LICENSE",
+        "CODE_OF_CONDUCT.md",
+        "CONTRIBUTING.md",
+        "SECURITY.md",
+        "PROVENANCE.md",
+        "CHANGELOG.md",
+        "CITATION.cff",
+        "QUICKSTART.md",
+        "kernel-safety-contract.md",
+    }
+    root_files = {path.name for path in ROOT.iterdir()}
+    docs_files = {path.name for path in (ROOT / "docs").iterdir()}
+    assert required <= root_files | docs_files
+
+
+def test_primary_public_entrypoints_explain_their_contracts() -> None:
+    entrypoints = (
+        agentic_saga.SagaDefinition,
+        agentic_saga.SagaGoal,
+        build_openrouter_driver,
+        RecorderServer,
+        ReconciliationResult,
+    )
+    assert all(inspect.getdoc(entrypoint) for entrypoint in entrypoints)
+
+
+def test_every_supported_callable_and_class_explains_its_contract() -> None:
+    missing = tuple(
+        name for name, exported in _supported_objects() if not _direct_docstring(exported)
+    )
+    assert missing == ()
+
+
+def test_production_functions_honor_the_documented_lean_limit() -> None:
+    roots = (ROOT / "src", ROOT / "examples")
+    paths = (path for root in roots for path in root.rglob("*.py"))
+    violations = tuple(violation for path in paths for violation in _long_functions(path))
+    assert violations == ()
+
+
+def test_kernel_safety_contract_freezes_claims_and_assumptions() -> None:
+    contract = (ROOT / "docs" / "kernel-safety-contract.md").read_text()
+    required = (
+        "Provides: deterministic authorization",
+        "Does not provide: universal exactly-once effects",
+        "## SQLite and filesystem assumptions",
+        "## Executable evidence",
+        "trusted application code",
+        "external process, container, or service",
+        "fresh clean-current-commit report",
+        "surviving, untested, suspicious, timed-out, interrupted, or crashing selected mutant",
+        "whole-repository mutation score",
+        "`uv run poe mutation`",
+    )
+    assert all(value in contract for value in required)
+
+
+def test_reader_entry_points_link_the_safety_contract() -> None:
+    readme = (ROOT / "README.md").read_text()
+    quickstart = (ROOT / "QUICKSTART.md").read_text()
+
+    assert "[Kernel safety contract](docs/kernel-safety-contract.md)" in readme
+    assert "[kernel safety contract](docs/kernel-safety-contract.md)" in quickstart
+
+
+def test_mutation_gate_is_locked_and_machine_readable() -> None:
+    config = (ROOT / "pyproject.toml").read_text()
+    runner = ROOT / "scripts" / "run_kernel_mutation_gate.py"
+    required = (
+        '"mutmut>=3.6,<4"',
+        "[tool.mutmut]",
+        'source_paths = ["src/agentic_saga"]',
+        "mutate_only_covered_lines = true",
+        "timeout_multiplier = 4.0",
+        "timeout_constant = 1.0",
+        "use_setproctitle = false",
+    )
+    assert all(value in config for value in required)
+    assert 'mutation = "python scripts/run_kernel_mutation_gate.py"' in config
+    assert runner.exists()
+    assert "selected safety-critical mutation score" in runner.read_text()
+    assert "_MINIMUM_SCORE = 0.85" in runner.read_text()
+    assert "mutants/" in (ROOT / ".gitignore").read_text().splitlines()
+
+
+def test_gate_enforces_the_core_branch_coverage_floor() -> None:
+    config = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    tasks = config["tool"]["poe"]["tasks"]
+
+    assert tasks["core-coverage"] == (
+        "python -m scripts.release_runner --check-python-coverage .coverage.json"
+    )
+    assert tasks["release-script-coverage"] == (
+        "python -m scripts.release_runner --check-release-coverage .coverage-release-scripts.json"
+    )
+    assert tasks["release-script-test"]["env"] == {"COVERAGE_FILE": ".coverage-release-scripts"}
+    assert tasks["gate"] == [
+        "lint-check",
+        "format-check",
+        "typecheck",
+        "typecheck-release",
+        "complexity",
+        "test",
+        "core-coverage",
+        "release-script-test",
+        "release-script-coverage",
+    ]
+    assert tasks["artifacts"] == "bash scripts/build_release_artifacts.sh dist/release"
+    assert tasks["release-candidate"] == ("bash scripts/verify_release_candidate.sh dist/release")
+
+
+def test_agent_dependencies_are_optional_and_bdd_is_development_only() -> None:
+    config = (ROOT / "pyproject.toml").read_text()
+    expected = 'agent = ["deepagents>=0.7.13,<0.8", "langchain-openrouter>=0.2.8,<0.3"]'
+    assert expected in config
+    parsed = tomllib.loads(config)
+    assert set(parsed["project"]["optional-dependencies"]) == {"agent"}
+    assert "pytest-bdd>=8.1,<9" in parsed["dependency-groups"]["dev"]
+    assert "pytest-bdd" not in parsed["project"]["dependencies"]
+
+
+def test_python_support_matches_the_verified_matrix() -> None:
+    config = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    assert config["project"]["requires-python"] == ">=3.12,<3.14"
+
+
+def test_oss_metadata_and_contributor_routes_are_complete() -> None:
+    config = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    assert {"agents", "saga-pattern", "distributed-transactions"} <= set(config["keywords"])
+    assert {"Homepage", "Documentation", "Repository", "Issues"} <= set(config["urls"])
+    readme = (ROOT / "README.md").read_text()
+    contributing = (ROOT / "CONTRIBUTING.md").read_text()
+    assert "actions/workflows/ci.yml/badge.svg" in readme
+    for value in ("Python 3.12 and 3.13", "pnpm@11.5.0 gate", "SECURITY.md", "CODE_OF_CONDUCT.md"):
+        assert value in contributing
+
+
+def test_default_development_gate_installs_optional_agent_dependencies() -> None:
+    config = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    agent = set(config["project"]["optional-dependencies"]["agent"])
+    development = set(config["dependency-groups"]["dev"])
+    assert agent <= development
+
+
+def test_subpackage_facades_export_only_current_consumers() -> None:
+    assert tuple(agentic_saga.__all__) == _ROOT_FACADE
+    assert tuple(agents_all) == _AGENTS_FACADE
+    assert tuple(contracts_all) == ()
+    assert tuple(demo_all) == _DEMO_FACADE
+    assert tuple(evidence_all) == ()
+    assert tuple(kernel_all) == ()
+    assert tuple(execution_all) == _EXECUTION_FACADE
+    assert tuple(storage_all) == _STORAGE_FACADE
+
+
+def test_docs_name_shipped_ecommerce_and_source_recorder() -> None:
+    # Given the repository documentation.
+    readme = (ROOT / "README.md").read_text()
+    quickstart = (ROOT / "QUICKSTART.md").read_text()
+    agent_guide = (ROOT / "docs" / "agent-adapter.md").read_text()
+
+    # When the private-development status is inspected.
+    assert "Under private development" in readme
+    assert "uv run --no-dev python -m examples.ecommerce.run" in quickstart
+    assert "providers and agent-driven workflows remain planned" not in quickstart
+    assert "Flight Recorder" in quickstart
+    assert "`ToolCall`, `Finish`, `BeginCompensation`, or `Escalate`" in agent_guide
+    assert "`AgentPlanningError`" in agent_guide
+    assert "Planned: executable ecommerce providers" not in agent_guide
+
+
+def test_readme_source_map_names_every_public_package_role() -> None:
+    readme = (ROOT / "README.md").read_text()
+    assert "`src/agentic_saga/contracts/`" in readme
+    assert "`src/agentic_saga/cli/`" in readme
+
+
+def test_reader_quickstarts_skip_the_development_toolchain() -> None:
+    reader_guides = (
+        ROOT / "README.md",
+        ROOT / "QUICKSTART.md",
+        ROOT / "docs" / "flight-recorder.md",
+    )
+    for guide in reader_guides:
+        content = guide.read_text()
+        assert "uv run --no-dev agentic-saga demo" in content
+        assert "uv run agentic-saga demo" not in content
+
+
+def test_quickstart_runs_the_generic_kernel_proof() -> None:
+    quickstart = (ROOT / "QUICKSTART.md").read_text()
+    proof = ROOT / "tests" / "integration" / "test_kernel_end_to_end.py"
+    command = "uv run pytest tests/integration/test_kernel_end_to_end.py -q"
+    assert proof.exists()
+    assert command in quickstart
+    assert "generic durable effect" in quickstart
+
+
+def test_ecommerce_example_has_a_runnable_source_map() -> None:
+    guide = ROOT / "examples" / "ecommerce" / "README.md"
+    assert guide.exists()
+    text = guide.read_text()
+    required = (
+        "uv run --no-dev python -m examples.ecommerce.run",
+        "demo.py",
+        "domain.py",
+        "provider.py",
+        "saga.yaml",
+        "tests/bdd/features/ecommerce_saga.feature",
+        "The kernel owns",
+    )
+    assert all(value in text for value in required)
+
+
+def test_ecommerce_live_eval_walkthrough_is_copy_pasteable_and_honest() -> None:
+    guide = (ROOT / "examples" / "ecommerce" / "README.md").read_text()
+    required = (
+        "uv run python -m examples.ecommerce.eval --live",
+        "RUN_LIVE_MODEL_EVALS=1",
+        "OPENROUTER_API_KEY",
+        "costs money",
+        ".artifacts/eval/traces",
+        "provider failure",
+        "no universal exactly-once",
+        "alternate warehouse",
+        "tamper-evident integrity",
+        "not authenticity",
+    )
+    assert all(value in guide for value in required)
+
+
+def test_live_eval_plan_names_the_shipped_example_local_boundary() -> None:
+    plan = (ROOT / "docs/superpowers/plans/2026-09-06-ecommerce-agents-evals.md").read_text()
+    quickstart = (ROOT / "QUICKSTART.md").read_text()
+    design = (ROOT / "docs/superpowers/specs/2026-09-06-agentic-saga-design.md").read_text()
+    command = "uv run python -m examples.ecommerce.eval --live"
+    assert command in plan
+    assert command in quickstart
+    assert command in design
+    assert "provider transport retries are zero" in plan
+    assert "returned identity, usage, and cost remain `null`" in plan
+    assert "live ecommerce path remains planned" not in design
+
+
+def test_generic_kernel_proof_has_no_ecommerce_fixture_vocabulary() -> None:
+    proof = (ROOT / "tests" / "integration" / "test_kernel_end_to_end.py").read_text().lower()
+    harness = (ROOT / "tests" / "support" / "kernel_harness.py").read_text().lower()
+    domain_words = (
+        "ecommerce",
+        "payment",
+        "charge",
+        "refund",
+        "order_",
+        "amount_minor",
+        "currency",
+    )
+
+    assert all(word not in proof for word in domain_words)
+    assert all(word not in harness for word in domain_words)
+
+
+def test_design_and_changelog_separate_kernel_from_example_demo() -> None:
+    design = (ROOT / "docs/superpowers/specs/2026-09-06-agentic-saga-design.md").read_text()
+    changelog = (ROOT / "CHANGELOG.md").read_text()
+    assert "The shipped offline ecommerce reference" in design
+    assert "The shipped `pytest-bdd` feature" in design
+    assert "Generic durable Saga kernel" in changelog
+    assert "Executable offline ecommerce reference" in changelog
+    assert "24-case evaluation corpus" in changelog
+    assert "applications register their implementations outside" in design
+
+
+def test_design_and_plan_match_current_domain_neutral_policy_surface() -> None:
+    design = (ROOT / "docs/superpowers/specs/2026-09-06-agentic-saga-design.md").read_text()
+    plan = (ROOT / "docs/superpowers/plans/2026-09-06-kernel-runtime.md").read_text()
+
+    assert "- Resource and tenant selectors." not in design
+    assert "tenant/resource/currency/amount selectors pass" not in plan
+    assert "Task 18 supersedes the original domain callback slots" in plan
+
+
+def test_safety_contract_names_the_supported_facade() -> None:
+    contract = (ROOT / "docs" / "kernel-safety-contract.md").read_text()
+    required = (
+        "## Supported imports",
+        "The root package exports eight named symbols",
+        "The three `agentic_saga.demo` exports are supported",
+        "defining module",
+        "not compatibility promises",
+    )
+    assert all(value in contract for value in required)
+
+
+def test_context_manifest_names_the_shipped_ecommerce_assembly() -> None:
+    guide = (ROOT / "docs" / "context-manifest.md").read_text()
+    assert "executable ecommerce assembly is shipped" in guide
+    assert "integration is planned with the reference ecommerce application" not in guide
+    assert "uv run --no-dev python -m examples.ecommerce.run" in guide
+
+
+def test_security_policy_requires_private_reporting_and_acknowledgement() -> None:
+    # Given the security policy.
+    security = (ROOT / "SECURITY.md").read_text()
+
+    # When the reporting boundary is inspected.
+    required = ("0.1.x", "harish.seshadri@gmail.com", "public vulnerability issue", "72 hours")
+
+    # Then private reporting and the response target are explicit.
+    assert all(value in security for value in required)
+
+
+def test_security_policy_states_v01_safety_exclusions() -> None:
+    # Given the security policy.
+    security = (ROOT / "SECURITY.md").read_text()
+
+    # When the documented guarantees are inspected.
+    exclusions = (
+        "single-host reference backend",
+        "universal exactly-once delivery",
+        "arbitrary-tool safety",
+    )
+
+    # Then unsupported safety claims are explicitly excluded.
+    assert all(value in security for value in exclusions)
+
+
+def test_provenance_distinguishes_local_evidence_from_planned_controls() -> None:
+    # Given the provenance and release-status document.
+    provenance = (ROOT / "PROVENANCE.md").read_text()
+
+    # When local evidence and repository controls are inspected.
+    current = ("Current evidence", "local `uv run poe gate`", "No registry artifacts exist yet")
+    controls = (
+        "Repository controls",
+        "`.github/workflows/ci.yml`",
+        "`.github/workflows/security-audit.yml`",
+        "No hosted run is claimed",
+    )
+
+    # Then only local results are evidence and configured workflows are named without a run claim.
+    assert all(value in provenance for value in current)
+    assert all(value in provenance for value in controls)
+
+
+def test_provenance_requires_authorized_trusted_publication() -> None:
+    # Given the provenance and release-status document.
+    provenance = (ROOT / "PROVENANCE.md").read_text()
+
+    # When publication controls are inspected.
+    required = ("separate, fresh authorization", "trusted publishing", "does not publish")
+
+    # Then publication remains explicitly gated and out of scope.
+    assert all(value in provenance for value in required)
+
+
+def test_citation_contains_project_metadata() -> None:
+    # Given the citation metadata.
+    citation = (ROOT / "CITATION.cff").read_text()
+
+    # When required citation fields are inspected.
+    required = (
+        "cff-version: 1.2.0",
+        "title: Agentic Saga",
+        "type: software",
+        "family-names: Seshadri",
+        "given-names: Harish",
+        "repository-code: https://github.com/hseshadr/agentic-saga",
+        "license: Apache-2.0",
+        "version: 0.1.0",
+    )
+
+    # Then the project is citeable with the approved identity and version.
+    assert all(value in citation for value in required)
+
+
+def test_contributor_guide_contains_required_workflow() -> None:
+    # Given the contributor guide.
+    contributing = (ROOT / "CONTRIBUTING.md").read_text()
+
+    # When development and review entry points are inspected.
+    required = (
+        "## Development setup",
+        "uv sync --group dev",
+        "## Test-driven changes",
+        "## Local quality gate",
+        "uv run poe gate",
+        "## Live-model tests",
+        "## Pull requests",
+    )
+
+    # Then contributors can find the required local workflow.
+    assert all(value in contributing for value in required)
+
+
+def test_workflows_use_sha_pinned_shared_ci() -> None:
+    workflows = "\n".join(
+        path.read_text() for path in (ROOT / ".github" / "workflows").glob("*.yml")
+    )
+    shared_ref = "@8166345c9355dde54c12fa95d0457c4ea97d3e64"
+    callers = (
+        "python-gate.yml",
+        "secret-scan.yml",
+        "security-audit.yml",
+    )
+    assert all(
+        f"uses: hseshadr/ci/.github/workflows/{caller}{shared_ref}" in workflows
+        for caller in callers
+    )
+    assert workflows.count(shared_ref) == 7
+    assert "@main" not in workflows
+    assert "@ci-v" not in workflows.replace("# ci-v3.3.0", "")
+
+
+def test_security_schedule_requests_full_history() -> None:
+    workflow = (ROOT / ".github/workflows/security-audit.yml").read_text()
+    assert _contains_sequence(workflow, ("on:", "  schedule:", '    - cron: "17 8 * * 1"'))
+    assert _contains_sequence(workflow, ("    with:", "      full-history: true"))
+    assert _contains_sequence(workflow, ("    with:", "      run-python-audit: true"))
+
+
+def test_ci_triggers_main_push_and_pull_request() -> None:
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+    assert _contains_sequence(workflow, ("on:", "  push:", "    branches: [main]"))
+    assert _contains_sequence(workflow, ("  pull_request:",))
+
+
+def test_workflows_grant_read_only_permissions() -> None:
+    for filename in ("ci.yml", "security-audit.yml"):
+        workflow = (ROOT / ".github/workflows" / filename).read_text()
+        permissions = workflow.split("permissions:", 1)[1].split("\n\n", 1)[0]
+        assert _contains_sequence(permissions, ("  contents: read", "  pull-requests: read"))
+        assert "write" not in permissions
+
+
+def test_ci_python_gate_uses_the_supported_locked_matrix() -> None:
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+    expected = (
+        "    strategy:",
+        "      fail-fast: false",
+        "      matrix:",
+        '        python-version: ["3.12", "3.13"]',
+    )
+    assert _contains_sequence(workflow, expected)
+    assert "      python-version: ${{ matrix.python-version }}" in workflow
+    assert '      sync-args: "--frozen --group dev"' in workflow
+
+
+def test_python_tooling_targets_the_supported_312_floor() -> None:
+    config = tomllib.loads((ROOT / "pyproject.toml").read_text())
+
+    assert config["tool"]["ruff"]["target-version"] == "py312"
+    assert config["tool"]["mypy"]["python_version"] == "3.12"
+    release_typecheck = config["tool"]["poe"]["tasks"]["typecheck-release"]
+    assert release_typecheck == {
+        "cmd": (
+            "mypy --strict --explicit-package-bases scripts/measure_release.py "
+            "scripts/release_contract.py scripts/release_runner.py"
+        ),
+        "env": {"MYPYPATH": "src"},
+    }
+
+
+def test_frontend_ci_uses_the_exact_frozen_toolchain() -> None:
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    audit = (ROOT / ".github" / "workflows" / "security-audit.yml").read_text()
+    required = (
+        "working-directory: web/flight-recorder",
+        "package-json-file: web/flight-recorder/package.json",
+        "cache-dependency-path: web/flight-recorder/pnpm-lock.yaml",
+        'node-version: "24"',
+        'install-args: "--frozen-lockfile"',
+        "run: pnpm exec playwright install --with-deps chromium",
+        "run: pnpm gate",
+    )
+    assert all(value in ci for value in required)
+    assert "run-pnpm-audit: true" in audit
+    assert "frontend-working-directory: web/flight-recorder" in audit
+    assert "secrets: inherit" not in ci
+
+
+def test_ci_runs_the_packaged_browser_and_offline_release_measurement() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    shared_ref = "@8166345c9355dde54c12fa95d0457c4ea97d3e64"
+    packaged = workflow.split("  packaged-demo:", 1)[1].split("\n  secrets:", 1)[0]
+
+    assert "  packaged-demo:" in workflow
+    assert _contains_sequence(
+        packaged,
+        (
+            "    strategy:",
+            "      fail-fast: false",
+            "      matrix:",
+            '        python-version: ["3.12", "3.13"]',
+        ),
+    )
+    assert "          python-version: ${{ matrix.python-version }}" in packaged
+    assert "    timeout-minutes: 30" in packaged
+    for action in ("setup-python-uv", "setup-pnpm"):
+        assert f"uses: hseshadr/ci/.github/actions/{action}{shared_ref}" in workflow
+    assert "hseshadr/ci/.github/actions/setup-playwright" not in workflow
+    assert packaged.count("pnpm exec playwright install --with-deps chromium") == 1
+    setup_pnpm = packaged.split("actions/setup-pnpm", 1)[1].split("      - uses:", 1)[0]
+    assert '          node-version: "24"' in setup_pnpm
+    assert '          install-args: "--frozen-lockfile"' in setup_pnpm
+    required_commands = (
+        "uv run poe artifacts",
+        "uv venv --offline --no-python-downloads --python "
+        "${{ matrix.python-version }} .venv-package",
+        "uv pip install --offline --no-python-downloads --no-index "
+        "--find-links dist/release/wheelhouse --python .venv-package/bin/python "
+        "--require-hashes -r dist/release/runtime-requirements.txt",
+        "uv pip install --offline --no-python-downloads --python "
+        ".venv-package/bin/python --no-deps dist/release/*.whl",
+        "uv pip check --offline --no-python-downloads --python .venv-package/bin/python",
+    )
+    assert all(command in packaged for command in required_commands)
+    assert '          UV_OFFLINE: "1"' in packaged
+    assert "          UV_PYTHON_DOWNLOADS: never" in packaged
+    browser = packaged.split("      - name: Exercise", 1)[1].split("      - name: Enforce", 1)[0]
+    measurement = packaged.split("      - name: Enforce", 1)[1]
+    assert '          npm_config_offline: "true"' in browser
+    assert '          UV_OFFLINE: "1"' in measurement
+    assert "          UV_PYTHON_DOWNLOADS: never" in measurement
+    assert '          npm_config_offline: "true"' in measurement
+    assert "pnpm test:e2e:packaged" in workflow
+    assert "uv run python scripts/measure_release.py" in workflow
+
+
+def test_flight_recorder_pins_its_package_manager_and_lockfile() -> None:
+    package = json.loads((ROOT / "web" / "flight-recorder" / "package.json").read_text())
+    assert package["packageManager"] == "pnpm@11.5.0"
+    assert (ROOT / "web" / "flight-recorder" / "pnpm-lock.yaml").is_file()
+
+
+def test_frontend_gate_runs_the_native_asset_safety_suite() -> None:
+    recorder = ROOT / "web" / "flight-recorder"
+    package = json.loads((recorder / "package.json").read_text())
+
+    assert package["scripts"]["test:assets"] == "node --test scripts/sync-package-assets.test.mjs"
+    assert "pnpm test:assets" in package["scripts"]["gate"]
+    assert (recorder / "scripts" / "sync-package-assets.test.mjs").is_file()
+
+
+def test_flight_recorder_defines_a_separate_packaged_browser_gate() -> None:
+    recorder = ROOT / "web" / "flight-recorder"
+    package = json.loads((recorder / "package.json").read_text())
+
+    assert package["scripts"]["test:e2e:packaged"] == (
+        "playwright test --config playwright.packaged.config.ts"
+    )
+    assert (recorder / "playwright.packaged.config.ts").is_file()
+    assert (recorder / "e2e-packaged" / "packaged-recorder.spec.ts").is_file()
+    suite = (recorder / "e2e-packaged" / "packaged-recorder.spec.ts").read_text()
+    assert 'page.on("websocket"' in suite
+
+
+def test_packaged_recorder_cleanup_is_bounded_and_escalates() -> None:
+    suite = (
+        ROOT / "web" / "flight-recorder" / "e2e-packaged" / "packaged-recorder.spec.ts"
+    ).read_text()
+
+    required = (
+        'const STOP_SIGNALS = ["SIGINT", "SIGTERM", "SIGKILL"] as const;',
+        "await waitForExit(process, STOP_GRACE_MS)",
+        'process.off("error", onError)',
+        'process.off("exit", onExit)',
+        'lines.off("line", onLine)',
+        "process.stdin.destroy()",
+        "process.stdout.destroy()",
+        "process.stderr.destroy()",
+    )
+    assert all(value in suite for value in required)
+    assert suite.index('"SIGINT"') < suite.index('"SIGTERM"') < suite.index('"SIGKILL"')
+
+
+def test_packaged_recorder_labels_the_fresh_navigation_measurement_exactly() -> None:
+    suite = (
+        ROOT / "web" / "flight-recorder" / "e2e-packaged" / "packaged-recorder.spec.ts"
+    ).read_text()
+
+    assert "warm-browser fresh-page navigation budget" in suite
+    assert "BROWSER_FRESH_NAVIGATION_P95_MS" in suite
+    assert "BROWSER_FIRST_USABLE_P95_MS" not in suite
+
+
+def test_flight_recorder_dev_server_is_loopback_only() -> None:
+    package = json.loads((ROOT / "web" / "flight-recorder" / "package.json").read_text())
+    wildcard_host = ".".join(("0", "0", "0", "0"))
+    sources = [
+        ROOT / "docs" / "flight-recorder.md",
+        ROOT / ".github" / "workflows" / "ci.yml",
+        ROOT / ".github" / "workflows" / "security-audit.yml",
+    ]
+
+    assert package["scripts"]["dev"] == "vite --host 127.0.0.1"
+    assert all(wildcard_host not in source.read_text() for source in sources)
+
+
+def test_predictable_claim_ids_are_fixture_export_only() -> None:
+    demo = (ROOT / "examples" / "ecommerce" / "demo.py").read_text()
+    exporter = (ROOT / "examples" / "ecommerce" / "export_flight_recorder.py").read_text()
+
+    assert "def _deterministic_claim_ids" not in demo
+    assert "claim_id_factory=_deterministic_claim_ids()" in exporter
+
+
+def test_flight_recorder_docs_label_current_and_historical_rules_truthfully() -> None:
+    guide = (ROOT / "docs" / "flight-recorder.md").read_text()
+    plan = (ROOT / "docs" / "superpowers" / "plans" / "2026-09-06-flight-recorder.md").read_text()
+
+    assert "Amber dashed signals are proposals" not in guide
+    assert "agent-originated" in guide
+    assert "## Historical Constraints" in plan
+    assert "## Historical Integration Sketch" in plan
+
+
+def test_frontend_generated_outputs_are_ignored() -> None:
+    ignored = (ROOT / ".gitignore").read_text().splitlines()
+
+    assert "web/flight-recorder/coverage/" in ignored
+    assert "*.tsbuildinfo" in ignored
+
+
+def test_dependabot_configures_weekly_ecosystem_updates() -> None:
+    config = (ROOT / ".github/dependabot.yml").read_text()
+    for ecosystem in ("pip", "github-actions"):
+        block = _ecosystem_block(config, ecosystem)
+        schedule = ("    schedule:", "      interval: weekly", "      day: monday")
+        assert _contains_sequence(block, schedule)
+        assert "    open-pull-requests-limit: 5" in block
+        assert "      - dependencies" in block
+        assert f"      - {ecosystem}" in block
+    assert "auto-merge" not in config

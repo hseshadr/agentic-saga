@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="A source-grounded architecture map for Agentic Saga: proposals are constrained by a deterministic kernel, durable evidence, and verified outcomes." />
+    <link rel="icon" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxIDEiPjwvc3ZnPg==" />
+    <title>Agentic Saga — architecture signal board</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --paper: #f4f0e5; --ink: #142033; --quiet: #526071; --line: #b6bdc4; --panel: #fffdf7;
+        --blue: #0057b8; --blue-ink: #003d83; --teal: #006c68; --amber: #a25300; --red: #a42424;
+        --red-pale: #fff0ee; --focus: #0057b8;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+        --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --serif: Iowan Old Style, Palatino Linotype, Book Antiqua, Palatino, Georgia, serif;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root { --paper: #111824; --ink: #edf2f6; --quiet: #b0bbc6; --line: #435164; --panel: #172230; --blue: #7cb7ff; --blue-ink: #b3d5ff; --teal: #59d3ca; --amber: #f4b44e; --red: #ff9790; --red-pale: #351e22; --focus: #ffe26a; }
+      }
+      * { box-sizing: border-box; }
+      html { background: var(--paper); }
+      body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--sans); line-height: 1.55; }
+      a { color: var(--blue-ink); text-underline-offset: .17em; }
+      a:hover { color: var(--red); }
+      :focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+      .skip { position: absolute; left: 1rem; top: -4rem; z-index: 10; background: var(--focus); color: var(--panel); padding: .5rem .75rem; font-weight: 700; }
+      .skip:focus { top: 1rem; }
+      .shell { width: min(1160px, calc(100% - 2rem)); margin: 0 auto; }
+      .topline { border-bottom: 1px solid var(--line); }
+      .topline .shell { display: flex; justify-content: space-between; gap: 1rem; padding: .7rem 0; font: 700 .76rem/1.25 var(--mono); }
+      .topline span:last-child { color: var(--teal); text-align: right; }
+      .hero { padding: clamp(2.5rem, 7vw, 6.25rem) 0 2.7rem; border-bottom: 2px solid var(--ink); }
+      .hero-grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(16rem, .75fr); gap: clamp(2rem, 7vw, 7rem); align-items: end; }
+      .kicker, .eyebrow { margin: 0 0 .65rem; color: var(--quiet); font: 700 .76rem/1.3 var(--mono); letter-spacing: .04em; }
+      h1, h2, h3 { line-height: 1.04; text-wrap: balance; }
+      h1 { max-width: 11ch; margin: 0; font: clamp(3rem, 8vw, 7.3rem)/.86 var(--serif); letter-spacing: -.065em; }
+      .lede { max-width: 56ch; margin: 1.65rem 0 0; font-size: clamp(1.05rem, 1.7vw, 1.35rem); }
+      .hero-note { border-left: 4px solid var(--blue); padding: .2rem 0 .2rem 1rem; }
+      .hero-note strong { display: block; margin-bottom: .35rem; font: 700 .9rem/1.35 var(--mono); }
+      .hero-note p { margin: 0; color: var(--quiet); font-size: .94rem; }
+      .legend { display: flex; flex-wrap: wrap; gap: .55rem .85rem; padding: 1.2rem 0 0; font: 700 .73rem/1.2 var(--mono); }
+      .legend span { display: inline-flex; align-items: center; gap: .45rem; }
+      .dot { width: .68rem; height: .68rem; border-radius: 50%; background: currentColor; }
+      .untrusted { color: var(--amber); } .trusted { color: var(--blue); } .proof { color: var(--teal); } .stop { color: var(--red); }
+      main { padding-bottom: 4rem; }
+      section { border-bottom: 1px solid var(--line); padding: clamp(2.5rem, 6vw, 5rem) 0; }
+      section > header { display: grid; grid-template-columns: 10rem minmax(0, 1fr); gap: 1.5rem; margin-bottom: 1.75rem; }
+      .section-id { color: var(--blue); font: 700 .76rem/1.3 var(--mono); padding-top: .3rem; }
+      h2 { margin: 0; font: clamp(2rem, 4vw, 3.5rem)/.95 var(--serif); letter-spacing: -.045em; }
+      .section-intro { max-width: 60ch; margin: .9rem 0 0; color: var(--quiet); }
+      .signal-board { border: 1px solid var(--ink); background: var(--panel); }
+      .board-header { display: flex; justify-content: space-between; gap: 1rem; border-bottom: 1px solid var(--line); padding: .8rem 1rem; font: 700 .73rem/1.3 var(--mono); }
+      .board-header span:last-child { color: var(--quiet); text-align: right; }
+      .scroll-hint { margin: 0; border-bottom: 1px solid var(--line); padding: .55rem 1rem; color: var(--quiet); font: .76rem/1.35 var(--mono); }
+      .lifecycle { display: grid; grid-template-columns: repeat(7, minmax(8.5rem, 1fr)); overflow-x: auto; overscroll-behavior-inline: contain; scrollbar-gutter: stable; scroll-snap-type: inline proximity; }
+      .stage { position: relative; min-height: 10.5rem; border: 0; border-right: 1px solid var(--line); background: transparent; color: var(--ink); padding: 1rem; text-align: left; cursor: pointer; font: inherit; scroll-snap-align: start; }
+      .stage:last-child { border-right: 0; }
+      .stage::after { position: absolute; right: -1px; top: 48%; z-index: 1; content: "›"; width: 1.2rem; height: 1.2rem; transform: translate(50%, -50%); background: var(--panel); color: var(--blue); text-align: center; font: 1.2rem/1rem var(--serif); }
+      .stage:last-child::after { content: ""; }
+      .stage:hover, .stage[aria-pressed="true"] { background: color-mix(in srgb, var(--blue) 10%, transparent); }
+      .stage-number { display: block; color: var(--blue); font: 700 .75rem/1 var(--mono); }
+      .stage-name { display: block; margin-top: .85rem; font: 700 1rem/1.12 var(--sans); }
+      .stage-kind { display: block; margin-top: .5rem; color: var(--quiet); font: .76rem/1.25 var(--mono); }
+      .detail { border-top: 1px solid var(--line); padding: 1.15rem; }
+      .js-ready .detail[hidden] { display: none; }
+      .detail-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(16rem, .75fr); gap: 2rem; }
+      .detail h3 { margin: 0; font: 700 1.1rem/1.2 var(--sans); }
+      .detail p { max-width: 59ch; margin: .55rem 0 0; }
+      .evidence-tag { align-self: start; border-left: 3px solid var(--teal); padding-left: .8rem; color: var(--quiet); font-size: .85rem; }
+      .evidence-tag code, code { font-family: var(--mono); font-size: .86em; }
+      .detail-grid > *, .manifest-grid > *, .proof-grid > *, .source-grid > * { min-width: 0; }
+      :not(pre) > code { overflow-wrap: anywhere; }
+      .manifest-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+      .example { border: 1px solid var(--line); padding: 1.1rem; background: var(--panel); }
+      .example h3 { margin: 0; font: 700 1rem/1.2 var(--sans); }
+      .example p { margin: .55rem 0 1rem; color: var(--quiet); font-size: .9rem; }
+      pre { margin: 0; border-top: 1px solid var(--line); padding-top: .9rem; color: var(--blue-ink); font: .78rem/1.55 var(--mono); overflow-wrap: anywhere; white-space: pre-wrap; }
+      .boundary { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--line); background: var(--panel); }
+      .boundary > div { padding: 1.15rem; border-right: 1px solid var(--line); }
+      .boundary > div:last-child { border-right: 0; }
+      .boundary h3 { margin: 0; font: 700 .86rem/1.2 var(--mono); }
+      .boundary p { margin: .6rem 0 0; font-size: .9rem; }
+      .boundary .unsafe { border-top: 5px solid var(--amber); } .boundary .host { border-top: 5px solid var(--blue); } .boundary .isolate { border-top: 5px solid var(--red); }
+      .quota-board { margin-top: 1rem; border: 1px solid var(--ink); background: var(--panel); }
+      .quota-intro { margin: 0; padding: 1rem; border-bottom: 1px solid var(--line); }
+      .quota-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .quota-grid > div { padding: .9rem 1rem; border-right: 1px solid var(--line); }
+      .quota-grid > div:last-child { border-right: 0; }
+      .quota-grid b { display: block; color: var(--blue); font: 700 .78rem/1.25 var(--mono); }
+      .quota-grid span { display: block; margin-top: .35rem; color: var(--quiet); font-size: .84rem; }
+      .quota-caveat { margin: 0; border-top: 1px solid var(--line); padding: .85rem 1rem; color: var(--quiet); font-size: .88rem; }
+      .proof-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+      .proof-card { border: 1px solid var(--ink); background: var(--panel); padding: clamp(1rem, 3vw, 1.7rem); }
+      .proof-card h3 { margin: 0; font: clamp(1.25rem, 2.3vw, 1.75rem)/1 var(--serif); }
+      .proof-card p { max-width: 50ch; margin: .85rem 0 0; }
+      .proof-card ul { margin: 1rem 0 0; padding-left: 1.2rem; }
+      .proof-card li + li { margin-top: .4rem; }
+      .proof-card.happy-card { border-color: var(--teal); }
+      .proof-card.repair-card { border-color: var(--blue); }
+      .proof-card.unknown-card { border-color: var(--amber); }
+      .proof-card.human-card { background: var(--red-pale); border-color: var(--red); }
+      .source-grid { display: grid; grid-template-columns: 1.15fr .85fr; gap: 1rem; }
+      .source-list, .limits { border: 1px solid var(--line); background: var(--panel); }
+      .source-row { display: grid; grid-template-columns: 9rem minmax(0, 1fr); gap: 1rem; padding: .85rem 1rem; border-bottom: 1px solid var(--line); }
+      .source-row:last-child { border-bottom: 0; }
+      .source-row b { color: var(--blue); font: 700 .78rem/1.25 var(--mono); }
+      .source-row span { font-size: .88rem; }
+      .limits { padding: 1.1rem; }
+      .limits h3 { margin: 0; font: 700 1rem/1.2 var(--sans); }
+      .limits ul { margin: .75rem 0 0; padding-left: 1.2rem; font-size: .9rem; }
+      .operating-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+      footer { padding: 1.4rem 0 2.7rem; color: var(--quiet); font-size: .82rem; }
+      @media (max-width: 760px) {
+        .shell { width: min(100% - 1.25rem, 1160px); }
+        .topline .shell, .hero-grid, section > header, .detail-grid, .proof-grid, .source-grid { display: block; }
+        .topline span:last-child { display: block; margin-top: .25rem; text-align: left; }
+        .hero-note { margin-top: 2.4rem; } section > header { margin-bottom: 1.35rem; } .section-id { margin-bottom: .55rem; }
+        .manifest-grid, .boundary, .quota-grid, .operating-grid { grid-template-columns: 1fr; }
+        .boundary > div, .quota-grid > div { border-right: 0; border-bottom: 1px solid var(--line); } .boundary > div:last-child, .quota-grid > div:last-child { border-bottom: 0; }
+        .detail-grid > * + *, .proof-card + .proof-card { margin-top: 1rem; } .source-row { grid-template-columns: 1fr; gap: .25rem; }
+      }
+      @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
+    </style>
+  </head>
+  <body>
+    <a class="skip" href="#architecture">Skip to architecture</a>
+    <header>
+      <div class="topline"><div class="shell"><span>AGENTIC SAGA / ARCHITECTURE</span><span>one host · typed boundaries · evidence before claims</span></div></div>
+      <div class="hero">
+      <div class="shell">
+        <div class="hero-grid">
+          <div><p class="kicker">A generic safety kernel for agent-directed work</p><h1>Smart choices. Hard stops.</h1><p class="lede">Agentic Saga lets an agent choose a next action. A deterministic kernel decides whether that action may affect the world, records enough evidence to recover it, and refuses to call an uncertain outcome “done.”</p></div>
+          <aside class="hero-note" aria-label="Operating claim"><strong>Honest delivery model</strong><p>At-least-once attempts plus a stable idempotency identity and reconciliation. Not universal exactly-once side effects.</p></aside>
+        </div>
+        <div class="legend"><span class="untrusted"><i class="dot" aria-hidden="true"></i>untrusted data</span><span class="trusted"><i class="dot" aria-hidden="true"></i>cooperative host code</span><span class="proof"><i class="dot" aria-hidden="true"></i>durable proof</span><span class="stop"><i class="dot" aria-hidden="true"></i>stop / human authority</span></div>
+      </div>
+      </div>
+    </header>
+    <main id="architecture" class="shell">
+      <section aria-labelledby="lifecycle-title">
+        <header><div class="section-id">01 / lifecycle</div><div><h2 id="lifecycle-title">Every effect has a receipt—or a stop.</h2><p class="section-intro">Select a station to inspect its authority and durable evidence. The library is domain-neutral; ecommerce is the sole worked example, not a workflow embedded in the kernel.</p></div></header>
+        <div class="signal-board">
+          <div class="board-header"><span>AUTHORITATIVE FLOW</span><span>all effect paths cross the kernel</span></div>
+          <p class="scroll-hint" id="lifecycle-scroll-hint">Scroll the rail to reach all 7 stations; select one to inspect its evidence.</p>
+          <div class="lifecycle" role="group" aria-label="Saga effect lifecycle">
+            <button class="stage" type="button" aria-pressed="true" aria-controls="detail-input" aria-describedby="lifecycle-scroll-hint" data-detail="detail-input"><span class="stage-number">01</span><span class="stage-name">definition</span><span class="stage-kind">pinned tools + policy</span></button>
+            <button class="stage" type="button" aria-pressed="false" aria-controls="detail-agent" aria-describedby="lifecycle-scroll-hint" data-detail="detail-agent"><span class="stage-number">02</span><span class="stage-name">proposal</span><span class="stage-kind">agent / Deep Agents</span></button>
+            <button class="stage" type="button" aria-pressed="false" aria-controls="detail-kernel" aria-describedby="lifecycle-scroll-hint" data-detail="detail-kernel"><span class="stage-number">03</span><span class="stage-name">gate</span><span class="stage-kind">policy + kernel</span></button>
+            <button class="stage" type="button" aria-pressed="false" aria-controls="detail-intent" aria-describedby="lifecycle-scroll-hint" data-detail="detail-intent"><span class="stage-number">04</span><span class="stage-name">intent</span><span class="stage-kind">SQLite + outbox</span></button>
+            <button class="stage" type="button" aria-pressed="false" aria-controls="detail-adapter" aria-describedby="lifecycle-scroll-hint" data-detail="detail-adapter"><span class="stage-number">05</span><span class="stage-name">adapter</span><span class="stage-kind">typed provider call</span></button>
+            <button class="stage" type="button" aria-pressed="false" aria-controls="detail-reconcile" aria-describedby="lifecycle-scroll-hint" data-detail="detail-reconcile"><span class="stage-number">06</span><span class="stage-name">outcome</span><span class="stage-kind">reconcile if unknown</span></button>
+            <button class="stage" type="button" aria-pressed="false" aria-controls="detail-proof" aria-describedby="lifecycle-scroll-hint" data-detail="detail-proof"><span class="stage-number">07</span><span class="stage-name">proof</span><span class="stage-kind">finish / repair / stop</span></button>
+          </div>
+          <div class="detail" id="detail-input"><div class="detail-grid"><div><h3>Definition: two inputs, one kernel boundary</h3><p>Direct construction starts with a typed <code>SagaDefinition</code>; the definition and policy must use the same ToolRegistry. A canonical definition fingerprint is persisted at creation and checked on resume, so changed policy, tools, invariants, budget, or redaction fail closed. Optional <code>saga.yaml</code> authoring loads a bounded <code>SagaContext</code>; application-owned assembly resolves registered names into the domain definition. A <code>SagaGoal</code> enters separately. The YAML is a public manifest for agent context, not a workflow language or secret store.</p></div><p class="evidence-tag"><b>Source:</b> <code>src/agentic_saga/kernel/definitions.py</code> · <code>src/agentic_saga/manifest.py</code><br /><b>Proof:</b> <code>examples/ecommerce/demo.py</code> · <code>tests/integration/manifest/test_examples.py</code></p></div></div>
+          <div class="detail" id="detail-agent"><div class="detail-grid"><div><h3>Agent: chooses a proposal, never an effect</h3><p>The optional Deep Agents driver receives resolved public context and an eligible descriptor subset. It returns one strict proposal. It receives no registered tool callable, receipt, credential, or kernel authority.</p></div><p class="evidence-tag"><b>Source:</b> <code>src/agentic_saga/agents/</code><br /><b>Proof:</b> <code>tests/unit/agents/</code></p></div></div>
+          <div class="detail" id="detail-kernel"><div class="detail-grid"><div><h3>Kernel: typed policy before provider contact</h3><p>The kernel validates the proposal, recomputes its stable operation identity, applies policy and budget checks, and emits a durable effect intent only when it is authorized.</p></div><p class="evidence-tag"><b>Source:</b> <code>src/agentic_saga/kernel/</code><br /><b>Proof:</b> <code>tests/unit/kernel/test_policy.py</code></p></div></div>
+          <div class="detail" id="detail-intent"><div class="detail-grid"><div><h3>Intent: durable before external execution</h3><p>SQLite records intent, the logical operation identity, and an outbox command before the dispatcher can call an adapter. The projection is replay-checked against the append-only ledger. Worker authority is renewed around awaited work and released before returning, including a human handoff.</p></div><p class="evidence-tag"><b>Source:</b> <code>src/agentic_saga/storage/</code><br /><b>Proof:</b> <code>tests/integration/execution/test_intent_before_effect.py</code></p></div></div>
+          <div class="detail" id="detail-adapter"><div class="detail-grid"><div><h3>Adapter: stable identity reaches the provider</h3><p>A registered typed adapter receives the command plus the kernel-generated operation identity and fence. Its provider must honor declared deduplication and resource-fence capabilities.</p></div><p class="evidence-tag"><b>Source:</b> <code>src/agentic_saga/execution/dispatcher.py</code><br /><b>Proof:</b> <code>tests/contract/test_durable_fake_tool.py</code></p></div></div>
+          <div class="detail" id="detail-reconcile"><div class="detail-grid"><div><h3>Outcome: ambiguity is a state, not a guess</h3><p>Known outcomes are recorded. A timeout, lost response, or crash after dispatch becomes durable unknown work; reconciliation looks up the same logical operation. Bounded read failures become a durable <code>ReadUnavailable</code> observation rather than invented provider state. A retry can reuse an effect identity only when absence is proven or deduplication covers the recovery horizon.</p></div><p class="evidence-tag"><b>Source:</b> <code>src/agentic_saga/execution/reconciliation.py</code><br /><b>Proof:</b> <code>tests/integration/execution/test_lost_response.py</code></p></div></div>
+          <div class="detail" id="detail-proof"><div class="detail-grid"><div><h3>Proof: finish, repair, or make human authority durable</h3><p>Success requires current invariant evidence. Confirmed effects can enter the reverse dependency compensation frontier. An unverifiable outcome becomes a durable, quiescent <code>HUMAN_REQUIRED</code> state—not a “failed” guess.</p></div><p class="evidence-tag"><b>Source:</b> <code>src/agentic_saga/kernel/invariants.py</code> · <code>src/agentic_saga/kernel/compensation.py</code> · <code>src/agentic_saga/execution/unwind.py</code> · <code>src/agentic_saga/execution/reconciliation.py</code> · <code>src/agentic_saga/execution/runtime.py</code><br /><b>Proof:</b> <code>tests/unit/kernel/test_invariants.py</code> · <code>tests/integration/execution/test_compensation_flow.py</code> · <code>tests/integration/execution/test_human_quiescence.py</code></p></div></div>
+        </div>
+        <noscript><p><strong>Static view:</strong> interactive station selection is unavailable, so every station remains expanded.</p></noscript>
+      </section>
+      <section aria-labelledby="manifest-title">
+        <header><div class="section-id">02 / authoring &amp; quotas</div><div><h2 id="manifest-title">Choose the input. Keep the contract.</h2><p class="section-intro">Applications may construct typed contracts directly or load bounded YAML. Business execution remains registered application code, so ecommerce demonstrates the library without becoming part of the core.</p></div></header>
+        <div class="manifest-grid">
+          <article class="example"><h3>Direct typed construction</h3><p>Library users build a <code>SagaDefinition</code>, create application-owned collaborators, then call the supported <code>compose_runtime(...)</code> factory. Lower-level constructors remain available for advanced manual assembly.</p><pre>runtime = compose_runtime(
+    store=store,
+    definition=definition,
+    policy_context_provider=contexts,
+    terminal_gate=terminal_gate,
+    invariant_evidence_provider=evidence,
+    clock=clock,
+    worker_id="ecommerce-1",
+    id_namespace=b"ecommerce/v1",
+)</pre></article>
+          <article class="example"><h3>Optional <code>saga.yaml</code> authoring</h3><p>A bounded public manifest gives an agent portable objective, quota, tool, proof, and escalation context. It contains public values and versioned secret references—not credentials. The loader rejects unknown references, unsafe YAML, and credential-shaped values before planning. <strong>Ecommerce excerpt:</strong></p><pre>objective: Fulfill the order or restore a verified safe state.
+tools:
+  allowed: [reserve_inventory, charge_payment]
+checks:
+  success: [order_fulfilled]
+escalation:
+  conditions: [unknown outcome after safe reconciliation]</pre></article>
+        </div>
+        <p class="section-intro">The <a href="../examples/ecommerce/saga.yaml">ecommerce manifest</a> and <a href="context-manifest.md">context-manifest contract</a> show the boundary. Every generic JSON boundary is bounded to 16 levels deep, 4,096 total nodes, 256 items per container, 16,384 characters and 16,384 UTF-8 bytes per string, and 65,536 canonical UTF-8 bytes.</p>
+        <p class="section-intro">The SagaDefinition-owned <code>RedactionPolicy</code> adds application-classified sensitive keys to a non-configurable built-in floor for credential keys, bearer strings, and card-like values. Unlisted ordinary PII remains public, so the application must classify it.</p>
+        <div class="quota-board">
+          <p class="quota-intro"><strong><code>ExecutionBudget</code> is a four-field deterministic planning quota.</strong> For each planning turn, elapsed and output-token reservations use <code>floor(total / turns)</code>; the remainder stays unused.</p>
+          <div class="quota-grid">
+            <div><b>turn_limit</b><span>Maximum agent planning turns.</span></div>
+            <div><b>tool_call_limit</b><span>Counts durable read starts, effect intents, and compensation intents.</span></div>
+            <div><b>elapsed_ms_limit</b><span>Total planning-call allowance reserved in fixed per-turn slices.</span></div>
+            <div><b>token_limit</b><span>Total maintained-adapter output allowance reserved in fixed per-turn slices.</span></div>
+          </div>
+          <p class="quota-caveat">The maintained OpenRouter adapter applies the output-token cap and planning-call deadline. These quotas are not meters for input tokens, actual token usage, end-to-end Saga time, money, or provider spend; provider account controls own spend enforcement.</p>
+        </div>
+      </section>
+      <section aria-labelledby="trust-title">
+        <header><div class="section-id">03 / proof or stop</div><div><h2 id="trust-title">Trust is a boundary, not a feeling.</h2><p class="section-intro">The library validates data at its typed boundaries. It deliberately does not pretend to sandbox code already installed in the host process.</p></div></header>
+        <div class="boundary">
+          <div class="unsafe"><h3>UNTRUSTED</h3><p>Model proposals, manifests, commands, outcomes, and evidence JSON cross strict size and shape bounds. Redaction runs before durable public evidence is written. None of this input grants authority.</p></div>
+          <div class="host"><h3>COOPERATIVE HOST CODE</h3><p>Installed drivers and typed adapters are application code. They must honor cancellation, stable identity, and their declared provider capabilities.</p></div>
+          <div class="isolate"><h3>ISOLATE OUTSIDE THE CORE</h3><p>Hostile Python, native extensions, and deliberately adversarial plugins need an external process, container, or service.</p></div>
+        </div>
+        <div class="proof-grid" style="margin-top: 1rem">
+          <article class="proof-card happy-card"><h3>Happy path — verified finish</h3><p>Fresh deterministic invariant evidence must prove the intended business state. A terminal status is not a provider’s assertion and not a model’s claim.</p><ul><li>Intent is durable before an adapter call.</li><li>Projection rebuild must reproduce ledger state.</li><li>Success is <code>SUCCEEDED_VERIFIED</code>.</li></ul></article>
+          <article class="proof-card repair-card"><h3>Business failure — verified compensation</h3><p>When the goal cannot finish safely, confirmed effects enter a reverse dependency frontier. Every compensation is a new durable effect with its own outcome evidence.</p><ul><li>History is never erased.</li><li>Only confirmed obligations are reversed.</li><li>Repair is <code>COMPENSATED_VERIFIED</code>.</li></ul></article>
+          <article class="proof-card unknown-card"><h3>Compensation failure or unknown — reconcile, then stop</h3><p>A known compensation failure remains durable for recovery planning. A timeout, crash, or lost response becomes unknown work and must reconcile against the same operation identity.</p><ul><li>Absence proof may permit a safe retry.</li><li>Ambiguity never becomes success.</li><li>Unsafe ambiguity becomes quiescent <code>HUMAN_REQUIRED</code>.</li></ul></article>
+          <article class="proof-card human-card"><h3>Human resolution — authenticated transaction</h3><p>The store-owned verifier authenticates the exact ephemeral <code>HumanDecision</code> during the SQLite commit. The transaction binds its actor, Saga sequence, action, and canonical public digest to the pending durable request.</p><ul><li>Policy code cannot authenticate the resolution.</li><li>Failed authentication changes no ledger state.</li><li>Automation resumes only after durable resolution.</li></ul></article>
+        </div>
+      </section>
+      <section aria-labelledby="evidence-title">
+        <header><div class="section-id">04 / source &amp; evidence</div><div><h2 id="evidence-title">The map points to code, not a promise deck.</h2><p class="section-intro">These are the repository surfaces that implement and exercise the flow above. The SQLite backend is a single-host reference implementation, not a high-availability system.</p></div></header>
+        <div class="source-grid">
+          <div class="source-list">
+            <div class="source-row"><b>definition</b><span><code data-source-path="src/agentic_saga/kernel/definitions.py">src/agentic_saga/kernel/definitions.py</code> · <code data-source-path="src/agentic_saga/contracts/runtime.py">src/agentic_saga/contracts/runtime.py</code> · <code data-source-path="src/agentic_saga/manifest.py">src/agentic_saga/manifest.py</code></span></div>
+            <div class="source-row"><b>public data</b><span><code data-source-path="src/agentic_saga/contracts/common.py">src/agentic_saga/contracts/common.py</code> · <code data-source-path="src/agentic_saga/contracts/redaction.py">src/agentic_saga/contracts/redaction.py</code> · <code data-source-path="src/agentic_saga/contracts/tools.py">src/agentic_saga/contracts/tools.py</code></span></div>
+            <div class="source-row"><b>planning</b><span><code data-source-path="src/agentic_saga/agents/deepagents.py">src/agentic_saga/agents/deepagents.py</code> · <code data-source-path="src/agentic_saga/agents/openrouter.py">src/agentic_saga/agents/openrouter.py</code></span></div>
+            <div class="source-row"><b>authority</b><span><code data-source-path="src/agentic_saga/kernel/ports.py">src/agentic_saga/kernel/ports.py</code> · <code data-source-path="src/agentic_saga/kernel/policy.py">src/agentic_saga/kernel/policy.py</code> · <code data-source-path="src/agentic_saga/kernel/runtime.py">src/agentic_saga/kernel/runtime.py</code></span></div>
+            <div class="source-row"><b>delivery</b><span><code data-source-path="src/agentic_saga/storage/sqlite.py">src/agentic_saga/storage/sqlite.py</code> · <code data-source-path="src/agentic_saga/execution/dispatcher.py">src/agentic_saga/execution/dispatcher.py</code> · <code data-source-path="src/agentic_saga/execution/reconciliation.py">src/agentic_saga/execution/reconciliation.py</code></span></div>
+            <div class="source-row"><b>proof</b><span><code data-source-path="src/agentic_saga/kernel/invariants.py">src/agentic_saga/kernel/invariants.py</code> · <code data-source-path="src/agentic_saga/kernel/compensation.py">src/agentic_saga/kernel/compensation.py</code> · <code data-source-path="src/agentic_saga/evidence/run_trace.py">src/agentic_saga/evidence/run_trace.py</code></span></div>
+            <div class="source-row"><b>worked example</b><span><code data-source-path="examples/ecommerce/demo.py">examples/ecommerce/demo.py</code> · <code data-source-path="examples/ecommerce/saga.yaml">examples/ecommerce/saga.yaml</code></span></div>
+            <div class="source-row"><b>inspection</b><span><code data-source-path="src/agentic_saga/demo/server.py">src/agentic_saga/demo/server.py</code> · <code data-source-path="src/agentic_saga/cli/">src/agentic_saga/cli/</code> · <code data-source-path="web/flight-recorder/">web/flight-recorder/</code></span></div>
+          </div>
+          <aside class="limits"><h3>Run the named gates</h3><ul><li><code>uv run poe gate</code> runs the repository quality gate.</li><li><code>uv run poe mutation</code> runs the separately bounded safety mutation gate.</li><li><a href="kernel-safety-contract.md">Kernel safety contract</a> names the claim-to-test evidence table.</li><li><a href="flight-recorder.md">Flight Recorder</a> is source-checkout, read-only evidence inspection—not execution authority.</li></ul></aside>
+        </div>
+      </section>
+      <section aria-labelledby="limits-title">
+        <header><div class="section-id">05 / limits</div><div><h2 id="limits-title">Precise boundaries make recovery credible.</h2><p class="section-intro">Agentic Saga provides local durable coordination around external systems. It does not convert them into one transaction or make an unsafe integration safe by naming it an adapter.</p></div></header>
+        <div class="operating-grid">
+          <article class="limits"><h3>SQLite reference backend</h3><ul><li><strong>POSIX-only:</strong> the immediate parent must be private and owner-controlled; database, WAL, SHM, temporary, backup, and restored files are regular, current-user files hardened to <code>0600</code>.</li><li>Backup and restore publish to a fresh destination only. Existing leaves and symlinks fail closed rather than being overwritten.</li><li>Use a local filesystem with normal POSIX link and lock semantics. Root, another same-UID process, unusual mount behavior, and external ACL policy remain outside this process boundary.</li></ul></article>
+          <article class="limits"><h3>Local Flight Recorder</h3><ul><li>Materialization requires POSIX descriptor support and a fresh, empty destination; packaged assets are limited to at most 200 static files and 32 MiB total.</li><li>The read-only server binds <code>127.0.0.1:&lt;actual port&gt;</code> and requires that literal authority in its exact <code>Host</code> header.</li><li><code>Origin</code> and <code>Sec-Fetch-Site</code> are independently optional. When present, Origin must be the exact loopback origin and fetch site must be <code>same-origin</code> or <code>none</code>.</li><li>It serves GET and HEAD only, with a 240-character request path and an 8 MiB served-file limit.</li><li>A 1-second header deadline, 40-header and 16 KiB header bounds, 8 concurrent handlers, and an 8-request listen backlog limit local resource use.</li></ul></article>
+        </div>
+        <div class="limits" style="margin-top: 1rem"><ul><li>No universal exactly-once side effects or atomic cross-service commit.</li><li>No high availability, multi-host writer support, or serializable cross-Saga isolation from the SQLite reference backend.</li><li>No automatic resolution when safe reconciliation cannot establish an opaque provider outcome; <code>HUMAN_REQUIRED</code> is durable and quiescent.</li><li>No containment for hostile native or Python plugins inside the core library.</li></ul></div>
+      </section>
+    </main>
+    <footer><div class="shell">Agentic Saga architecture signal board · source-grounded reference · use the linked contracts for operational requirements.</div></footer>
+    <script>
+      (() => {
+        const stages = [...document.querySelectorAll(".stage")];
+        const details = [...document.querySelectorAll(".detail")];
+        const stageIds = stages.map((stage) => stage.dataset.detail);
+        const detailIds = details.map((detail) => detail.id);
+        const valid = stages.length === 7 && details.length === 7 && stageIds.every((id) => id && detailIds.includes(id));
+        if (!valid) return;
+        const select = (stage) => {
+          stages.forEach((item) => item.setAttribute("aria-pressed", String(item === stage)));
+          details.forEach((item) => { item.hidden = item.id !== stage.dataset.detail; });
+        };
+        stages.forEach((stage) => stage.addEventListener("click", () => select(stage)));
+        document.documentElement.classList.add("js-ready");
+        select(stages[0]);
+      })();
+    </script>
+  </body>
+</html>

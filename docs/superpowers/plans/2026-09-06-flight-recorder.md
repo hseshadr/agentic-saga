@@ -10,12 +10,49 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-06-agentic-saga-design.md`
 
-## Global Constraints
+## Current Tasks 1–8 Slice (binding correction, 2026-09-08)
+
+The shipped source-checkout slice supersedes the stale integration/file-map details below. It
+consumes the kernel's existing strict, redacted, snake_case `RunTrace` 1.0 JSON directly; it does
+not add a camelCase ecommerce wrapper, a fixed seven-scenario catalog, browser-only events, a
+`stale` proof result, or invented lane fields. A generic bounded index points to digest-bound trace
+files, and real ecommerce traces live only as fixtures under `examples/ecommerce`.
+
+Tasks 1–8 currently provide the isolated React/Vite/TypeScript/Zod toolchain, authoritative trace
+parser, generic repository, pure four-lane causal projection, responsive workbench shell, evidence
+inspector, signal-isolate interaction, user-controlled replay, and Story/Ledger/Proof views. The
+generic catalog contains four real ecommerce fixtures: success, lost-response reconciliation,
+verified compensation, and failed compensation requiring human review. The visual contract uses
+instrument paper, steel, flight-deck blue, authorized cobalt, proof teal, and textual/icon stop
+states with system humanist fonts; no runtime network asset is loaded. Biome replaces the stale
+ESLint assumption.
+
+The locked `lossless-json` dependency preserves numeric lexemes before Python-compatible canonical
+hash verification, including float/exponent boundaries, negative zero, and integers beyond the
+JavaScript safe range. UTC timestamps accept only `Z` or `+00:00`, reject impossible calendar
+values, and are ordered at nanosecond precision. The board's semantic DOM is one ledger-ordered
+list; CSS places those rows into the four desktop lanes without changing assistive-technology or
+mobile reading order.
+
+Tasks 9 and later remain roadmap work: browser E2E, packaged static assets, loopback serving, and
+`uv run agentic-saga demo`. The detailed unchecked steps below are historical implementation
+guidance, not claims about the current slice. Tasks 1–8 deliberately keep replay/view state local
+instead of implementing the stale query-string deep-link sketch below.
+
+## Historical Constraints
+
+These constraints are retained as the original planning record. The binding correction above
+supersedes commands, colors, fonts, schema shapes, and integrations that conflict with Tasks 1–8.
+
+- The Flight Recorder consumes durable `RunTrace` evidence, not `saga.yaml`. The manifest configures
+  the agent/kernel assembly; it is not a browser workflow definition or live-state source.
 
 - The default quickstart is deterministic, offline, and free: `uv sync` followed by `uv run agentic-saga demo --scenario inventory-exhausted --open`.
 - The optional live command is `uv run agentic-saga demo --live --scenario inventory-exhausted --open`; every trace and screen labels `scripted` and `live` modes distinctly.
 - The console consumes one stored `RunTrace` contract and remains a read-only incident inspector, not a workflow editor, monitoring platform, hosted operations platform, or operations control plane.
-- Agent observations and proposals use dashed signal amber; policy uses a gate; executed effects use solid cobalt; compensation uses a reverse connector; verified invariants use proof teal; failures use fault red plus text and an icon.
+- Agent-originated activity and proposal lifecycle use dashed signal amber; policy uses a gate;
+  executed effects use solid cobalt; compensation uses a reverse connector; verified invariants use
+  proof teal; failures use fault red plus text and an icon.
 - Use porcelain `#F5F6F1`, ink `#17212B`, cobalt `#2457A6`, signal amber `#D68A00`, fault red `#B43A35`, and proof teal `#087D71`.
 - Use Atkinson Hyperlegible for interface text and IBM Plex Mono only for IDs, hashes, operation keys, and payloads; ship the font files with the static bundle and make no font-network request.
 - Never request, store, display, or imply private chain-of-thought. Display only redacted commands/results, structured rationale, policy evidence, effect receipts, and invariant evidence already present in the exported trace.
@@ -24,7 +61,7 @@
 - `web/flight-recorder/package.json` declares `"packageManager": "pnpm@11.5.0"`; installs use `pnpm install --frozen-lockfile` against `web/flight-recorder/pnpm-lock.yaml`.
 - Do not publish a package or make the repository public as part of this plan.
 
-## Locked Integration Contract
+## Historical Integration Sketch
 
 The Flight Recorder does not serialize the kernel's internal `RunTrace` directly. The ecommerce plan must provide a `RunTraceExport` wrapper in `examples/ecommerce/demo.py`; that wrapper maps authoritative kernel evidence to the exact camelCase browser fields defined in Task 1, performs redaction before serialization, and rejects extra fields. It must provide this boundary before Task 10 begins:
 
@@ -88,11 +125,13 @@ Sequential CLI ownership is also fixed:
 def build_parser() -> argparse.ArgumentParser: ...
 def main(argv: Sequence[str] | None = None) -> int: ...
 
+
 # Created by ecommerce Task 8 in src/agentic_saga/cli/demo.py
 @dataclass(frozen=True)
 class DemoArguments:
     scenario: DemoScenarioId
     live: bool
+
 
 async def generate_demo_traces(
     provider: DemoTraceProvider,
@@ -101,7 +140,10 @@ async def generate_demo_traces(
     selected: DemoScenarioId,
 ) -> Mapping[DemoScenarioId, RunTraceExport]: ...
 
-def configure_demo_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> argparse.ArgumentParser: ...
+
+def configure_demo_parser(
+    subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
+) -> argparse.ArgumentParser: ...
 ```
 
 Task 11 modifies these existing functions. It preserves ecommerce scenario generation, live credential checks, and error mapping; it adds only the `--open`/`--port` options plus materialize/serve/open lifecycle.
@@ -1222,7 +1264,9 @@ def test_demo_generates_all_scripted_traces_and_opens_selected_deep_link(tmp_pat
 ```python
 def test_live_demo_generates_only_selected_paid_trace() -> None:
     provider = AsyncMock(return_value=trace_for_scenario(DemoScenarioId.INVENTORY_EXHAUSTED))
-    traces = asyncio.run(generate_demo_traces(provider, mode="live", selected=DemoScenarioId.INVENTORY_EXHAUSTED))
+    traces = asyncio.run(
+        generate_demo_traces(provider, mode="live", selected=DemoScenarioId.INVENTORY_EXHAUSTED)
+    )
     assert list(traces) == [DemoScenarioId.INVENTORY_EXHAUSTED]
     provider.assert_awaited_once_with(DemoScenarioId.INVENTORY_EXHAUSTED, mode="live")
 ```
@@ -1245,7 +1289,11 @@ def run_demo(
     browser_open: Callable[[str], bool] = webbrowser.open,
     wait_for_shutdown: Callable[[RecorderServer], None] = RecorderServer.wait,
 ) -> int:
-    traces = asyncio.run(generate_demo_traces(provider, mode="live" if args.live else "scripted", selected=args.scenario))
+    traces = asyncio.run(
+        generate_demo_traces(
+            provider, mode="live" if args.live else "scripted", selected=args.scenario
+        )
+    )
     with TemporaryDirectory(prefix="agentic-saga-demo-") as temp_dir:
         site = Path(temp_dir)
         materialize_recorder_site(site, traces)
@@ -1390,13 +1438,25 @@ def test_real_scripted_trace_matches_browser_contract(scenario_id: DemoScenarioI
     trace = asyncio.run(produce_run_trace(scenario_id, mode="scripted"))
     payload = json.loads(trace.model_dump_json(by_alias=True))
     assert set(payload) == {
-        "schemaVersion", "runId", "scenarioId", "scenarioName", "mode",
-        "startedAt", "finishedAt", "outcome", "faultConfig", "initialState",
-        "requiredInvariantIds", "proofs", "events",
+        "schemaVersion",
+        "runId",
+        "scenarioId",
+        "scenarioName",
+        "mode",
+        "startedAt",
+        "finishedAt",
+        "outcome",
+        "faultConfig",
+        "initialState",
+        "requiredInvariantIds",
+        "proofs",
+        "events",
     }
     assert payload["schemaVersion"] == "1.0"
     assert payload["scenarioId"] == scenario_id.value
-    assert all("sagaSequence" in event and "saga_sequence" not in event for event in payload["events"])
+    assert all(
+        "sagaSequence" in event and "saga_sequence" not in event for event in payload["events"]
+    )
     assert all(
         {"eventId", "ruleId", "description", "inputs", "result", "reason", "evaluatedSagaSequence"}
         == set(proof)
