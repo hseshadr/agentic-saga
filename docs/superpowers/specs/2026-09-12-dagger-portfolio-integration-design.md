@@ -1,18 +1,18 @@
 # Agentic Saga Dagger Portfolio Integration Design
 
 **Date:** 2026-09-12  
-**Status:** Approved in chat; awaiting written-spec review  
+**Status:** Revised after written-spec review; awaiting approval
 **Repositories:** `hseshadr/ci`, `hseshadr/agentic-saga`, `project-ideas`
 
 ## TL;DR
 
-Agentic Saga will join the portfolio's Dagger control plane without weakening or hiding any of
-its existing release evidence. GitHub Actions remains the event and permission boundary. One
-small, typed Agentic Saga Dagger module owns execution, composes the shared
-`portfolio-foundation` module at an immutable commit, and preserves the complete Python,
-frontend, packaged-wheel, performance, and security contracts. The central fleet then verifies
-the exact `main` commit and branch protection, while `portfolio.json` records both the Dagger
-control plane and Agentic Saga as current portfolio facts.
+Agentic Saga will reuse the portfolio's proven EdgeProc Dagger pattern: one 24-line, two-action
+GitHub workflow and one small typed adapter pinned to the shared `portfolio-foundation` module.
+The adapter does not rebuild Agentic Saga's CI logic. It calls the repository's existing
+authoritative commands: `uv run poe gate`, the Flight Recorder `pnpm gate`, and
+`uv run poe release-candidate`. A similarly thin scheduled entry point runs the existing locked
+dependency audits. The central fleet then verifies the exact `main` commit and branch protection,
+while `portfolio.json` records both the Dagger control plane and Agentic Saga as current facts.
 
 This is portfolio integration, not a product-runtime change. The Saga API, deterministic kernel,
 examples, and optional model adapters do not change.
@@ -32,7 +32,8 @@ portfolio's selected mechanism for making those outcomes portable and centrally 
 ## Goals
 
 1. Make every Agentic Saga repository-authored workflow job a thin, immutable Dagger ingress.
-2. Preserve every existing release-critical check and its numeric threshold.
+2. Preserve every existing release-critical check and threshold by delegating to the commands
+   that already own them, rather than translating those checks into Dagger code.
 3. Use the shared `portfolio-foundation` rather than duplicating identity, full-history secret
    scanning, action validation, or artifact-boundary logic.
 4. Extend the shared foundation so private repositories receive authenticated Git history through
@@ -56,9 +57,10 @@ portfolio's selected mechanism for making those outcomes portable and centrally 
 
 ### A. Shared foundation plus a small local product graph — selected
 
-Add private-history authentication to the shared Foundation. Agentic Saga composes that exact
-module and implements only its product-specific Python, frontend, packaged-wheel, and performance
-checks. GitHub workflows contain checkout plus the pinned Dagger action.
+Reuse EdgeProc's exact shape: add private-history authentication to the shared Foundation, compose
+that module at an immutable commit, and keep the Agentic Saga adapter limited to runtime setup and
+calls to existing repository-owned commands. GitHub workflows contain checkout plus the pinned
+Dagger action.
 
 This is the leanest approach that satisfies the fleet contract and preserves specialized proof.
 
@@ -82,15 +84,13 @@ GitHub event and permissions
 .github/workflows/dagger.yml          two pinned actions only
         |
         v
-Agentic Saga local Dagger module      product-specific orchestration
+Agentic Saga local Dagger module      thin command adapter
         |
         +--> shared Foundation        source identity + history guard
-        +--> Python 3.12 gate         canonical Poe contract
-        +--> Python 3.13 gate         canonical Poe contract
-        +--> Flight Recorder gate     pnpm + browser + build
-        +--> packaged 3.12 gate       offline wheel + E2E + budgets
-        +--> packaged 3.13 gate       offline wheel + E2E + budgets
-        +--> dependency audit         locked Python + pnpm graphs
+        +--> uv run poe gate          Python quality + tests + coverage
+        +--> pnpm gate                frontend quality + browser proof
+        +--> poe release-candidate    wheel + dual Python + E2E + budgets
+        +--> existing audits          locked Python + pnpm graphs
         |
         v
 single exact `Dagger` check
@@ -102,8 +102,9 @@ central fleet + branch protection
 canonical portfolio manifest and generated views
 ```
 
-The local module is an adapter, not a second task runner. It invokes existing repository-owned
-Poe and pnpm contracts. Product thresholds remain in their current authoritative files.
+The local module is an adapter, not a second task runner. It contains no copy of a coverage floor,
+performance budget, package recipe, test selection, or browser scenario. Product behavior and
+thresholds remain in their current authoritative files.
 
 ## Repository boundaries
 
@@ -147,13 +148,21 @@ The public API accepts the exact source snapshot, exact commit identity, and one
 does not accept arbitrary execution configuration. Repository identity, toolchain versions,
 commands, cache namespaces, paths, and performance thresholds are fixed internal constants.
 
-`ci` first completes the shared source/history guard. Only then does it evaluate product gates.
-Independent product containers may run concurrently, but the release measurement remains
-sequential inside each packaged gate so percentile evidence is not distorted by artificial
-contention.
+`ci` first completes the shared source/history guard. It then runs three fixed repository-owned
+commands: the Python Poe gate, the Flight Recorder pnpm gate, and the Poe release-candidate gate.
+The release-candidate script continues to own artifact construction, both supported Python
+runtimes, offline hash-verified installation, packaged browser tests, and performance budgets.
+Dagger supplies reproducible containers and readable step boundaries; it does not duplicate the
+script's control flow.
 
-`security` is scheduled/manual and repeats the shared guard plus both locked dependency audits.
-It is not a second required branch-protection check.
+`security` is scheduled/manual and repeats the shared guard plus the repository's existing locked
+dependency-audit commands. It is not a second required branch-protection check.
+
+The implementation follows the EdgeProc precedent but omits its release-envelope and publishing
+APIs. The target is no more than two public functions and roughly 100-150 hand-written adapter
+lines, excluding generated SDK code, the lock file, and tests. If the adapter grows beyond that,
+the default response is to move behavior back behind an existing repository command, not to add
+another Dagger abstraction.
 
 ### `project-ideas`
 
@@ -192,15 +201,15 @@ The migration is incomplete if any of these disappear:
 
 | Evidence | Preserved contract |
 |---|---|
-| Python quality | Python 3.12 and 3.13 run `uv run poe gate` with the frozen lock |
+| Python quality | `uv run poe gate` remains authoritative and runs with the frozen lock |
 | Kernel coverage | At least 90% total coverage and the existing kernel branch floor |
 | Complexity | Xenon Grade A and the existing function-size repository contract |
-| Frontend | Node 24, pnpm 11.5.0, frozen install, unit coverage, build, asset checks, Playwright |
-| Packaged demo | Both Python versions install the exact wheel offline from the wheelhouse |
+| Frontend | The existing `pnpm gate` retains Node/pnpm pins, coverage, build, assets, and Playwright |
+| Packaged demo | `uv run poe release-candidate` retains both supported Python versions and the exact wheel |
 | Installation integrity | Hash-required dependencies, no-index install, `uv pip check` |
 | User journey | Packaged Flight Recorder Playwright test against the installed CLI |
 | Performance | Existing cold-start and 20-fresh-store p95 budgets, unchanged |
-| Supply chain | Foundation guard, full-history Gitleaks, locked Python audit, pnpm audit |
+| Supply chain | Foundation guard plus the repository's existing locked Python and pnpm audits |
 | Mutation | Existing mutation command remains available; its current release status is documented |
 
 The Dagger result must retain readable sub-gate names and surface command output on failure.
@@ -253,8 +262,8 @@ Every behavioral change starts with a failing test and a witnessed expected fail
 
 ### Agentic Saga adapter
 
-- Contract tests for fixed toolchain/commands and immutable Foundation pin.
-- Orchestration tests proving guard-before-gates and all required sub-gates.
+- Contract tests for the immutable Foundation pin and the three fixed repository command calls.
+- Orchestration tests proving guard-before-commands and no duplicated thresholds or release logic.
 - Failure tests proving one failed sub-gate fails the Dagger result.
 - Workflow tests executing controlled fixtures rather than merely grepping source text.
 - Existing full Python, frontend, packaged E2E, measurement, mutation, and security contracts.
