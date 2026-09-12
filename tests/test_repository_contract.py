@@ -4,7 +4,7 @@ import inspect
 import json
 import pkgutil
 import tomllib
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from types import ModuleType
 from typing import cast
@@ -536,13 +536,15 @@ def _steps(document: dict[str, object], job_name: str = "Dagger") -> tuple[dict[
     jobs = _mapping(document["jobs"])
     assert list(jobs) == ["dagger"]
     job = _mapping(jobs["dagger"])
-    assert job["name"] == job_name and "uses" not in job
+    assert set(job) == {"name", "runs-on", "steps"}
+    assert job["name"] == job_name and job["runs-on"] == "ubuntu-latest"
     steps = job["steps"]
     assert isinstance(steps, list)
     return tuple(_mapping(step) for step in steps)
 
 
 def _assert_checkout(step: dict[str, object]) -> None:
+    assert set(step) == {"uses", "with"}
     assert step["uses"] == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
     assert _mapping(step["with"]) == {
         "fetch-depth": 0,
@@ -552,6 +554,7 @@ def _assert_checkout(step: dict[str, object]) -> None:
 
 
 def _assert_dagger(step: dict[str, object], operation: str) -> None:
+    assert set(step) == {"uses", "env", "with"}
     assert step["uses"] == "dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77"
     assert _mapping(step["env"]) == {
         "DAGGER_GIT_HTTP_AUTH_HEADER": "${{ secrets.DAGGER_GIT_HTTP_AUTH_HEADER }}"
@@ -565,13 +568,26 @@ def _assert_dagger(step: dict[str, object], operation: str) -> None:
 
 
 def _assert_ingress(document: dict[str, object], operation: str, job_name: str = "Dagger") -> None:
-    permissions = _mapping(document["permissions"])
-    assert permissions["contents"] == "read"
-    assert all(value == "read" for value in permissions.values())
+    assert _mapping(document["permissions"]) == {"contents": "read"}
     steps = _steps(document, job_name)
     assert len(steps) == 2 and all("run" not in step for step in steps)
     _assert_checkout(steps[0])
     _assert_dagger(steps[1], operation)
+
+
+def _assert_ci_triggers(triggers: Mapping[str, object]) -> None:
+    assert triggers == {
+        "pull_request": None,
+        "push": {"branches": ["main"]},
+        "workflow_dispatch": None,
+    }
+
+
+def _assert_security_triggers(triggers: Mapping[str, object]) -> None:
+    assert triggers == {
+        "schedule": [{"cron": "17 8 * * 1"}],
+        "workflow_dispatch": None,
+    }
 
 
 def _active_line_count(path: Path) -> int:
@@ -585,6 +601,7 @@ def _ingress_fixture(operation: str = "ci") -> dict[str, object]:
         "jobs": {
             "dagger": {
                 "name": "Dagger",
+                "runs-on": "ubuntu-latest",
                 "steps": [
                     {
                         "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
@@ -647,8 +664,7 @@ def test_dagger_ci_ingress_is_structurally_closed_and_exact() -> None:
     triggers = _mapping(document["on"])
 
     # Then it accepts PRs and main pushes through one closed Dagger job.
-    assert "pull_request" in triggers
-    assert _mapping(triggers["push"]) == {"branches": ["main"]}
+    _assert_ci_triggers(triggers)
     _assert_ingress(document, "ci")
 
 
@@ -660,8 +676,7 @@ def test_dagger_security_ingress_is_structurally_closed_and_exact() -> None:
     triggers = _mapping(document["on"])
 
     # Then it exposes only scheduled/manual security through one closed Dagger job.
-    assert "schedule" in triggers and "workflow_dispatch" in triggers
-    assert "pull_request" not in triggers and "push" not in triggers
+    _assert_security_triggers(triggers)
     _assert_ingress(document, "security", "Dagger security audit")
 
 
@@ -712,6 +727,109 @@ def test_dagger_ingress_rejects_untyped_or_unmasked_secret_forwarding() -> None:
             _assert_ingress(document, "ci")
 
     # Then only the named, precomputed repository secret can reach Dagger.
+
+
+def test_should_reject_conditional_dagger_step_when_validating_ingress() -> None:
+    # Given a Dagger step that can skip the required check.
+    document = _ingress_fixture()
+    _fixture_steps(document)[1]["if"] = "${{ false }}"
+
+    # When / Then the closed ingress policy is evaluated.
+    with pytest.raises(AssertionError):
+        _assert_ingress(document, "ci")
+
+
+def test_should_reject_continue_on_error_when_validating_ingress() -> None:
+    # Given a Dagger step that can hide a failed required check.
+    document = _ingress_fixture()
+    _fixture_steps(document)[1]["continue-on-error"] = True
+
+    # When / Then the closed ingress policy is evaluated.
+    with pytest.raises(AssertionError):
+        _assert_ingress(document, "ci")
+
+
+def test_should_reject_job_permission_override_when_validating_ingress() -> None:
+    # Given a job that escalates the workflow's read-only permission.
+    document = _ingress_fixture()
+    _fixture_job(document)["permissions"] = {"contents": "write"}
+
+    # When / Then the closed ingress policy is evaluated.
+    with pytest.raises(AssertionError):
+        _assert_ingress(document, "ci")
+
+
+def test_should_reject_missing_manual_trigger_when_validating_ci_events() -> None:
+    # Given CI events without the required manual entry point.
+    triggers = {"pull_request": None, "push": {"branches": ["main"]}}
+
+    # When / Then the exact CI event policy is evaluated.
+    with pytest.raises(AssertionError):
+        _assert_ci_triggers(triggers)
+
+
+def test_should_reject_extra_trigger_when_validating_ci_events() -> None:
+    # Given CI events with an unapproved scheduled entry point.
+    triggers = {
+        "pull_request": None,
+        "push": {"branches": ["main"]},
+        "workflow_dispatch": None,
+        "schedule": [{"cron": "0 0 * * *"}],
+    }
+
+    # When / Then the exact CI event policy is evaluated.
+    with pytest.raises(AssertionError):
+        _assert_ci_triggers(triggers)
+
+
+def test_should_reject_dispatch_inputs_when_validating_ci_events() -> None:
+    # Given CI events whose manual entry point accepts arbitrary inputs.
+    triggers = {
+        "pull_request": None,
+        "push": {"branches": ["main"]},
+        "workflow_dispatch": {"inputs": {"command": {"required": False}}},
+    }
+
+    # When / Then the exact CI event policy is evaluated.
+    with pytest.raises(AssertionError):
+        _assert_ci_triggers(triggers)
+
+
+def test_should_reject_wrong_cron_when_validating_security_events() -> None:
+    # Given security events with a drifted weekly schedule.
+    triggers = {
+        "schedule": [{"cron": "0 0 * * 0"}],
+        "workflow_dispatch": None,
+    }
+
+    # When / Then the exact security event policy is evaluated.
+    with pytest.raises(AssertionError):
+        _assert_security_triggers(triggers)
+
+
+def test_should_reject_extra_trigger_when_validating_security_events() -> None:
+    # Given security events with an unapproved issue entry point.
+    triggers = {
+        "schedule": [{"cron": "17 8 * * 1"}],
+        "workflow_dispatch": None,
+        "issues": None,
+    }
+
+    # When / Then the exact security event policy is evaluated.
+    with pytest.raises(AssertionError):
+        _assert_security_triggers(triggers)
+
+
+def test_should_reject_dispatch_inputs_when_validating_security_events() -> None:
+    # Given security events whose manual entry point accepts arbitrary inputs.
+    triggers = {
+        "schedule": [{"cron": "17 8 * * 1"}],
+        "workflow_dispatch": {"inputs": {"command": {"required": False}}},
+    }
+
+    # When / Then the exact security event policy is evaluated.
+    with pytest.raises(AssertionError):
+        _assert_security_triggers(triggers)
 
 
 def test_python_tooling_targets_the_supported_312_floor() -> None:
