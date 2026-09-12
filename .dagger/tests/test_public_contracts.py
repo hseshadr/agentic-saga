@@ -4,6 +4,7 @@ import ast
 import asyncio
 import importlib
 import json
+import shutil
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -89,8 +90,8 @@ BOOTSTRAP_COMMANDS = frozenset(
         ("pnpm", "exec", "playwright", "install", "--with-deps"),
     }
 )
-GIT_BINARY = "/usr/bin/git"
 GENERATED_PATHS = (".dagger/sdk/generated.py", ".dagger/.venv/pyvenv.cfg")
+GENERATED_PREFIXES = (".dagger/sdk/", ".dagger/.venv/")
 
 
 def _adapter_tree() -> ast.Module:
@@ -167,17 +168,26 @@ def _constants(tree: ast.Module) -> dict[str, object]:
     }
 
 
+def _git_binary() -> str:
+    executable = shutil.which("git")
+    assert executable is not None, "Git executable must exist on PATH"
+    assert Path(executable).is_absolute(), "Git executable must resolve to an absolute path"
+    return executable
+
+
 def _git(root: Path, *arguments: str) -> tuple[str, ...]:
-    result = subprocess.run(  # noqa: S603 - fixed Git binary interrogates a test repository.
-        [GIT_BINARY, *arguments], cwd=root, check=True, capture_output=True, text=True
+    result = subprocess.run(  # noqa: S603 - resolved absolute Git interrogates a test repository.
+        [_git_binary(), *arguments], cwd=root, check=True, capture_output=True, text=True
     )
     return tuple(line for line in result.stdout.splitlines() if line)
 
 
 def _assert_vcs_boundaries(root: Path) -> None:
-    tracked = _git(root, "ls-files", "--", ".dagger/uv.lock", *GENERATED_PATHS)
+    lock = _git(root, "ls-files", "--", ".dagger/uv.lock")
+    generated = _git(root, "ls-files", "--", *GENERATED_PREFIXES)
     ignored = _git(root, "check-ignore", "--no-index", *GENERATED_PATHS)
-    assert tracked == (".dagger/uv.lock",)
+    assert lock == (".dagger/uv.lock",)
+    assert generated == ()
     assert ignored == GENERATED_PATHS
 
 
@@ -195,13 +205,13 @@ Event = str | tuple[str, ...]
 
 @dataclass(frozen=True)
 class _FileArtifact:
-    image: str | None
+    snapshot: _Snapshot
     path: str
 
 
 @dataclass(frozen=True)
 class _DirectoryArtifact:
-    image: str | None
+    snapshot: _Snapshot
     path: str
 
 
@@ -303,10 +313,10 @@ class _Container:
         return self._next(_Snapshot(image=image, operations=("from",)))
 
     def file(self, path: str) -> _FileArtifact:
-        return _FileArtifact(self.snapshot.image, path)
+        return _FileArtifact(self.snapshot, path)
 
     def directory(self, path: str) -> _DirectoryArtifact:
-        return _DirectoryArtifact(self.snapshot.image, path)
+        return _DirectoryArtifact(self.snapshot, path)
 
     def with_file(self, path: str, source: _FileArtifact) -> _Container:
         state = replace(
@@ -453,27 +463,48 @@ def _fake_dagger(fake_dag: _Dag) -> _DaggerModule:
     return dagger
 
 
-def _adapter_module(
-    monkeypatch: pytest.MonkeyPatch, *, guard_fails: bool = False, mutation: str | None = None
-) -> tuple[ModuleType, _Trace]:
-    assert MODULE.is_file(), "the closed Agentic Saga Dagger adapter must exist"
-    trace = _Trace(guard_fails=guard_fails, mutation=mutation)
-    fake_dag = _Dag(trace)
-    dagger = _fake_dagger(fake_dag)
-    monkeypatch.setitem(sys.modules, "dagger", dagger)
-    monkeypatch.syspath_prepend(str(MODULE.parents[1]))
+def _load_adapter(
+    monkeypatch: pytest.MonkeyPatch, fake_dag: _Dag, module_root: Path | None
+) -> ModuleType:
+    monkeypatch.setitem(sys.modules, "dagger", _fake_dagger(fake_dag))
+    monkeypatch.syspath_prepend(str(MODULE.parents[1] if module_root is None else module_root))
     sys.modules.pop("agentic_saga_ci.main", None)
     sys.modules.pop("agentic_saga_ci", None)
     module = importlib.import_module("agentic_saga_ci.main")
     monkeypatch.setattr(module, "dag", fake_dag, raising=False)
-    return module, trace
+    return module
+
+
+def _adapter_module(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    guard_fails: bool = False,
+    mutation: str | None = None,
+    module_root: Path | None = None,
+) -> tuple[ModuleType, _Trace]:
+    assert MODULE.is_file(), "the closed Agentic Saga Dagger adapter must exist"
+    trace = _Trace(guard_fails=guard_fails, mutation=mutation)
+    fake_dag = _Dag(trace)
+    return _load_adapter(monkeypatch, fake_dag, module_root), trace
+
+
+def _mutated_adapter(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, original: str, replacement: str
+) -> tuple[ModuleType, _Trace]:
+    package = tmp_path / "agentic_saga_ci"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    source = MODULE.read_text()
+    assert source.count(original) == 1
+    (package / "main.py").write_text(source.replace(original, replacement))
+    return _adapter_module(monkeypatch, module_root=tmp_path)
 
 
 @dataclass(frozen=True)
 class _RuntimeView:
     image: str | None
-    files: tuple[tuple[str, str | None, str], ...]
-    directories: tuple[tuple[str, str, tuple[str, ...] | None], ...]
+    files: tuple[tuple[str, _ArtifactView], ...]
+    directories: tuple[tuple[str, str | _ArtifactView, tuple[str, ...] | None], ...]
     workdir: str | None
     environment: tuple[tuple[str, str], ...]
     commands: tuple[tuple[str, ...], ...]
@@ -481,21 +512,54 @@ class _RuntimeView:
     operations: tuple[str, ...]
 
 
-def _source_name(source: object, expected: object) -> str:
-    if source is expected:
+@dataclass(frozen=True)
+class _ArtifactView:
+    path: str
+    origin: _RuntimeView
+
+
+_Artifact = _FileArtifact | _DirectoryArtifact
+
+
+def _artifact_view(artifact: _Artifact, source: object, ancestors: frozenset[int]) -> _ArtifactView:
+    return _ArtifactView(artifact.path, _runtime_view(artifact.snapshot, source, ancestors))
+
+
+def _directory_source_view(
+    value: object, source: object, ancestors: frozenset[int]
+) -> str | _ArtifactView:
+    if value is source:
         return "source"
-    assert isinstance(source, _DirectoryArtifact)
-    return f"{source.image}:{source.path}"
+    assert isinstance(value, _DirectoryArtifact), "unknown directory source"
+    return _artifact_view(value, source, ancestors)
 
 
-def _runtime_view(snapshot: _Snapshot, source: object) -> _RuntimeView:
+def _file_views(
+    snapshot: _Snapshot, source: object, ancestors: frozenset[int]
+) -> tuple[tuple[str, _ArtifactView], ...]:
+    return tuple(
+        (item.path, _artifact_view(item.source, source, ancestors)) for item in snapshot.files
+    )
+
+
+def _directory_views(
+    snapshot: _Snapshot, source: object, ancestors: frozenset[int]
+) -> tuple[tuple[str, str | _ArtifactView, tuple[str, ...] | None], ...]:
+    return tuple(
+        (item.path, _directory_source_view(item.source, source, ancestors), item.include)
+        for item in snapshot.directories
+    )
+
+
+def _runtime_view(
+    snapshot: _Snapshot, source: object, ancestors: frozenset[int] = frozenset()
+) -> _RuntimeView:
+    assert id(snapshot) not in ancestors, "cyclic artifact ancestry is forbidden"
+    nested = ancestors | {id(snapshot)}
     return _RuntimeView(
         snapshot.image,
-        tuple((item.path, item.source.image, item.source.path) for item in snapshot.files),
-        tuple(
-            (item.path, _source_name(item.source, source), item.include)
-            for item in snapshot.directories
-        ),
+        _file_views(snapshot, source, nested),
+        _directory_views(snapshot, source, nested),
         snapshot.workdir,
         snapshot.environment,
         snapshot.commands,
@@ -508,7 +572,9 @@ UV_SYNC = ("uv", "sync", "--frozen", "--all-groups", "--all-extras")
 COREPACK = ("corepack", "enable")
 PNPM_INSTALL = ("pnpm", "install", "--frozen-lockfile")
 PLAYWRIGHT = ("pnpm", "exec", "playwright", "install", "--with-deps")
-UV_FILE = (("/usr/local/bin/uv", UV_IMAGE, "/uv"),)
+UV_ORIGIN = _RuntimeView(UV_IMAGE, (), (), None, (), (), (), ("from",))
+NODE_ORIGIN = _RuntimeView(NODE_IMAGE, (), (), None, (), (), (), ("from",))
+UV_FILE = (("/usr/local/bin/uv", _ArtifactView("/uv", UV_ORIGIN)),)
 SOURCE_DIRECTORY = (("/src", "source", None),)
 PYTHON_ENV = (("UV_PROJECT_ENVIRONMENT", "/opt/venv"),)
 NODE_ENV = (("CI", "1"),)
@@ -556,7 +622,7 @@ RELEASE_VIEW = _RuntimeView(
         *SOURCE_DIRECTORY,
         (
             "/usr/local",
-            f"{NODE_IMAGE}:/usr/local",
+            _ArtifactView("/usr/local", NODE_ORIGIN),
             tuple(["bin/corepack", "bin/node", "bin/npm", "bin/npx", "lib/node_modules/**"]),
         ),
     ),
@@ -598,6 +664,17 @@ SECURITY_VIEW = _RuntimeView(
         "with_exec",
         "with_exec",
     ),
+)
+EXPECTED_CI_VIEWS = (PYTHON_GATE_VIEW, FRONTEND_GATE_VIEW, RELEASE_VIEW)
+UV_EXTRACTION = 'uv = dag.container().from_(UV_IMAGE).file("/uv")'
+UV_OVERWRITE = (
+    'uv = dag.container().from_(UV_IMAGE).with_file("/uv", '
+    'dag.container().from_(PYTHON_IMAGE).file("/etc/passwd")).file("/uv")'
+)
+NODE_EXTRACTION = 'node = dag.container().from_(NODE_IMAGE).directory("/usr/local")'
+NODE_OVERLAY = (
+    'node = dag.container().from_(NODE_IMAGE).with_directory("/usr/local", '
+    'base.directory(SOURCE_ROOT)).directory("/usr/local")'
 )
 
 
@@ -711,7 +788,7 @@ def test_should_commit_lock_and_ignore_generated_sdk() -> None:
     assert ".dagger/uv.lock" in included
 
 
-def _poisoned_repository(tmp_path: Path) -> Path:
+def _poisoned_repository(tmp_path: Path, poisoned_path: str) -> Path:
     repository = tmp_path / "repository"
     (repository / ".dagger/sdk").mkdir(parents=True)
     (repository / ".dagger/.venv").mkdir()
@@ -719,20 +796,53 @@ def _poisoned_repository(tmp_path: Path) -> Path:
     (repository / ".dagger/uv.lock").write_text("lock")
     (repository / ".dagger/sdk/generated.py").write_text("generated")
     (repository / ".dagger/.venv/pyvenv.cfg").write_text("generated")
+    poisoned = repository / poisoned_path
+    poisoned.parent.mkdir(parents=True, exist_ok=True)
+    poisoned.write_text("poison")
     _git(repository, "init", "--quiet")
     _git(repository, "add", ".gitignore", ".dagger/uv.lock")
-    _git(repository, "add", "--force", ".dagger/sdk/generated.py")
+    _git(repository, "add", "--force", poisoned_path)
     return repository
 
 
-def test_should_reject_generated_state_forced_into_a_git_index(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "poisoned_path",
+    (".dagger/sdk/client/internal.py", ".dagger/.venv/lib/python3.13/site-packages/bad.py"),
+)
+def test_should_reject_generated_state_forced_into_a_git_index(
+    tmp_path: Path, poisoned_path: str
+) -> None:
     # Given an isolated repository with production ignores and one poisoned index entry.
-    repository = _poisoned_repository(tmp_path)
+    repository = _poisoned_repository(tmp_path, poisoned_path)
 
     # When the closed VCS boundary evaluates the isolated index.
     # Then force-added generated SDK state is rejected without touching the real worktree.
     with pytest.raises(AssertionError):
         _assert_vcs_boundaries(repository)
+
+
+def test_should_resolve_git_from_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Given an absolute Git executable returned by the active PATH.
+    executable = shutil.which("git")
+    assert executable is not None
+    calls: list[str] = []
+    monkeypatch.setattr(shutil, "which", lambda name: calls.append(name) or executable)
+
+    # When a real VCS boundary interrogates the worktree.
+    _git(ROOT, "status", "--short")
+
+    # Then it resolves and uses Git from PATH for that invocation.
+    assert calls == ["git"]
+
+
+def test_should_fail_closed_when_git_is_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Given no Git executable on the active PATH.
+    monkeypatch.setattr(shutil, "which", lambda _: None)
+
+    # When the VCS boundary tries to execute Git.
+    # Then missing tooling cannot silently fall back to a fixed host path.
+    with pytest.raises(AssertionError, match="Git executable"):
+        _git(ROOT, "status", "--short")
 
 
 def test_should_not_attach_shared_mutable_caches_to_product_containers() -> None:
@@ -789,8 +899,7 @@ def test_should_capture_complete_immutable_product_snapshot_lineage(
 
     # Then each product command retains a distinct complete runtime ancestry.
     assert trace.git_tree is not None
-    expected = (PYTHON_GATE_VIEW, FRONTEND_GATE_VIEW, RELEASE_VIEW)
-    _assert_runtime_lineage(trace, trace.git_tree, expected)
+    _assert_runtime_lineage(trace, trace.git_tree, EXPECTED_CI_VIEWS)
 
 
 def test_should_capture_complete_security_boundary_and_lineage(
@@ -810,6 +919,37 @@ def test_should_capture_complete_security_boundary_and_lineage(
     _assert_runtime_lineage(trace, source, (SECURITY_VIEW,))
 
 
+@pytest.mark.parametrize(
+    ("original", "replacement"),
+    ((UV_EXTRACTION, UV_OVERWRITE), (NODE_EXTRACTION, NODE_OVERLAY)),
+)
+def test_should_reject_tainted_runtime_artifact_ancestry(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, original: str, replacement: str
+) -> None:
+    # Given production source that extracts a runtime artifact after an unsafe overlay.
+    module, trace = _mutated_adapter(monkeypatch, tmp_path, original, replacement)
+    asyncio.run(module.AgenticSaga().ci(object(), "a" * 40, object()))
+
+    # When complete public-CI runtime ancestry is compared.
+    # Then neither overwritten uv nor repository-overlaid Node contents can false-green.
+    assert trace.git_tree is not None
+    with pytest.raises(AssertionError):
+        _assert_runtime_lineage(trace, trace.git_tree, EXPECTED_CI_VIEWS)
+
+
+def test_should_fail_closed_on_cyclic_artifact_ancestry() -> None:
+    # Given a deliberately corrupted file artifact whose origin contains itself.
+    origin = _Snapshot()
+    artifact = _FileArtifact(origin, "/uv")
+    cyclic = replace(origin, files=(_FileMount("/uv", artifact),))
+    object.__setattr__(artifact, "snapshot", cyclic)
+
+    # When recursive ancestry is rendered for comparison.
+    # Then a cycle is rejected rather than looping or skipping nested mounts.
+    with pytest.raises(AssertionError, match="cyclic artifact ancestry"):
+        _runtime_view(cyclic, object())
+
+
 @pytest.mark.parametrize("mutation", ("wrong-workdir", "secret-mount"))
 def test_should_reject_unsafe_release_container_lineage_mutations(
     monkeypatch: pytest.MonkeyPatch, mutation: str
@@ -822,9 +962,8 @@ def test_should_reject_unsafe_release_container_lineage_mutations(
 
     # Then wrong workdirs and mounted credentials cannot false-green.
     assert trace.git_tree is not None
-    expected = (PYTHON_GATE_VIEW, FRONTEND_GATE_VIEW, RELEASE_VIEW)
     with pytest.raises(AssertionError):
-        _assert_runtime_lineage(trace, trace.git_tree, expected)
+        _assert_runtime_lineage(trace, trace.git_tree, EXPECTED_CI_VIEWS)
 
 
 @pytest.mark.parametrize(
