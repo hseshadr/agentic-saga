@@ -1,6 +1,6 @@
 # Agentic Saga Dagger Portfolio Integration Design
 
-**Date:** 2026-09-12  
+**Date:** 2026-09-12
 **Status:** Revised after written-spec review; awaiting approval
 **Repositories:** `hseshadr/ci`, `hseshadr/agentic-saga`, `project-ideas`
 
