@@ -511,57 +511,90 @@ def test_contributor_guide_contains_required_workflow() -> None:
     assert all(value in contributing for value in required)
 
 
-def test_workflows_use_sha_pinned_shared_ci() -> None:
-    workflows = "\n".join(
-        path.read_text() for path in (ROOT / ".github" / "workflows").glob("*.yml")
+def _dagger_workflow(filename: str) -> str:
+    path = ROOT / ".github/workflows" / filename
+    assert path.is_file(), f"{filename} must be a Dagger ingress workflow"
+    return path.read_text()
+
+
+def test_workflows_are_only_two_action_dagger_ingress() -> None:
+    # Given repository-authored workflows.
+    workflows = ROOT / ".github/workflows"
+
+    # When their execution surfaces are inventoried.
+    actual = {path.name for path in workflows.glob("*.yml")}
+
+    # Then GitHub routes events through only the CI and scheduled-security Dagger actions.
+    assert actual == {"dagger.yml", "dagger-security.yml"}
+
+
+def test_dagger_ci_ingress_binds_the_exact_checked_out_commit() -> None:
+    # Given the protected Dagger workflow.
+    workflow = _dagger_workflow("dagger.yml")
+
+    # When its checkout and Dagger invocation are inspected.
+    required = (
+        "name: Dagger",
+        "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+        "fetch-depth: 0",
+        "ref: ${{ github.sha }}",
+        "persist-credentials: false",
+        "dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77",
+        'version: "0.21.8"',
+        "ci --source=. --commit-sha=${{ github.sha }} --git-auth-header=env:GIT_AUTH_HEADER",
     )
-    shared_ref = "@8166345c9355dde54c12fa95d0457c4ea97d3e64"
-    callers = (
-        "python-gate.yml",
-        "secret-scan.yml",
-        "security-audit.yml",
+
+    # Then the public CI call receives full history and one immutable commit identity.
+    assert all(boundary in workflow for boundary in required)
+
+
+def test_dagger_security_ingress_is_scheduled_and_calls_only_security() -> None:
+    # Given the non-protecting Dagger security workflow.
+    workflow = _dagger_workflow("dagger-security.yml")
+
+    # When its event and Dagger boundary are inspected.
+    required = (
+        "schedule:",
+        "workflow_dispatch:",
+        "fetch-depth: 0",
+        "ref: ${{ github.sha }}",
+        "persist-credentials: false",
+        "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+        "dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77",
+        'version: "0.21.8"',
+        "security --source=. --commit-sha=${{ github.sha }} --git-auth-header=env:GIT_AUTH_HEADER",
     )
-    assert all(
-        f"uses: hseshadr/ci/.github/workflows/{caller}{shared_ref}" in workflows
-        for caller in callers
+
+    # Then scheduled ingress invokes only the closed security operation.
+    assert all(boundary in workflow for boundary in required)
+    assert "pull_request:" not in workflow and "push:" not in workflow
+
+
+def test_dagger_ingress_forwards_a_masked_typed_git_header() -> None:
+    # Given both typed Dagger calls.
+    workflows = (_dagger_workflow("dagger.yml"), _dagger_workflow("dagger-security.yml"))
+
+    # When their credential boundaries are inspected.
+    header = 'GIT_AUTH_HEADER: "Authorization: Bearer ${{ github.token }}"'
+    typed_argument = "--git-auth-header=env:GIT_AUTH_HEADER"
+
+    # Then checkout credentials stay disabled and only Dagger receives the masked header.
+    assert all(header in workflow and typed_argument in workflow for workflow in workflows)
+
+
+def test_dagger_ingress_has_no_legacy_or_shell_execution_surface() -> None:
+    # Given every remaining Dagger ingress workflow.
+    sources = tuple(
+        _dagger_workflow(filename) for filename in ("dagger.yml", "dagger-security.yml")
     )
-    assert workflows.count(shared_ref) == 7
-    assert "@main" not in workflows
-    assert "@ci-v" not in workflows.replace("# ci-v3.3.0", "")
+    workflows = "\n".join(sources)
 
+    # When hosted execution mechanisms are inspected.
+    forbidden = ("- run:", "actions/setup-", "actions/cache@", "hseshadr/ci/", "@main")
 
-def test_security_schedule_requests_full_history() -> None:
-    workflow = (ROOT / ".github/workflows/security-audit.yml").read_text()
-    assert _contains_sequence(workflow, ("on:", "  schedule:", '    - cron: "17 8 * * 1"'))
-    assert _contains_sequence(workflow, ("    with:", "      full-history: true"))
-    assert _contains_sequence(workflow, ("    with:", "      run-python-audit: true"))
-
-
-def test_ci_triggers_main_push_and_pull_request() -> None:
-    workflow = (ROOT / ".github/workflows/ci.yml").read_text()
-    assert _contains_sequence(workflow, ("on:", "  push:", "    branches: [main]"))
-    assert _contains_sequence(workflow, ("  pull_request:",))
-
-
-def test_workflows_grant_read_only_permissions() -> None:
-    for filename in ("ci.yml", "security-audit.yml"):
-        workflow = (ROOT / ".github/workflows" / filename).read_text()
-        permissions = workflow.split("permissions:", 1)[1].split("\n\n", 1)[0]
-        assert _contains_sequence(permissions, ("  contents: read", "  pull-requests: read"))
-        assert "write" not in permissions
-
-
-def test_ci_python_gate_uses_the_supported_locked_matrix() -> None:
-    workflow = (ROOT / ".github/workflows/ci.yml").read_text()
-    expected = (
-        "    strategy:",
-        "      fail-fast: false",
-        "      matrix:",
-        '        python-version: ["3.12", "3.13"]',
-    )
-    assert _contains_sequence(workflow, expected)
-    assert "      python-version: ${{ matrix.python-version }}" in workflow
-    assert '      sync-args: "--frozen --group dev"' in workflow
+    # Then GitHub contains transport only; Dagger owns command execution.
+    assert all(source.count("- uses:") == 2 for source in sources)
+    assert not any(boundary in workflows for boundary in forbidden)
 
 
 def test_python_tooling_targets_the_supported_312_floor() -> None:
@@ -577,72 +610,6 @@ def test_python_tooling_targets_the_supported_312_floor() -> None:
         ),
         "env": {"MYPYPATH": "src"},
     }
-
-
-def test_frontend_ci_uses_the_exact_frozen_toolchain() -> None:
-    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
-    audit = (ROOT / ".github" / "workflows" / "security-audit.yml").read_text()
-    required = (
-        "working-directory: web/flight-recorder",
-        "package-json-file: web/flight-recorder/package.json",
-        "cache-dependency-path: web/flight-recorder/pnpm-lock.yaml",
-        'node-version: "24"',
-        'install-args: "--frozen-lockfile"',
-        "run: pnpm exec playwright install --with-deps chromium",
-        "run: pnpm gate",
-    )
-    assert all(value in ci for value in required)
-    assert "run-pnpm-audit: true" in audit
-    assert "frontend-working-directory: web/flight-recorder" in audit
-    assert "secrets: inherit" not in ci
-
-
-def test_ci_runs_the_packaged_browser_and_offline_release_measurement() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
-    shared_ref = "@8166345c9355dde54c12fa95d0457c4ea97d3e64"
-    packaged = workflow.split("  packaged-demo:", 1)[1].split("\n  secrets:", 1)[0]
-
-    assert "  packaged-demo:" in workflow
-    assert _contains_sequence(
-        packaged,
-        (
-            "    strategy:",
-            "      fail-fast: false",
-            "      matrix:",
-            '        python-version: ["3.12", "3.13"]',
-        ),
-    )
-    assert "          python-version: ${{ matrix.python-version }}" in packaged
-    assert "    timeout-minutes: 30" in packaged
-    for action in ("setup-python-uv", "setup-pnpm"):
-        assert f"uses: hseshadr/ci/.github/actions/{action}{shared_ref}" in workflow
-    assert "hseshadr/ci/.github/actions/setup-playwright" not in workflow
-    assert packaged.count("pnpm exec playwright install --with-deps chromium") == 1
-    setup_pnpm = packaged.split("actions/setup-pnpm", 1)[1].split("      - uses:", 1)[0]
-    assert '          node-version: "24"' in setup_pnpm
-    assert '          install-args: "--frozen-lockfile"' in setup_pnpm
-    required_commands = (
-        "uv run poe artifacts",
-        "uv venv --offline --no-python-downloads --python "
-        "${{ matrix.python-version }} .venv-package",
-        "uv pip install --offline --no-python-downloads --no-index "
-        "--find-links dist/release/wheelhouse --python .venv-package/bin/python "
-        "--require-hashes -r dist/release/runtime-requirements.txt",
-        "uv pip install --offline --no-python-downloads --python "
-        ".venv-package/bin/python --no-deps dist/release/*.whl",
-        "uv pip check --offline --no-python-downloads --python .venv-package/bin/python",
-    )
-    assert all(command in packaged for command in required_commands)
-    assert '          UV_OFFLINE: "1"' in packaged
-    assert "          UV_PYTHON_DOWNLOADS: never" in packaged
-    browser = packaged.split("      - name: Exercise", 1)[1].split("      - name: Enforce", 1)[0]
-    measurement = packaged.split("      - name: Enforce", 1)[1]
-    assert '          npm_config_offline: "true"' in browser
-    assert '          UV_OFFLINE: "1"' in measurement
-    assert "          UV_PYTHON_DOWNLOADS: never" in measurement
-    assert '          npm_config_offline: "true"' in measurement
-    assert "pnpm test:e2e:packaged" in workflow
-    assert "uv run python scripts/measure_release.py" in workflow
 
 
 def test_flight_recorder_pins_its_package_manager_and_lockfile() -> None:
@@ -707,8 +674,6 @@ def test_flight_recorder_dev_server_is_loopback_only() -> None:
     wildcard_host = ".".join(("0", "0", "0", "0"))
     sources = [
         ROOT / "docs" / "flight-recorder.md",
-        ROOT / ".github" / "workflows" / "ci.yml",
-        ROOT / ".github" / "workflows" / "security-audit.yml",
     ]
 
     assert package["scripts"]["dev"] == "vite --host 127.0.0.1"
