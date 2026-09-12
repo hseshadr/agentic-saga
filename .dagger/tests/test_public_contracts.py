@@ -4,8 +4,10 @@ import ast
 import asyncio
 import importlib
 import json
+import subprocess
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import ModuleType
 from typing import cast
@@ -87,6 +89,8 @@ BOOTSTRAP_COMMANDS = frozenset(
         ("pnpm", "exec", "playwright", "install", "--with-deps"),
     }
 )
+GIT_BINARY = "/usr/bin/git"
+GENERATED_PATHS = (".dagger/sdk/generated.py", ".dagger/.venv/pyvenv.cfg")
 
 
 def _adapter_tree() -> ast.Module:
@@ -163,6 +167,20 @@ def _constants(tree: ast.Module) -> dict[str, object]:
     }
 
 
+def _git(root: Path, *arguments: str) -> tuple[str, ...]:
+    result = subprocess.run(  # noqa: S603 - fixed Git binary interrogates a test repository.
+        [GIT_BINARY, *arguments], cwd=root, check=True, capture_output=True, text=True
+    )
+    return tuple(line for line in result.stdout.splitlines() if line)
+
+
+def _assert_vcs_boundaries(root: Path) -> None:
+    tracked = _git(root, "ls-files", "--", ".dagger/uv.lock", *GENERATED_PATHS)
+    ignored = _git(root, "check-ignore", "--no-index", *GENERATED_PATHS)
+    assert tracked == (".dagger/uv.lock",)
+    assert ignored == GENERATED_PATHS
+
+
 def _decorator(value: object | None = None, **_: object) -> object:
     return (lambda target: target) if value is None else value
 
@@ -175,12 +193,56 @@ class _DaggerModule(ModuleType):
 Event = str | tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class _FileArtifact:
+    image: str | None
+    path: str
+
+
+@dataclass(frozen=True)
+class _DirectoryArtifact:
+    image: str | None
+    path: str
+
+
+@dataclass(frozen=True)
+class _FileMount:
+    path: str
+    source: _FileArtifact
+
+
+@dataclass(frozen=True)
+class _DirectoryMount:
+    path: str
+    source: object
+    include: tuple[str, ...] | None
+
+
+@dataclass(frozen=True)
+class _Snapshot:
+    image: str | None = None
+    files: tuple[_FileMount, ...] = ()
+    directories: tuple[_DirectoryMount, ...] = ()
+    workdir: str | None = None
+    environment: tuple[tuple[str, str], ...] = ()
+    commands: tuple[tuple[str, ...], ...] = ()
+    secret_mounts: tuple[str, ...] = ()
+    operations: tuple[str, ...] = ()
+
+
 class _Trace:
-    def __init__(self, *, guard_fails: bool = False) -> None:
+    def __init__(self, *, guard_fails: bool = False, mutation: str | None = None) -> None:
         self.events: list[Event] = []
         self.guard_fails = guard_fails
+        self.mutation = mutation
         self.git_calls: list[tuple[str, object, str, int, bool]] = []
         self.images: list[str] = []
+        self.product_snapshots: list[_Snapshot] = []
+        self.sync_snapshots: list[_Snapshot] = []
+        self.guard_calls: list[tuple[object, str, str, object]] = []
+        self.audit_calls: list[tuple[object, str, str, object]] = []
+        self.audit_syncs = 0
+        self.git_tree: object | None = None
 
     def record(self, event: Event) -> None:
         self.events.append(event)
@@ -202,43 +264,112 @@ async def _generated_module_product_mutation(dag: _Dag) -> None:
 
 
 class _Container:
-    def __init__(self, trace: _Trace) -> None:
+    def __init__(self, trace: _Trace, snapshot: _Snapshot | None = None) -> None:
         self.trace = trace
+        self.snapshot = _Snapshot() if snapshot is None else snapshot
+
+    def _next(self, snapshot: _Snapshot) -> _Container:
+        return _Container(self.trace, snapshot)
+
+    def _release_mutation(self, command: tuple[str, ...]) -> _Snapshot:
+        if command != ("uv", "run", "poe", "release-candidate"):
+            return self.snapshot
+        if self.trace.mutation == "wrong-workdir":
+            return replace(
+                self.snapshot, workdir="/", operations=(*self.snapshot.operations, "with_workdir")
+            )
+        if self.trace.mutation == "secret-mount":
+            return replace(
+                self.snapshot,
+                secret_mounts=("/run/git-auth",),
+                operations=(*self.snapshot.operations, "with_mounted_secret"),
+            )
+        return self.snapshot
 
     def with_exec(self, command: list[str]) -> _Container:
-        self.trace.record(tuple(command))
-        return self
+        value = tuple(command)
+        state = self._release_mutation(value)
+        state = replace(
+            state, commands=(*state.commands, value), operations=(*state.operations, "with_exec")
+        )
+        result = self._next(state)
+        self.trace.record(value)
+        if value not in BOOTSTRAP_COMMANDS:
+            self.trace.product_snapshots.append(state)
+        return result
 
     def from_(self, image: str) -> _Container:
         self.trace.images.append(image)
-        return self
+        return self._next(_Snapshot(image=image, operations=("from",)))
+
+    def file(self, path: str) -> _FileArtifact:
+        return _FileArtifact(self.snapshot.image, path)
+
+    def directory(self, path: str) -> _DirectoryArtifact:
+        return _DirectoryArtifact(self.snapshot.image, path)
+
+    def with_file(self, path: str, source: _FileArtifact) -> _Container:
+        state = replace(
+            self.snapshot,
+            files=(*self.snapshot.files, _FileMount(path, source)),
+            operations=(*self.snapshot.operations, "with_file"),
+        )
+        return self._next(state)
+
+    def with_directory(
+        self, path: str, source: object, *, include: list[str] | None = None
+    ) -> _Container:
+        mount = _DirectoryMount(path, source, None if include is None else tuple(include))
+        state = replace(
+            self.snapshot,
+            directories=(*self.snapshot.directories, mount),
+            operations=(*self.snapshot.operations, "with_directory"),
+        )
+        return self._next(state)
+
+    def with_workdir(self, path: str) -> _Container:
+        state = replace(
+            self.snapshot, workdir=path, operations=(*self.snapshot.operations, "with_workdir")
+        )
+        return self._next(state)
+
+    def with_env_variable(self, name: str, value: str) -> _Container:
+        state = replace(
+            self.snapshot,
+            environment=(*self.snapshot.environment, (name, value)),
+            operations=(*self.snapshot.operations, "with_env_variable"),
+        )
+        return self._next(state)
 
     async def sync(self) -> _Container:
         self.trace.record(("container-sync",))
+        self.trace.sync_snapshots.append(self.snapshot)
         return self
 
-    def __getattr__(self, name: str) -> Callable[..., _Container]:
-        configuration = {
-            "directory",
-            "file",
-            "with_directory",
-            "with_env_variable",
-            "with_file",
-            "with_secret_variable",
-            "with_workdir",
-        }
-        if name in configuration:
-            return lambda *_args, **_kwargs: self
+    def __getattr__(self, name: str) -> object:
         raise AttributeError(f"unknown container operation: {name}")
+
+
+class _Audit:
+    def __init__(self, trace: _Trace) -> None:
+        self.trace = trace
+
+    async def sync(self) -> _Audit:
+        self.trace.record(("container-sync",))
+        self.trace.audit_syncs += 1
+        return self
 
 
 class _PythonPackage:
     def __init__(self, trace: _Trace) -> None:
         self.trace = trace
 
-    def dependency_audit(self, *_: object, **__: object) -> _Container:
+    def dependency_audit(
+        self, *, source: object, repository: str, commit_sha: str, http_auth_header: object
+    ) -> _Audit:
         self.trace.record(("dependency-audit",))
-        return _Container(self.trace)
+        self.trace.audit_calls.append((source, repository, commit_sha, http_auth_header))
+        return _Audit(self.trace)
 
     def __getattr__(self, name: str) -> object:
         raise AttributeError(f"unknown python-package operation: {name}")
@@ -259,8 +390,11 @@ class _Foundation:
     def __init__(self, trace: _Trace) -> None:
         self.trace = trace
 
-    def guard(self, *_: object, **__: object) -> _Guard:
+    def guard(
+        self, *, source: object, repository: str, commit_sha: str, http_auth_header: object
+    ) -> _Guard:
         self.trace.record("guard")
+        self.trace.guard_calls.append((source, repository, commit_sha, http_auth_header))
         return _Guard(self.trace)
 
 
@@ -276,7 +410,8 @@ class _GitCommit:
             (self.repository, self.auth, self.commit_sha, depth, include_tags)
         )
         self.trace.record("git-tree")
-        return object()
+        self.trace.git_tree = object()
+        return self.trace.git_tree
 
 
 class _GitRepository:
@@ -302,9 +437,6 @@ class _Dag:
     def container(self) -> _Container:
         return _Container(self.trace)
 
-    def cache_volume(self, _: str) -> object:
-        raise AssertionError("shared mutable caches are forbidden")
-
     def git(self, repository: str, *, http_auth_header: object) -> _GitRepository:
         return _GitRepository(self.trace, repository, http_auth_header)
 
@@ -312,17 +444,22 @@ class _Dag:
         raise AttributeError(f"unknown Dagger operation: {name}")
 
 
-def _adapter_module(
-    monkeypatch: pytest.MonkeyPatch, *, guard_fails: bool = False
-) -> tuple[ModuleType, _Trace]:
-    assert MODULE.is_file(), "the closed Agentic Saga Dagger adapter must exist"
-    trace = _Trace(guard_fails=guard_fails)
-    fake_dag = _Dag(trace)
+def _fake_dagger(fake_dag: _Dag) -> _DaggerModule:
     dagger = _DaggerModule("dagger")
     dagger.function = _decorator
     dagger.object_type = _decorator
     dagger.check = _decorator
     dagger.dag = fake_dag
+    return dagger
+
+
+def _adapter_module(
+    monkeypatch: pytest.MonkeyPatch, *, guard_fails: bool = False, mutation: str | None = None
+) -> tuple[ModuleType, _Trace]:
+    assert MODULE.is_file(), "the closed Agentic Saga Dagger adapter must exist"
+    trace = _Trace(guard_fails=guard_fails, mutation=mutation)
+    fake_dag = _Dag(trace)
+    dagger = _fake_dagger(fake_dag)
     monkeypatch.setitem(sys.modules, "dagger", dagger)
     monkeypatch.syspath_prepend(str(MODULE.parents[1]))
     sys.modules.pop("agentic_saga_ci.main", None)
@@ -330,6 +467,150 @@ def _adapter_module(
     module = importlib.import_module("agentic_saga_ci.main")
     monkeypatch.setattr(module, "dag", fake_dag, raising=False)
     return module, trace
+
+
+@dataclass(frozen=True)
+class _RuntimeView:
+    image: str | None
+    files: tuple[tuple[str, str | None, str], ...]
+    directories: tuple[tuple[str, str, tuple[str, ...] | None], ...]
+    workdir: str | None
+    environment: tuple[tuple[str, str], ...]
+    commands: tuple[tuple[str, ...], ...]
+    secret_mounts: tuple[str, ...]
+    operations: tuple[str, ...]
+
+
+def _source_name(source: object, expected: object) -> str:
+    if source is expected:
+        return "source"
+    assert isinstance(source, _DirectoryArtifact)
+    return f"{source.image}:{source.path}"
+
+
+def _runtime_view(snapshot: _Snapshot, source: object) -> _RuntimeView:
+    return _RuntimeView(
+        snapshot.image,
+        tuple((item.path, item.source.image, item.source.path) for item in snapshot.files),
+        tuple(
+            (item.path, _source_name(item.source, source), item.include)
+            for item in snapshot.directories
+        ),
+        snapshot.workdir,
+        snapshot.environment,
+        snapshot.commands,
+        snapshot.secret_mounts,
+        snapshot.operations,
+    )
+
+
+UV_SYNC = ("uv", "sync", "--frozen", "--all-groups", "--all-extras")
+COREPACK = ("corepack", "enable")
+PNPM_INSTALL = ("pnpm", "install", "--frozen-lockfile")
+PLAYWRIGHT = ("pnpm", "exec", "playwright", "install", "--with-deps")
+UV_FILE = (("/usr/local/bin/uv", UV_IMAGE, "/uv"),)
+SOURCE_DIRECTORY = (("/src", "source", None),)
+PYTHON_ENV = (("UV_PROJECT_ENVIRONMENT", "/opt/venv"),)
+NODE_ENV = (("CI", "1"),)
+PYTHON_GATE_VIEW = _RuntimeView(
+    PYTHON_IMAGE,
+    UV_FILE,
+    SOURCE_DIRECTORY,
+    "/src",
+    PYTHON_ENV,
+    (UV_SYNC, ("uv", "run", "poe", "gate")),
+    (),
+    (
+        "from",
+        "with_file",
+        "with_directory",
+        "with_workdir",
+        "with_env_variable",
+        "with_exec",
+        "with_exec",
+    ),
+)
+FRONTEND_GATE_VIEW = _RuntimeView(
+    NODE_IMAGE,
+    (),
+    SOURCE_DIRECTORY,
+    "/src/web/flight-recorder",
+    NODE_ENV,
+    (COREPACK, PNPM_INSTALL, PLAYWRIGHT, ("pnpm", "gate")),
+    (),
+    (
+        "from",
+        "with_directory",
+        "with_workdir",
+        "with_env_variable",
+        "with_exec",
+        "with_exec",
+        "with_exec",
+        "with_exec",
+    ),
+)
+RELEASE_VIEW = _RuntimeView(
+    PYTHON_IMAGE,
+    UV_FILE,
+    (
+        *SOURCE_DIRECTORY,
+        (
+            "/usr/local",
+            f"{NODE_IMAGE}:/usr/local",
+            tuple(["bin/corepack", "bin/node", "bin/npm", "bin/npx", "lib/node_modules/**"]),
+        ),
+    ),
+    "/src",
+    (*PYTHON_ENV, *NODE_ENV),
+    (UV_SYNC, COREPACK, PNPM_INSTALL, PLAYWRIGHT, ("uv", "run", "poe", "release-candidate")),
+    (),
+    (
+        "from",
+        "with_file",
+        "with_directory",
+        "with_workdir",
+        "with_env_variable",
+        "with_exec",
+        "with_directory",
+        "with_workdir",
+        "with_env_variable",
+        "with_exec",
+        "with_exec",
+        "with_exec",
+        "with_workdir",
+        "with_exec",
+    ),
+)
+SECURITY_VIEW = _RuntimeView(
+    NODE_IMAGE,
+    (),
+    SOURCE_DIRECTORY,
+    "/src/web/flight-recorder",
+    NODE_ENV,
+    (COREPACK, PNPM_INSTALL, ("pnpm", "audit")),
+    (),
+    (
+        "from",
+        "with_directory",
+        "with_workdir",
+        "with_env_variable",
+        "with_exec",
+        "with_exec",
+        "with_exec",
+    ),
+)
+
+
+def _assert_runtime_lineage(
+    trace: _Trace, source: object, expected: tuple[_RuntimeView, ...]
+) -> None:
+    actual = tuple(_runtime_view(snapshot, source) for snapshot in trace.product_snapshots)
+    assert actual == expected
+    assert len(trace.sync_snapshots) == len(trace.product_snapshots)
+    assert all(
+        product is synchronized
+        for product, synchronized in zip(trace.product_snapshots, trace.sync_snapshots, strict=True)
+    )
 
 
 def test_should_detect_all_legal_function_decorator_forms() -> None:
@@ -419,16 +700,39 @@ def test_should_pin_exact_runtime_images_and_python_base() -> None:
 
 
 def test_should_commit_lock_and_ignore_generated_sdk() -> None:
-    # Given the generated module's reproducibility inputs.
+    # Given the generated module's reproducibility and VCS boundaries.
     config = cast(dict[str, object], json.loads((ROOT / "dagger.json").read_text()))
     included = cast(list[str], config["include"])
-    lock = ROOT / ".dagger" / "uv.lock"
 
-    # When committed inputs and ignore boundaries are inspected.
-    # Then the lock is tracked while generated and local state stays excluded.
-    assert lock.is_file() and ".dagger/uv.lock" in included
-    ignores = set((ROOT / ".gitignore").read_text().splitlines())
-    assert {".dagger/.venv/", ".dagger/sdk/"} <= ignores
+    # When the real Git index and ignore engine are queried.
+    _assert_vcs_boundaries(ROOT)
+
+    # Then the tracked lock remains an explicit module input.
+    assert ".dagger/uv.lock" in included
+
+
+def _poisoned_repository(tmp_path: Path) -> Path:
+    repository = tmp_path / "repository"
+    (repository / ".dagger/sdk").mkdir(parents=True)
+    (repository / ".dagger/.venv").mkdir()
+    (repository / ".gitignore").write_text((ROOT / ".gitignore").read_text())
+    (repository / ".dagger/uv.lock").write_text("lock")
+    (repository / ".dagger/sdk/generated.py").write_text("generated")
+    (repository / ".dagger/.venv/pyvenv.cfg").write_text("generated")
+    _git(repository, "init", "--quiet")
+    _git(repository, "add", ".gitignore", ".dagger/uv.lock")
+    _git(repository, "add", "--force", ".dagger/sdk/generated.py")
+    return repository
+
+
+def test_should_reject_generated_state_forced_into_a_git_index(tmp_path: Path) -> None:
+    # Given an isolated repository with production ignores and one poisoned index entry.
+    repository = _poisoned_repository(tmp_path)
+
+    # When the closed VCS boundary evaluates the isolated index.
+    # Then force-added generated SDK state is rejected without touching the real worktree.
+    with pytest.raises(AssertionError):
+        _assert_vcs_boundaries(repository)
 
 
 def test_should_not_attach_shared_mutable_caches_to_product_containers() -> None:
@@ -472,6 +776,71 @@ def test_should_bootstrap_pinned_runtimes_before_each_product_command(
     # Then exact immutable images and frozen bootstraps precede product commands.
     assert tuple(trace.images) == expected_images
     assert _runtime_commands(trace) == expected_commands
+
+
+def test_should_capture_complete_immutable_product_snapshot_lineage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given a public CI execution through the observable Dagger boundary.
+    module, trace = _adapter_module(monkeypatch)
+
+    # When the release-bearing lane runs.
+    asyncio.run(module.AgenticSaga().ci(object(), "a" * 40, object()))
+
+    # Then each product command retains a distinct complete runtime ancestry.
+    assert trace.git_tree is not None
+    expected = (PYTHON_GATE_VIEW, FRONTEND_GATE_VIEW, RELEASE_VIEW)
+    _assert_runtime_lineage(trace, trace.git_tree, expected)
+
+
+def test_should_capture_complete_security_boundary_and_lineage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given exact source identity and an opaque typed authorization secret.
+    module, trace = _adapter_module(monkeypatch)
+    source, auth, commit_sha = object(), object(), "a" * 40
+
+    # When the public security lane runs.
+    asyncio.run(module.AgenticSaga().security(source, commit_sha, auth))
+
+    # Then both shared boundaries and the frontend audit retain exact values and ancestry.
+    boundary = (source, "hseshadr/agentic-saga", commit_sha, auth)
+    assert trace.guard_calls == [boundary]
+    assert trace.audit_calls == [boundary] and trace.audit_syncs == 1
+    _assert_runtime_lineage(trace, source, (SECURITY_VIEW,))
+
+
+@pytest.mark.parametrize("mutation", ("wrong-workdir", "secret-mount"))
+def test_should_reject_unsafe_release_container_lineage_mutations(
+    monkeypatch: pytest.MonkeyPatch, mutation: str
+) -> None:
+    # Given a public CI execution with one controlled unsafe lineage mutation.
+    module, trace = _adapter_module(monkeypatch, mutation=mutation)
+
+    # When the exact runtime contract inspects its product and sync snapshots.
+    asyncio.run(module.AgenticSaga().ci(object(), "a" * 40, object()))
+
+    # Then wrong workdirs and mounted credentials cannot false-green.
+    assert trace.git_tree is not None
+    expected = (PYTHON_GATE_VIEW, FRONTEND_GATE_VIEW, RELEASE_VIEW)
+    with pytest.raises(AssertionError):
+        _assert_runtime_lineage(trace, trace.git_tree, expected)
+
+
+@pytest.mark.parametrize(
+    "operation",
+    ("with_mounted_secret", "with_secret_variable", "with_mounted_cache", "with_user"),
+)
+def test_should_fail_closed_on_unmodeled_configuration_and_secret_operations(
+    operation: str,
+) -> None:
+    # Given an immutable container fake with a closed configuration surface.
+    container = _Dag(_Trace()).container()
+
+    # When an unknown mount, secret, cache, or identity operation is requested.
+    # Then the fake cannot discard it and allow a false-green product trace.
+    with pytest.raises(AttributeError, match=operation):
+        getattr(container, operation)("unexpected")
 
 
 @pytest.mark.parametrize(
@@ -565,4 +934,5 @@ def test_should_tolerate_known_nonexecuting_container_configuration() -> None:
     )
 
     # Then configuration stays outside the exact product trace.
-    assert configured is container and trace.events == []
+    assert configured is not container and container.snapshot == _Snapshot()
+    assert trace.events == []
