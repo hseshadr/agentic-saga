@@ -37,10 +37,18 @@ PUBLIC_INPUTS = (
 )
 CI_TRACE = (
     ("uv", "run", "poe", "gate"),
+    ("container-sync",),
     ("pnpm", "gate"),
+    ("container-sync",),
     ("uv", "run", "poe", "release-candidate"),
+    ("container-sync",),
 )
-SECURITY_TRACE = (("dependency-audit",), ("pnpm", "audit"))
+SECURITY_TRACE = (
+    ("dependency-audit",),
+    ("container-sync",),
+    ("pnpm", "audit"),
+    ("container-sync",),
+)
 BOOTSTRAP_COMMANDS = frozenset(
     {
         ("uv", "sync", "--frozen", "--all-groups", "--all-extras"),
@@ -143,6 +151,10 @@ def _assert_product_trace(trace: _Trace, expected: tuple[tuple[str, ...], ...]) 
     assert trace.product_trace() == expected
 
 
+async def _generated_module_product_mutation(dag: _Dag) -> None:
+    await dag.python_package().build("coverage").directory().sync()
+
+
 class _Container:
     def __init__(self, trace: _Trace) -> None:
         self.trace = trace
@@ -151,16 +163,35 @@ class _Container:
         self.trace.record(tuple(command))
         return self
 
+    async def sync(self) -> _Container:
+        self.trace.record(("container-sync",))
+        return self
+
+    def __getattr__(self, name: str) -> Callable[..., _Container]:
+        configuration = {
+            "from_",
+            "with_directory",
+            "with_env_variable",
+            "with_file",
+            "with_mounted_cache",
+            "with_secret_variable",
+            "with_workdir",
+        }
+        if name in configuration:
+            return lambda *_args, **_kwargs: self
+        raise AttributeError(f"unknown container operation: {name}")
+
+
+class _PythonPackage:
+    def __init__(self, trace: _Trace) -> None:
+        self.trace = trace
+
     def dependency_audit(self, *_: object, **__: object) -> _Container:
         self.trace.record(("dependency-audit",))
-        return self
+        return _Container(self.trace)
 
-    async def sync(self) -> _Container:
-        self.trace.record("product-sync")
-        return self
-
-    def __getattr__(self, _: str) -> Callable[..., _Container]:
-        return lambda *_args, **_kwargs: self
+    def __getattr__(self, name: str) -> object:
+        raise AttributeError(f"unknown python-package operation: {name}")
 
 
 class _Guard:
@@ -190,14 +221,17 @@ class _Dag:
     def foundation(self) -> _Foundation:
         return _Foundation(self.trace)
 
-    def python_package(self) -> _Container:
-        return _Container(self.trace)
+    def python_package(self) -> _PythonPackage:
+        return _PythonPackage(self.trace)
 
     def container(self) -> _Container:
         return _Container(self.trace)
 
-    def __getattr__(self, _: str) -> Callable[..., _Container]:
-        return lambda *_args, **_kwargs: _Container(self.trace)
+    def cache_volume(self, _: str) -> object:
+        return object()
+
+    def __getattr__(self, name: str) -> object:
+        raise AttributeError(f"unknown Dagger operation: {name}")
 
 
 def _adapter_module(
@@ -338,3 +372,33 @@ def test_should_reject_an_extra_product_command_from_the_closed_ci_trace() -> No
     # Then extra policy cannot evade the exact command boundary.
     with pytest.raises(AssertionError):
         _assert_product_trace(trace, CI_TRACE)
+
+
+def test_should_reject_unknown_generated_module_product_operations() -> None:
+    # Given the reported generated-module build/directory/sync bypass.
+    trace = _Trace()
+
+    # When a public adapter attempts that unsupported product operation.
+    with pytest.raises(AttributeError, match="build"):
+        asyncio.run(_generated_module_product_mutation(_Dag(trace)))
+
+    # Then no unknown product interaction can silently enter the exact trace.
+    assert trace.events == []
+
+
+def test_should_tolerate_known_nonexecuting_container_configuration() -> None:
+    # Given fixed-image/container configuration required before a delegated command.
+    trace = _Trace()
+    container = _Dag(trace).container()
+
+    # When the adapter configures, but does not execute, that container.
+    configured = (
+        container.from_("node:24")
+        .with_directory("/src", object())
+        .with_workdir("/src")
+        .with_env_variable("CI", "1")
+        .with_mounted_cache("/cache", object())
+    )
+
+    # Then configuration stays outside the exact product trace.
+    assert configured is container and trace.events == []
