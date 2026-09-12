@@ -17,6 +17,18 @@ MODULE = ROOT / ".dagger" / "src" / "agentic_saga_ci" / "main.py"
 FOUNDATION_SHA = "5cf3b7550442bb06d1cce1f146e48c064dcf511c"
 FOUNDATION = "github.com/hseshadr/ci/modules/portfolio-foundation"
 PYTHON_PACKAGE = "github.com/hseshadr/ci/modules/python-package"
+PYTHON_IMAGE = (
+    "python:3.13.14-bookworm@sha256:"
+    "8b9a8b28d9cc221c6ab5d40e9cfcd99429959f6a8f5171612a99147975ab043f"
+)
+UV_IMAGE = (
+    "ghcr.io/astral-sh/uv:0.11.32@sha256:"
+    "df4cae8f3a96d175e2e5f992e597550000edbe78fdc2594d5cd8de1a217f504c"
+)
+NODE_IMAGE = (
+    "node:24.6.0-bookworm-slim@sha256:"
+    "9b741b28148b0195d62fa456ed84dd6c953c1f17a3761f3e6e6797a754d9edff"
+)
 PublicMethod = ast.AsyncFunctionDef | ast.FunctionDef
 Parameter = tuple[str, str]
 Signature = tuple[
@@ -47,6 +59,25 @@ SECURITY_TRACE = (
     ("container-sync",),
     ("pnpm", "audit"),
     ("container-sync",),
+)
+CI_RUNTIME_TRACE = (
+    ("uv", "sync", "--frozen", "--all-groups", "--all-extras"),
+    *CI_TRACE[:2],
+    ("corepack", "enable"),
+    ("pnpm", "install", "--frozen-lockfile"),
+    ("pnpm", "exec", "playwright", "install", "--with-deps"),
+    *CI_TRACE[2:4],
+    ("uv", "sync", "--frozen", "--all-groups", "--all-extras"),
+    ("corepack", "enable"),
+    ("pnpm", "install", "--frozen-lockfile"),
+    ("pnpm", "exec", "playwright", "install", "--with-deps"),
+    *CI_TRACE[4:],
+)
+SECURITY_RUNTIME_TRACE = (
+    *SECURITY_TRACE[:2],
+    ("corepack", "enable"),
+    ("pnpm", "install", "--frozen-lockfile"),
+    *SECURITY_TRACE[2:],
 )
 BOOTSTRAP_COMMANDS = frozenset(
     {
@@ -118,6 +149,20 @@ def _dependencies() -> list[dict[str, str]]:
     return parsed["dependencies"]
 
 
+def _runtime_commands(trace: _Trace) -> tuple[tuple[str, ...], ...]:
+    return tuple(event for event in trace.events if isinstance(event, tuple))
+
+
+def _constants(tree: ast.Module) -> dict[str, object]:
+    return {
+        node.target.id: ast.literal_eval(node.value)
+        for node in tree.body
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.value is not None
+    }
+
+
 def _decorator(value: object | None = None, **_: object) -> object:
     return (lambda target: target) if value is None else value
 
@@ -135,6 +180,7 @@ class _Trace:
         self.events: list[Event] = []
         self.guard_fails = guard_fails
         self.git_calls: list[tuple[str, object, str, int, bool]] = []
+        self.images: list[str] = []
 
     def record(self, event: Event) -> None:
         self.events.append(event)
@@ -163,6 +209,10 @@ class _Container:
         self.trace.record(tuple(command))
         return self
 
+    def from_(self, image: str) -> _Container:
+        self.trace.images.append(image)
+        return self
+
     async def sync(self) -> _Container:
         self.trace.record(("container-sync",))
         return self
@@ -171,11 +221,9 @@ class _Container:
         configuration = {
             "directory",
             "file",
-            "from_",
             "with_directory",
             "with_env_variable",
             "with_file",
-            "with_mounted_cache",
             "with_secret_variable",
             "with_workdir",
         }
@@ -255,7 +303,7 @@ class _Dag:
         return _Container(self.trace)
 
     def cache_volume(self, _: str) -> object:
-        return object()
+        raise AssertionError("shared mutable caches are forbidden")
 
     def git(self, repository: str, *, http_auth_header: object) -> _GitRepository:
         return _GitRepository(self.trace, repository, http_auth_header)
@@ -357,6 +405,75 @@ def test_should_pin_the_shared_modules_to_the_merged_private_history_commit() ->
     assert tuple(dependencies) == expected
 
 
+def test_should_pin_exact_runtime_images_and_python_base() -> None:
+    # Given the adapter source and generated-module build configuration.
+    tree = _adapter_tree()
+    assignments = _constants(tree)
+    pyproject = (ROOT / ".dagger" / "pyproject.toml").read_text()
+
+    # When the three runtime identities are inspected.
+    # Then each is immutable and the module build uses the same Git-capable Python image.
+    expected = {"PYTHON_IMAGE": PYTHON_IMAGE, "UV_IMAGE": UV_IMAGE, "NODE_IMAGE": NODE_IMAGE}
+    assert assignments.items() >= expected.items()
+    assert f'base-image = "{PYTHON_IMAGE}"' in pyproject
+
+
+def test_should_commit_lock_and_ignore_generated_sdk() -> None:
+    # Given the generated module's reproducibility inputs.
+    config = cast(dict[str, object], json.loads((ROOT / "dagger.json").read_text()))
+    included = cast(list[str], config["include"])
+    lock = ROOT / ".dagger" / "uv.lock"
+
+    # When committed inputs and ignore boundaries are inspected.
+    # Then the lock is tracked while generated and local state stays excluded.
+    assert lock.is_file() and ".dagger/uv.lock" in included
+    ignores = set((ROOT / ".gitignore").read_text().splitlines())
+    assert {".dagger/.venv/", ".dagger/sdk/"} <= ignores
+
+
+def test_should_not_attach_shared_mutable_caches_to_product_containers() -> None:
+    # Given the adapter's complete syntax tree.
+    tree = _adapter_tree()
+
+    # When Dagger method calls are inspected.
+    calls = {
+        node.func.attr
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }
+
+    # Then no reusable writable cache can enter a repository-controlled command.
+    assert calls.isdisjoint({"cache_volume", "with_mounted_cache"})
+
+
+@pytest.mark.parametrize(
+    ("entrypoint", "expected_images", "expected_commands"),
+    (
+        (
+            "ci",
+            (UV_IMAGE, PYTHON_IMAGE, NODE_IMAGE, UV_IMAGE, PYTHON_IMAGE, NODE_IMAGE),
+            CI_RUNTIME_TRACE,
+        ),
+        ("security", (NODE_IMAGE,), SECURITY_RUNTIME_TRACE),
+    ),
+)
+def test_should_bootstrap_pinned_runtimes_before_each_product_command(
+    monkeypatch: pytest.MonkeyPatch,
+    entrypoint: str,
+    expected_images: tuple[str, ...],
+    expected_commands: tuple[tuple[str, ...], ...],
+) -> None:
+    # Given an adapter with every image and runtime command observable.
+    module, trace = _adapter_module(monkeypatch)
+
+    # When either closed public lane executes.
+    asyncio.run(getattr(module.AgenticSaga(), entrypoint)(object(), "a" * 40, object()))
+
+    # Then exact immutable images and frozen bootstraps precede product commands.
+    assert tuple(trace.images) == expected_images
+    assert _runtime_commands(trace) == expected_commands
+
+
 @pytest.mark.parametrize(
     ("entrypoint", "expected"), (("ci", CI_TRACE), ("security", SECURITY_TRACE))
 )
@@ -445,7 +562,6 @@ def test_should_tolerate_known_nonexecuting_container_configuration() -> None:
         .with_directory("/src", object())
         .with_workdir("/src")
         .with_env_variable("CI", "1")
-        .with_mounted_cache("/cache", object())
     )
 
     # Then configuration stays outside the exact product trace.

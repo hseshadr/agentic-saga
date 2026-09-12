@@ -8,7 +8,8 @@ import dagger
 from dagger import check, dag, function, object_type
 
 PYTHON_IMAGE: Final = (
-    "python:3.13.14-slim@sha256:9662417aace5ae7b8e2609cce472b72a8958e134ba372808abe9cc1a0c0125e6"
+    "python:3.13.14-bookworm@sha256:"
+    "8b9a8b28d9cc221c6ab5d40e9cfcd99429959f6a8f5171612a99147975ab043f"
 )
 UV_IMAGE: Final = (
     "ghcr.io/astral-sh/uv:0.11.32@sha256:"
@@ -22,9 +23,6 @@ REPOSITORY: Final = "hseshadr/agentic-saga"
 REPOSITORY_URL: Final = "https://github.com/hseshadr/agentic-saga.git"
 SOURCE_ROOT: Final = "/src"
 WEB_ROOT: Final = "/src/web/flight-recorder"
-UV_CACHE: Final = "/opt/uv-cache"
-COREPACK_CACHE: Final = "/opt/corepack"
-PLAYWRIGHT_CACHE: Final = "/opt/playwright"
 NODE_PATHS: Final = [
     "bin/corepack",
     "bin/node",
@@ -69,8 +67,6 @@ def _python(source: dagger.Directory) -> dagger.Container:
     base = dag.container().from_(PYTHON_IMAGE).with_file("/usr/local/bin/uv", uv)
     base = base.with_directory(SOURCE_ROOT, source).with_workdir(SOURCE_ROOT)
     base = base.with_env_variable("UV_PROJECT_ENVIRONMENT", "/opt/venv")
-    base = base.with_env_variable("UV_CACHE_DIR", UV_CACHE)
-    base = base.with_mounted_cache(UV_CACHE, dag.cache_volume("agentic-saga-uv"))
     return base.with_exec(["uv", "sync", "--frozen", "--all-groups", "--all-extras"])
 
 
@@ -86,18 +82,12 @@ def _with_node(base: dagger.Container) -> dagger.Container:
 
 def _node_dependencies(base: dagger.Container) -> dagger.Container:
     result = base.with_workdir(WEB_ROOT).with_env_variable("CI", "1")
-    result = result.with_env_variable("COREPACK_HOME", COREPACK_CACHE)
-    result = result.with_mounted_cache(COREPACK_CACHE, dag.cache_volume("agentic-saga-corepack"))
     result = result.with_exec(["corepack", "enable"])
     return result.with_exec(["pnpm", "install", "--frozen-lockfile"])
 
 
 def _with_browsers(base: dagger.Container) -> dagger.Container:
-    result = base.with_env_variable("PLAYWRIGHT_BROWSERS_PATH", PLAYWRIGHT_CACHE)
-    result = result.with_mounted_cache(
-        PLAYWRIGHT_CACHE, dag.cache_volume("agentic-saga-playwright")
-    )
-    return result.with_exec(["pnpm", "exec", "playwright", "install", "--with-deps"])
+    return base.with_exec(["pnpm", "exec", "playwright", "install", "--with-deps"])
 
 
 def _frontend(source: dagger.Directory) -> dagger.Container:
