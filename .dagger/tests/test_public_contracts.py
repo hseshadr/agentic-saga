@@ -821,18 +821,33 @@ def test_should_reject_generated_state_forced_into_a_git_index(
         _assert_vcs_boundaries(repository)
 
 
-def test_should_resolve_git_from_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Given an absolute Git executable returned by the active PATH.
-    executable = shutil.which("git")
-    assert executable is not None
-    calls: list[str] = []
-    monkeypatch.setattr(shutil, "which", lambda name: calls.append(name) or executable)
+def test_should_execute_resolved_git_binary(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Given a sentinel absolute Git executable returned by the active PATH.
+    executable = str(ROOT / "sentinel-git")
+    commands: list[list[str]] = []
+    monkeypatch.setattr(shutil, "which", lambda _: executable)
 
-    # When a real VCS boundary interrogates the worktree.
+    def capture(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout="")
+
+    monkeypatch.setattr(subprocess, "run", capture)
+
+    # When the VCS boundary interrogates the worktree.
     _git(ROOT, "status", "--short")
 
-    # Then it resolves and uses Git from PATH for that invocation.
-    assert calls == ["git"]
+    # Then argv[0] is exactly the absolute executable selected by the PATH resolver.
+    assert commands[0][0] == executable
+
+
+def test_should_reject_relative_git_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Given a relative executable returned by the active PATH resolver.
+    monkeypatch.setattr(shutil, "which", lambda _: "bin/git")
+
+    # When the VCS boundary tries to execute Git.
+    # Then the executable must be rejected before subprocess execution.
+    with pytest.raises(AssertionError, match="absolute path"):
+        _git(ROOT, "status", "--short")
 
 
 def test_should_fail_closed_when_git_is_absent(monkeypatch: pytest.MonkeyPatch) -> None:
