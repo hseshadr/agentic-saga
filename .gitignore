@@ -1,4 +1,6 @@
 .worktrees/
+.dagger/.venv/
+.dagger/sdk/
 .venv/
 __pycache__/
 .pytest_cache/

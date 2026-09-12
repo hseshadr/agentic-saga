@@ -553,10 +553,12 @@ def _assert_checkout(step: dict[str, object]) -> None:
 
 def _assert_dagger(step: dict[str, object], operation: str) -> None:
     assert step["uses"] == "dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77"
-    assert _mapping(step["env"]) == {"GIT_AUTH_HEADER": "Authorization: Bearer ${{ github.token }}"}
+    assert _mapping(step["env"]) == {
+        "DAGGER_GIT_HTTP_AUTH_HEADER": "${{ secrets.DAGGER_GIT_HTTP_AUTH_HEADER }}"
+    }
     expected = (
         f"{operation} --source=. --commit-sha=${{ github.sha }} "
-        "--git-auth-header=env:GIT_AUTH_HEADER"
+        "--git-auth-header=env:DAGGER_GIT_HTTP_AUTH_HEADER"
     )
     assert _mapping(step["with"]) == {"version": "0.21.8", "verb": "call", "args": expected}
 
@@ -593,13 +595,17 @@ def _ingress_fixture(operation: str = "ci") -> dict[str, object]:
                     },
                     {
                         "uses": "dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77",
-                        "env": {"GIT_AUTH_HEADER": "Authorization: Bearer ${{ github.token }}"},
+                        "env": {
+                            "DAGGER_GIT_HTTP_AUTH_HEADER": (
+                                "${{ secrets.DAGGER_GIT_HTTP_AUTH_HEADER }}"
+                            )
+                        },
                         "with": {
                             "version": "0.21.8",
                             "verb": "call",
                             "args": (
                                 f"{operation} --source=. --commit-sha=${{ github.sha }} "
-                                "--git-auth-header=env:GIT_AUTH_HEADER"
+                                "--git-auth-header=env:DAGGER_GIT_HTTP_AUTH_HEADER"
                             ),
                         },
                     },
@@ -690,15 +696,20 @@ def test_dagger_ingress_rejects_shell_and_mutable_action_steps() -> None:
 
 
 def test_dagger_ingress_rejects_untyped_or_unmasked_secret_forwarding() -> None:
-    # Given a direct token rather than a typed authorization-header secret.
-    document = _ingress_fixture()
-    _fixture_steps(document)[1]["env"] = {"GITHUB_TOKEN": "${{ github.token }}"}
+    # Given direct, embedded Basic, and embedded Bearer credentials.
+    direct = _ingress_fixture()
+    _fixture_steps(direct)[1]["env"] = {"GITHUB_TOKEN": "${{ github.token }}"}
+    basic = _ingress_fixture()
+    _fixture_steps(basic)[1]["env"] = {"DAGGER_GIT_HTTP_AUTH_HEADER": "Basic encoded-token"}
+    bearer = _ingress_fixture()
+    _fixture_steps(bearer)[1]["env"] = {"DAGGER_GIT_HTTP_AUTH_HEADER": "Bearer ${{ github.token }}"}
 
     # When the closed ingress policy is evaluated.
-    with pytest.raises(AssertionError):
-        _assert_ingress(document, "ci")
+    for document in (direct, basic, bearer):
+        with pytest.raises(AssertionError):
+            _assert_ingress(document, "ci")
 
-    # Then Dagger cannot receive a raw hosted token instead of the typed header.
+    # Then only the named, precomputed repository secret can reach Dagger.
 
 
 def test_python_tooling_targets_the_supported_312_floor() -> None:

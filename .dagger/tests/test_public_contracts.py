@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-# ruff: noqa: S101
 import ast
 import asyncio
 import importlib
@@ -15,7 +14,7 @@ import pytest
 
 ROOT = Path(__file__).parents[2]
 MODULE = ROOT / ".dagger" / "src" / "agentic_saga_ci" / "main.py"
-FOUNDATION_SHA = "95c99bd46c97797235da7149776cb1c7a580289e"
+FOUNDATION_SHA = "5cf3b7550442bb06d1cce1f146e48c064dcf511c"
 FOUNDATION = "github.com/hseshadr/ci/modules/portfolio-foundation"
 PYTHON_PACKAGE = "github.com/hseshadr/ci/modules/python-package"
 PublicMethod = ast.AsyncFunctionDef | ast.FunctionDef
@@ -135,6 +134,7 @@ class _Trace:
     def __init__(self, *, guard_fails: bool = False) -> None:
         self.events: list[Event] = []
         self.guard_fails = guard_fails
+        self.git_calls: list[tuple[str, object, str, int, bool]] = []
 
     def record(self, event: Event) -> None:
         self.events.append(event)
@@ -169,6 +169,8 @@ class _Container:
 
     def __getattr__(self, name: str) -> Callable[..., _Container]:
         configuration = {
+            "directory",
+            "file",
             "from_",
             "with_directory",
             "with_env_variable",
@@ -214,6 +216,31 @@ class _Foundation:
         return _Guard(self.trace)
 
 
+class _GitCommit:
+    def __init__(self, trace: _Trace, repository: str, auth: object, commit_sha: str) -> None:
+        self.trace = trace
+        self.repository = repository
+        self.auth = auth
+        self.commit_sha = commit_sha
+
+    def tree(self, *, depth: int, include_tags: bool) -> object:
+        self.trace.git_calls.append(
+            (self.repository, self.auth, self.commit_sha, depth, include_tags)
+        )
+        self.trace.record("git-tree")
+        return object()
+
+
+class _GitRepository:
+    def __init__(self, trace: _Trace, repository: str, auth: object) -> None:
+        self.trace = trace
+        self.repository = repository
+        self.auth = auth
+
+    def commit(self, commit_sha: str) -> _GitCommit:
+        return _GitCommit(self.trace, self.repository, self.auth, commit_sha)
+
+
 class _Dag:
     def __init__(self, trace: _Trace) -> None:
         self.trace = trace
@@ -229,6 +256,9 @@ class _Dag:
 
     def cache_volume(self, _: str) -> object:
         return object()
+
+    def git(self, repository: str, *, http_auth_header: object) -> _GitRepository:
+        return _GitRepository(self.trace, repository, http_auth_header)
 
     def __getattr__(self, name: str) -> object:
         raise AttributeError(f"unknown Dagger operation: {name}")
@@ -361,6 +391,24 @@ def test_should_stop_all_product_interactions_when_the_foundation_guard_fails(
 
     # Then no audit, container command, or product synchronization is reached.
     assert trace.events == ["guard", "guard-sync"]
+
+
+def test_should_checkout_authenticated_canonical_history_after_the_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given an exact source identity and an opaque typed authorization header.
+    module, trace = _adapter_module(monkeypatch)
+    auth = object()
+    commit_sha = "a" * 40
+
+    # When the release-bearing CI lane executes.
+    asyncio.run(module.AgenticSaga().ci(object(), commit_sha, auth))
+
+    # Then canonical full history is fetched only after the verified guard.
+    assert trace.git_calls == [
+        ("https://github.com/hseshadr/agentic-saga.git", auth, commit_sha, 0, True)
+    ]
+    assert trace.events.index("guard-sync") < trace.events.index("git-tree")
 
 
 def test_should_reject_an_extra_product_command_from_the_closed_ci_trace() -> None:
