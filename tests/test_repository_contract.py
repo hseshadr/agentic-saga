@@ -532,11 +532,11 @@ def _mapping(value: object) -> dict[str, object]:
     return cast(dict[str, object], value)
 
 
-def _steps(document: dict[str, object]) -> tuple[dict[str, object], ...]:
+def _steps(document: dict[str, object], job_name: str = "Dagger") -> tuple[dict[str, object], ...]:
     jobs = _mapping(document["jobs"])
     assert list(jobs) == ["dagger"]
     job = _mapping(jobs["dagger"])
-    assert job["name"] == "Dagger" and "uses" not in job
+    assert job["name"] == job_name and "uses" not in job
     steps = job["steps"]
     assert isinstance(steps, list)
     return tuple(_mapping(step) for step in steps)
@@ -557,17 +557,18 @@ def _assert_dagger(step: dict[str, object], operation: str) -> None:
         "DAGGER_GIT_HTTP_AUTH_HEADER": "${{ secrets.DAGGER_GIT_HTTP_AUTH_HEADER }}"
     }
     expected = (
-        f"{operation} --source=. --commit-sha=${{ github.sha }} "
+        f"{operation} --source=. --commit-sha="
+        "${{ github.sha }} "
         "--git-auth-header=env:DAGGER_GIT_HTTP_AUTH_HEADER"
     )
     assert _mapping(step["with"]) == {"version": "0.21.8", "verb": "call", "args": expected}
 
 
-def _assert_ingress(document: dict[str, object], operation: str) -> None:
+def _assert_ingress(document: dict[str, object], operation: str, job_name: str = "Dagger") -> None:
     permissions = _mapping(document["permissions"])
     assert permissions["contents"] == "read"
     assert all(value == "read" for value in permissions.values())
-    steps = _steps(document)
+    steps = _steps(document, job_name)
     assert len(steps) == 2 and all("run" not in step for step in steps)
     _assert_checkout(steps[0])
     _assert_dagger(steps[1], operation)
@@ -604,7 +605,8 @@ def _ingress_fixture(operation: str = "ci") -> dict[str, object]:
                             "version": "0.21.8",
                             "verb": "call",
                             "args": (
-                                f"{operation} --source=. --commit-sha=${{ github.sha }} "
+                                f"{operation} --source=. --commit-sha="
+                                "${{ github.sha }} "
                                 "--git-auth-header=env:DAGGER_GIT_HTTP_AUTH_HEADER"
                             ),
                         },
@@ -660,7 +662,7 @@ def test_dagger_security_ingress_is_structurally_closed_and_exact() -> None:
     # Then it exposes only scheduled/manual security through one closed Dagger job.
     assert "schedule" in triggers and "workflow_dispatch" in triggers
     assert "pull_request" not in triggers and "push" not in triggers
-    _assert_ingress(document, "security")
+    _assert_ingress(document, "security", "Dagger security audit")
 
 
 def test_dagger_ingress_rejects_extra_jobs_and_job_reuse() -> None:
