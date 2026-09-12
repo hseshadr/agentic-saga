@@ -7,6 +7,10 @@ import tomllib
 from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
+from typing import cast
+
+import pytest
+from ruamel.yaml import YAML
 
 import agentic_saga
 from agentic_saga.agents import __all__ as agents_all
@@ -511,90 +515,190 @@ def test_contributor_guide_contains_required_workflow() -> None:
     assert all(value in contributing for value in required)
 
 
-def _dagger_workflow(filename: str) -> str:
-    path = ROOT / ".github/workflows" / filename
-    assert path.is_file(), f"{filename} must be a Dagger ingress workflow"
-    return path.read_text()
+def _workflow_paths() -> tuple[Path, ...]:
+    workflows = ROOT / ".github" / "workflows"
+    return tuple(sorted({*workflows.glob("*.yml"), *workflows.glob("*.yaml")}))
 
 
-def test_workflows_are_only_two_action_dagger_ingress() -> None:
-    # Given repository-authored workflows.
-    workflows = ROOT / ".github/workflows"
+def _workflow_document(path: Path) -> dict[str, object]:
+    assert path.is_file(), f"{path.name} must be a Dagger ingress workflow"
+    parsed = YAML(typ="safe").load(path.read_text())
+    assert isinstance(parsed, dict)
+    return cast(dict[str, object], parsed)
 
-    # When their execution surfaces are inventoried.
-    actual = {path.name for path in workflows.glob("*.yml")}
 
-    # Then GitHub routes events through only the CI and scheduled-security Dagger actions.
+def _mapping(value: object) -> dict[str, object]:
+    assert isinstance(value, dict)
+    return cast(dict[str, object], value)
+
+
+def _steps(document: dict[str, object]) -> tuple[dict[str, object], ...]:
+    jobs = _mapping(document["jobs"])
+    assert list(jobs) == ["dagger"]
+    job = _mapping(jobs["dagger"])
+    assert job["name"] == "Dagger" and "uses" not in job
+    steps = job["steps"]
+    assert isinstance(steps, list)
+    return tuple(_mapping(step) for step in steps)
+
+
+def _assert_checkout(step: dict[str, object]) -> None:
+    assert step["uses"] == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+    assert _mapping(step["with"]) == {
+        "fetch-depth": 0,
+        "ref": "${{ github.sha }}",
+        "persist-credentials": False,
+    }
+
+
+def _assert_dagger(step: dict[str, object], operation: str) -> None:
+    assert step["uses"] == "dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77"
+    assert _mapping(step["env"]) == {"GIT_AUTH_HEADER": "Authorization: Bearer ${{ github.token }}"}
+    expected = (
+        f"{operation} --source=. --commit-sha=${{ github.sha }} "
+        "--git-auth-header=env:GIT_AUTH_HEADER"
+    )
+    assert _mapping(step["with"]) == {"version": "0.21.8", "verb": "call", "args": expected}
+
+
+def _assert_ingress(document: dict[str, object], operation: str) -> None:
+    permissions = _mapping(document["permissions"])
+    assert permissions["contents"] == "read"
+    assert all(value == "read" for value in permissions.values())
+    steps = _steps(document)
+    assert len(steps) == 2 and all("run" not in step for step in steps)
+    _assert_checkout(steps[0])
+    _assert_dagger(steps[1], operation)
+
+
+def _active_line_count(path: Path) -> int:
+    lines = path.read_text().splitlines()
+    return sum(bool(line.strip()) and not line.lstrip().startswith("#") for line in lines)
+
+
+def _ingress_fixture(operation: str = "ci") -> dict[str, object]:
+    return {
+        "permissions": {"contents": "read"},
+        "jobs": {
+            "dagger": {
+                "name": "Dagger",
+                "steps": [
+                    {
+                        "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+                        "with": {
+                            "fetch-depth": 0,
+                            "ref": "${{ github.sha }}",
+                            "persist-credentials": False,
+                        },
+                    },
+                    {
+                        "uses": "dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77",
+                        "env": {"GIT_AUTH_HEADER": "Authorization: Bearer ${{ github.token }}"},
+                        "with": {
+                            "version": "0.21.8",
+                            "verb": "call",
+                            "args": (
+                                f"{operation} --source=. --commit-sha=${{ github.sha }} "
+                                "--git-auth-header=env:GIT_AUTH_HEADER"
+                            ),
+                        },
+                    },
+                ],
+            }
+        },
+    }
+
+
+def _fixture_job(document: dict[str, object]) -> dict[str, object]:
+    return _mapping(_mapping(document["jobs"])["dagger"])
+
+
+def _fixture_steps(document: dict[str, object]) -> list[dict[str, object]]:
+    steps = _fixture_job(document)["steps"]
+    assert isinstance(steps, list)
+    return cast(list[dict[str, object]], steps)
+
+
+def test_workflows_are_only_24_line_two_action_dagger_ingress() -> None:
+    # Given repository-authored workflow documents in either supported YAML extension.
+    paths = _workflow_paths()
+
+    # When their transport surfaces are structurally inspected.
+    actual = {path.name for path in paths}
+
+    # Then only two compact Dagger ingress workflows remain.
     assert actual == {"dagger.yml", "dagger-security.yml"}
+    assert all(_active_line_count(path) <= 24 for path in paths)
 
 
-def test_dagger_ci_ingress_binds_the_exact_checked_out_commit() -> None:
-    # Given the protected Dagger workflow.
-    workflow = _dagger_workflow("dagger.yml")
+def test_dagger_ci_ingress_is_structurally_closed_and_exact() -> None:
+    # Given the CI ingress document.
+    document = _workflow_document(ROOT / ".github/workflows/dagger.yml")
 
-    # When its checkout and Dagger invocation are inspected.
-    required = (
-        "name: Dagger",
-        "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-        "fetch-depth: 0",
-        "ref: ${{ github.sha }}",
-        "persist-credentials: false",
-        "dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77",
-        'version: "0.21.8"',
-        "ci --source=. --commit-sha=${{ github.sha }} --git-auth-header=env:GIT_AUTH_HEADER",
-    )
+    # When its event and execution boundaries are inspected.
+    triggers = _mapping(document["on"])
 
-    # Then the public CI call receives full history and one immutable commit identity.
-    assert all(boundary in workflow for boundary in required)
+    # Then it accepts PRs and main pushes through one closed Dagger job.
+    assert "pull_request" in triggers
+    assert _mapping(triggers["push"]) == {"branches": ["main"]}
+    _assert_ingress(document, "ci")
 
 
-def test_dagger_security_ingress_is_scheduled_and_calls_only_security() -> None:
-    # Given the non-protecting Dagger security workflow.
-    workflow = _dagger_workflow("dagger-security.yml")
+def test_dagger_security_ingress_is_structurally_closed_and_exact() -> None:
+    # Given the scheduled security ingress document.
+    document = _workflow_document(ROOT / ".github/workflows/dagger-security.yml")
 
-    # When its event and Dagger boundary are inspected.
-    required = (
-        "schedule:",
-        "workflow_dispatch:",
-        "fetch-depth: 0",
-        "ref: ${{ github.sha }}",
-        "persist-credentials: false",
-        "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-        "dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77",
-        'version: "0.21.8"',
-        "security --source=. --commit-sha=${{ github.sha }} --git-auth-header=env:GIT_AUTH_HEADER",
-    )
+    # When its event and execution boundaries are inspected.
+    triggers = _mapping(document["on"])
 
-    # Then scheduled ingress invokes only the closed security operation.
-    assert all(boundary in workflow for boundary in required)
-    assert "pull_request:" not in workflow and "push:" not in workflow
+    # Then it exposes only scheduled/manual security through one closed Dagger job.
+    assert "schedule" in triggers and "workflow_dispatch" in triggers
+    assert "pull_request" not in triggers and "push" not in triggers
+    _assert_ingress(document, "security")
 
 
-def test_dagger_ingress_forwards_a_masked_typed_git_header() -> None:
-    # Given both typed Dagger calls.
-    workflows = (_dagger_workflow("dagger.yml"), _dagger_workflow("dagger-security.yml"))
+def test_dagger_ingress_rejects_extra_jobs_and_job_reuse() -> None:
+    # Given bypasses through a second job and a reusable job call.
+    extra_job = _ingress_fixture()
+    _mapping(extra_job["jobs"])["escape"] = {}
+    reusable_job = _ingress_fixture()
+    _fixture_job(reusable_job)["uses"] = "hseshadr/ci/.github/workflows/python-gate.yml@main"
 
-    # When their credential boundaries are inspected.
-    header = 'GIT_AUTH_HEADER: "Authorization: Bearer ${{ github.token }}"'
-    typed_argument = "--git-auth-header=env:GIT_AUTH_HEADER"
+    # When the closed ingress policy is evaluated.
+    with pytest.raises(AssertionError):
+        _assert_ingress(extra_job, "ci")
+    with pytest.raises(AssertionError):
+        _assert_ingress(reusable_job, "ci")
 
-    # Then checkout credentials stay disabled and only Dagger receives the masked header.
-    assert all(header in workflow and typed_argument in workflow for workflow in workflows)
+    # Then neither hosted execution bypass is accepted.
 
 
-def test_dagger_ingress_has_no_legacy_or_shell_execution_surface() -> None:
-    # Given every remaining Dagger ingress workflow.
-    sources = tuple(
-        _dagger_workflow(filename) for filename in ("dagger.yml", "dagger-security.yml")
-    )
-    workflows = "\n".join(sources)
+def test_dagger_ingress_rejects_shell_and_mutable_action_steps() -> None:
+    # Given a shell execution bypass and a mutable Dagger action reference.
+    shell_step = _ingress_fixture()
+    _fixture_steps(shell_step)[0]["run"] = "echo bypass"
+    mutable_action = _ingress_fixture()
+    _fixture_steps(mutable_action)[1]["uses"] = "dagger/dagger-for-github@main"
 
-    # When hosted execution mechanisms are inspected.
-    forbidden = ("- run:", "actions/setup-", "actions/cache@", "hseshadr/ci/", "@main")
+    # When the closed ingress policy is evaluated.
+    with pytest.raises(AssertionError):
+        _assert_ingress(shell_step, "ci")
+    with pytest.raises(AssertionError):
+        _assert_ingress(mutable_action, "ci")
 
-    # Then GitHub contains transport only; Dagger owns command execution.
-    assert all(source.count("- uses:") == 2 for source in sources)
-    assert not any(boundary in workflows for boundary in forbidden)
+    # Then neither execution bypass is accepted.
+
+
+def test_dagger_ingress_rejects_untyped_or_unmasked_secret_forwarding() -> None:
+    # Given a direct token rather than a typed authorization-header secret.
+    document = _ingress_fixture()
+    _fixture_steps(document)[1]["env"] = {"GITHUB_TOKEN": "${{ github.token }}"}
+
+    # When the closed ingress policy is evaluated.
+    with pytest.raises(AssertionError):
+        _assert_ingress(document, "ci")
+
+    # Then Dagger cannot receive a raw hosted token instead of the typed header.
 
 
 def test_python_tooling_targets_the_supported_312_floor() -> None:
