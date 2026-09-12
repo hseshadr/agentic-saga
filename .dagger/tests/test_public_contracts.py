@@ -35,7 +35,20 @@ PUBLIC_INPUTS = (
     ("commit_sha", "str"),
     ("git_auth_header", "dagger.Secret"),
 )
-PUBLIC_LANES = (("ci", "_ci_commands"), ("security", "_security_commands"))
+CI_TRACE = (
+    ("uv", "run", "poe", "gate"),
+    ("pnpm", "gate"),
+    ("uv", "run", "poe", "release-candidate"),
+)
+SECURITY_TRACE = (("dependency-audit",), ("pnpm", "audit"))
+BOOTSTRAP_COMMANDS = frozenset(
+    {
+        ("uv", "sync", "--frozen", "--all-groups", "--all-extras"),
+        ("corepack", "enable"),
+        ("pnpm", "install", "--frozen-lockfile"),
+        ("pnpm", "exec", "playwright", "install", "--with-deps"),
+    }
+)
 
 
 def _adapter_tree() -> ast.Module:
@@ -51,7 +64,9 @@ def _adapter_class(tree: ast.Module) -> ast.ClassDef:
 
 def _decorator_name(node: ast.expr) -> str | None:
     value = node.func if isinstance(node, ast.Call) else node
-    return value.id if isinstance(value, ast.Name) else None
+    if isinstance(value, ast.Name):
+        return value.id
+    return value.attr if isinstance(value, ast.Attribute) else None
 
 
 def _public_methods(node: ast.ClassDef) -> Iterator[PublicMethod]:
@@ -89,56 +104,6 @@ def _signature(node: PublicMethod) -> Signature:
     )
 
 
-def _method(tree: ast.Module, name: str) -> PublicMethod:
-    methods = {
-        method.name: method
-        for method in _adapter_class(tree).body
-        if isinstance(method, (ast.AsyncFunctionDef, ast.FunctionDef))
-    }
-    assert name in methods
-    return methods[name]
-
-
-def _called_private_methods(node: PublicMethod) -> tuple[str, ...]:
-    calls = (
-        child.func.attr
-        for child in ast.walk(node)
-        if isinstance(child, ast.Call)
-        and isinstance(child.func, ast.Attribute)
-        and isinstance(child.func.value, ast.Name)
-        and child.func.value.id == "self"
-    )
-    return tuple(calls)
-
-
-def _source_for_reachable_methods(tree: ast.Module, name: str) -> str:
-    pending = [name]
-    visited: set[str] = set()
-    sources: list[str] = []
-    while pending:
-        current = pending.pop()
-        if current in visited:
-            continue
-        visited.add(current)
-        method = _method(tree, current)
-        sources.append(ast.unparse(method))
-        pending.extend(_called_private_methods(method))
-    return "\n".join(sources)
-
-
-def _literal_command_sequences(tree: ast.Module, name: str) -> tuple[tuple[str, ...], ...]:
-    source = ast.parse(_source_for_reachable_methods(tree, name))
-    sequences = (
-        tuple(item.value for item in node.elts)
-        for node in ast.walk(source)
-        if isinstance(node, (ast.List, ast.Tuple))
-        and all(
-            isinstance(item, ast.Constant) and isinstance(item.value, str) for item in node.elts
-        )
-    )
-    return tuple(sequences)
-
-
 def _dependencies() -> list[dict[str, str]]:
     config = ROOT / "dagger.json"
     assert config.is_file(), "the Dagger module configuration must exist"
@@ -155,37 +120,114 @@ class _DaggerModule(ModuleType):
         return object
 
 
-def _adapter_module(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+Event = str | tuple[str, ...]
+
+
+class _Trace:
+    def __init__(self, *, guard_fails: bool = False) -> None:
+        self.events: list[Event] = []
+        self.guard_fails = guard_fails
+
+    def record(self, event: Event) -> None:
+        self.events.append(event)
+
+    def product_trace(self) -> tuple[tuple[str, ...], ...]:
+        return tuple(
+            event
+            for event in self.events
+            if isinstance(event, tuple) and event not in BOOTSTRAP_COMMANDS
+        )
+
+
+def _assert_product_trace(trace: _Trace, expected: tuple[tuple[str, ...], ...]) -> None:
+    assert trace.product_trace() == expected
+
+
+class _Container:
+    def __init__(self, trace: _Trace) -> None:
+        self.trace = trace
+
+    def with_exec(self, command: list[str]) -> _Container:
+        self.trace.record(tuple(command))
+        return self
+
+    def dependency_audit(self, *_: object, **__: object) -> _Container:
+        self.trace.record(("dependency-audit",))
+        return self
+
+    async def sync(self) -> _Container:
+        self.trace.record("product-sync")
+        return self
+
+    def __getattr__(self, _: str) -> Callable[..., _Container]:
+        return lambda *_args, **_kwargs: self
+
+
+class _Guard:
+    def __init__(self, trace: _Trace) -> None:
+        self.trace = trace
+
+    async def sync(self) -> _Guard:
+        self.trace.record("guard-sync")
+        if self.trace.guard_fails:
+            raise RuntimeError("history unavailable")
+        return self
+
+
+class _Foundation:
+    def __init__(self, trace: _Trace) -> None:
+        self.trace = trace
+
+    def guard(self, *_: object, **__: object) -> _Guard:
+        self.trace.record("guard")
+        return _Guard(self.trace)
+
+
+class _Dag:
+    def __init__(self, trace: _Trace) -> None:
+        self.trace = trace
+
+    def foundation(self) -> _Foundation:
+        return _Foundation(self.trace)
+
+    def python_package(self) -> _Container:
+        return _Container(self.trace)
+
+    def container(self) -> _Container:
+        return _Container(self.trace)
+
+    def __getattr__(self, _: str) -> Callable[..., _Container]:
+        return lambda *_args, **_kwargs: _Container(self.trace)
+
+
+def _adapter_module(
+    monkeypatch: pytest.MonkeyPatch, *, guard_fails: bool = False
+) -> tuple[ModuleType, _Trace]:
     assert MODULE.is_file(), "the closed Agentic Saga Dagger adapter must exist"
+    trace = _Trace(guard_fails=guard_fails)
+    fake_dag = _Dag(trace)
     dagger = _DaggerModule("dagger")
     dagger.function = _decorator
     dagger.object_type = _decorator
     dagger.check = _decorator
+    dagger.dag = fake_dag
     monkeypatch.setitem(sys.modules, "dagger", dagger)
     monkeypatch.syspath_prepend(str(MODULE.parents[1]))
     sys.modules.pop("agentic_saga_ci.main", None)
     sys.modules.pop("agentic_saga_ci", None)
-    return importlib.import_module("agentic_saga_ci.main")
+    module = importlib.import_module("agentic_saga_ci.main")
+    monkeypatch.setattr(module, "dag", fake_dag, raising=False)
+    return module, trace
 
 
-def _lane_recorder(events: list[str], name: str) -> Callable[..., object]:
-    async def lane(*_: object) -> None:
-        events.append(name)
-
-    return lane
-
-
-def _failing_guard(events: list[str]) -> Callable[..., object]:
-    async def guard(*_: object) -> None:
-        events.append("guard")
-        raise RuntimeError("history unavailable")
-
-    return guard
-
-
-def test_should_detect_bare_and_called_function_decorators() -> None:
-    # Given both legal Dagger decorator forms.
-    tree = ast.parse("@function\ndef ci(): pass\n@function(cache='never')\ndef security(): pass")
+def test_should_detect_all_legal_function_decorator_forms() -> None:
+    # Given bare and called local and qualified Dagger decorators.
+    tree = ast.parse(
+        "@function\ndef ci(): pass\n"
+        "@function(cache='never')\ndef security(): pass\n"
+        "@dagger.function\ndef qualified(): pass\n"
+        "@dagger.function(cache='never')\ndef qualified_called(): pass"
+    )
     adapter = ast.ClassDef(
         name="AgenticSaga", bases=[], keywords=[], body=tree.body, decorator_list=[]
     )
@@ -193,8 +235,8 @@ def test_should_detect_bare_and_called_function_decorators() -> None:
     # When the public functions are discovered.
     names = tuple(method.name for method in _public_methods(adapter))
 
-    # Then neither form can hide an endpoint from the closed-schema contract.
-    assert names == ("ci", "security")
+    # Then no legal form can hide an endpoint from the closed-schema contract.
+    assert names == ("ci", "security", "qualified", "qualified_called")
 
 
 def test_should_capture_nonpositional_public_inputs() -> None:
@@ -251,66 +293,48 @@ def test_should_pin_the_shared_modules_to_the_merged_private_history_commit() ->
     assert tuple(dependencies) == expected
 
 
-@pytest.mark.parametrize(("entrypoint", "lane"), PUBLIC_LANES)
-def test_should_wait_for_each_guard_before_its_product_lane(
-    monkeypatch: pytest.MonkeyPatch, entrypoint: str, lane: str
+@pytest.mark.parametrize(
+    ("entrypoint", "expected"), (("ci", CI_TRACE), ("security", SECURITY_TRACE))
+)
+def test_should_complete_the_foundation_guard_before_the_exact_product_trace(
+    monkeypatch: pytest.MonkeyPatch, entrypoint: str, expected: tuple[tuple[str, ...], ...]
 ) -> None:
-    # Given a controlled adapter orchestration fixture.
-    module = _adapter_module(monkeypatch)
-    adapter = module.AgenticSaga.__new__(module.AgenticSaga)
-    events: list[str] = []
-    monkeypatch.setattr(adapter, "_guard", _lane_recorder(events, "guard"))
-    monkeypatch.setattr(adapter, lane, _lane_recorder(events, "command"))
+    # Given an adapter connected to observable Foundation and Dagger container boundaries.
+    module, trace = _adapter_module(monkeypatch)
+    adapter = module.AgenticSaga()
 
-    # When the public entry point runs its product lane.
+    # When a public entry point executes.
     asyncio.run(getattr(adapter, entrypoint)(object(), "a" * 40, object()))
 
-    # Then the guard completed before any command was started.
-    assert events == ["guard", "command"]
+    # Then Foundation finishes first and the complete delegated trace has no extra product work.
+    assert trace.events.index("guard-sync") < next(
+        index for index, event in enumerate(trace.events) if isinstance(event, tuple)
+    )
+    _assert_product_trace(trace, expected)
 
 
-@pytest.mark.parametrize(("entrypoint", "lane"), PUBLIC_LANES)
-def test_should_stop_each_product_lane_when_its_guard_fails(
-    monkeypatch: pytest.MonkeyPatch, entrypoint: str, lane: str
+@pytest.mark.parametrize("entrypoint", ("ci", "security"))
+def test_should_stop_all_product_interactions_when_the_foundation_guard_fails(
+    monkeypatch: pytest.MonkeyPatch, entrypoint: str
 ) -> None:
-    # Given a guard that fails before its controlled product lane.
-    module = _adapter_module(monkeypatch)
-    adapter = module.AgenticSaga.__new__(module.AgenticSaga)
-    events: list[str] = []
-    monkeypatch.setattr(adapter, "_guard", _failing_guard(events))
-    monkeypatch.setattr(adapter, lane, _lane_recorder(events, "command"))
+    # Given an observable Foundation guard that cannot establish private history.
+    module, trace = _adapter_module(monkeypatch, guard_fails=True)
+    adapter = module.AgenticSaga()
 
-    # When the public entry point is evaluated.
+    # When either public entry point is evaluated.
     with pytest.raises(RuntimeError, match="history unavailable"):
         asyncio.run(getattr(adapter, entrypoint)(object(), "a" * 40, object()))
 
-    # Then no product command was reached.
-    assert events == ["guard"]
+    # Then no audit, container command, or product synchronization is reached.
+    assert trace.events == ["guard", "guard-sync"]
 
 
-def test_should_delegate_ci_to_the_existing_authoritative_commands() -> None:
-    # Given the closed CI orchestration.
-    commands = _literal_command_sequences(_adapter_tree(), "ci")
+def test_should_reject_an_extra_product_command_from_the_closed_ci_trace() -> None:
+    # Given a non-shipping mutation that adds copied coverage policy after CI delegation.
+    trace = _Trace()
+    trace.events = ["guard", "guard-sync", *CI_TRACE, ("uv", "run", "poe", "coverage")]
 
-    # When its product proof command boundaries are inspected.
-    expected = (
-        ("uv", "run", "poe", "gate"),
-        ("pnpm", "gate"),
-        ("uv", "run", "poe", "release-candidate"),
-    )
-
-    # Then the adapter delegates the complete existing CI proof without reproducing it.
-    assert all(command in commands for command in expected)
-
-
-def test_should_delegate_security_to_the_shared_locked_and_frontend_audits() -> None:
-    # Given the scheduled security orchestration.
-    tree = _adapter_tree()
-    commands = _literal_command_sequences(tree, "security")
-    source = _source_for_reachable_methods(tree, "security")
-
-    # When its audit command boundaries are inspected.
-    expected = "dependency_audit", ("pnpm", "audit")
-
-    # Then it uses the shared locked Python audit and the existing frontend audit.
-    assert expected[0] in source and expected[1] in commands
+    # When the public execution contract evaluates its captured trace.
+    # Then extra policy cannot evade the exact command boundary.
+    with pytest.raises(AssertionError):
+        _assert_product_trace(trace, CI_TRACE)
