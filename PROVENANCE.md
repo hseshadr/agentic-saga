@@ -41,9 +41,12 @@ no paid model call.
 Exact main commit `635974d51f87aa802886914be6a46bfd28518c66` passed hosted
 [Dagger run 34727077866](https://github.com/hseshadr/agentic-saga/actions/runs/34727077866)
 and [security run 34727111885](https://github.com/hseshadr/agentic-saga/actions/runs/34727111885).
-The Dagger graph verified exact source identity, Python 3.12 and 3.13, the frontend and packaged
-browser, dependency and secret audits, and the release budgets. A dirty-tree measurement remains
-diagnostic only. No registry artifacts exist yet, and none of these commands publishes one.
+Those runs verified the configured migration graph and dependency/secret controls. A final
+equivalence audit found that the migration graph omitted Python 3.12 and both per-runtime
+measurements, so the historical Dagger run is not full release-matrix evidence. The current graph
+restores those legs; only a green check bound to the current exact head counts as hosted
+release-matrix evidence. A dirty-tree measurement remains diagnostic only. No registry artifacts
+exist yet, and none of these commands publishes one.
 
 ## Repository controls
 

@@ -258,14 +258,16 @@ def test_oss_metadata_and_contributor_routes_are_complete() -> None:
         assert value in contributing
 
 
-def test_readme_records_current_hosted_dagger_proof() -> None:
+def test_readme_scopes_historical_dagger_proof() -> None:
     readme = (ROOT / "README.md").read_text()
     current = ("635974d51f87aa802886914be6a46bfd28518c66", "34727077866", "34727111885")
     stale = (
         "matching hosted CI evidence still must be recorded",
         "matching hosted CI run have not yet been recorded",
+        "verified the clean exact main commit, including both supported",
     )
     assert all(value in readme for value in current)
+    assert "not full release-matrix evidence" in readme
     assert all(value not in readme for value in stale)
 
 
@@ -479,7 +481,7 @@ def test_provenance_names_current_hosted_controls_and_evidence() -> None:
     current = (
         "Current evidence",
         "local `uv run poe gate`",
-        "No registry artifacts exist yet",
+        "No registry artifacts",
         "635974d51f87aa802886914be6a46bfd28518c66",
     )
     controls = (
@@ -488,6 +490,7 @@ def test_provenance_names_current_hosted_controls_and_evidence() -> None:
         "`.github/workflows/dagger-security.yml`",
         "34727077866",
         "34727111885",
+        "not full release-matrix evidence",
     )
 
     # Then local and hosted evidence are bound to the immutable commit and controls.

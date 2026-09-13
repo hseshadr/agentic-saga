@@ -99,8 +99,10 @@ composition setting. See the complete working assembly in
 - An offline release-measurement harness, dual-Python hosted workflow, exact package-content checks,
   and packaged-browser gate. Exact main commit
   `635974d51f87aa802886914be6a46bfd28518c66` passed the hosted
-  [Dagger gate](https://github.com/hseshadr/agentic-saga/actions/runs/34727077866) and independent
-  [security gate](https://github.com/hseshadr/agentic-saga/actions/runs/34727111885).
+  [migration Dagger gate](https://github.com/hseshadr/agentic-saga/actions/runs/34727077866) and
+  [security gate](https://github.com/hseshadr/agentic-saga/actions/runs/34727111885). A final
+  equivalence audit found that the migration gate omitted part of the former two-runtime matrix,
+  so that historical run is not full release-matrix evidence. The current graph restores it.
 
 ## Prove it locally
 
@@ -114,8 +116,8 @@ The quality gate and implemented measurement harness stay offline and credential
 measurement command runs the Python and frontend gates, builds and installs a wheel from locked
 inputs, exercises all four scenarios and the packaged recorder, and enforces the published resource
 and latency budgets. It reports the exact commit and environment; a dirty-tree result is diagnostic
-only. The hosted Dagger gate above verified the clean exact main commit, including both supported
-Python versions, the frontend gate, packaged-browser checks, dependency audits, and release budgets.
+only. The protected Dagger graph runs this proof under both supported Python versions; only a green
+check bound to the current exact head counts as hosted release-matrix evidence.
 
 ## Boundaries
 
