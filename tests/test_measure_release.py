@@ -627,6 +627,40 @@ def test_wheel_cli_uses_explicit_installed_executable(
     assert runner._wheel_cli(tmp_path / "workspace") == cli.resolve()
 
 
+def test_wheel_cli_installs_only_from_explicit_release_wheelhouse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given a verified release wheelhouse and an otherwise empty measurement workspace.
+    wheelhouse = tmp_path / "wheelhouse"
+    wheelhouse.mkdir()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    commands: list[tuple[str, ...]] = []
+    monkeypatch.delenv("AGENTIC_SAGA_CLI", raising=False)
+    monkeypatch.setenv("AGENTIC_SAGA_RELEASE_WHEELHOUSE", str(wheelhouse))
+
+    def checked(command: tuple[str, ...], cwd: Path = runner.ROOT) -> str:
+        del cwd
+        commands.append(command)
+        if command[:2] == ("uv", "build"):
+            (workspace / "wheel" / "agentic_saga-0.1.0-py3-none-any.whl").touch()
+        return ""
+
+    monkeypatch.setattr(runner, "_checked", checked)
+
+    # When the release measurement prepares its isolated wheel CLI.
+    runner._wheel_cli(workspace)
+
+    # Then every install is index-free and resolves dependencies only from that wheelhouse.
+    installs = tuple(command for command in commands if command[:3] == ("uv", "pip", "install"))
+    assert len(installs) == len(("dependencies", "project"))
+    assert all("--no-index" in command for command in installs)
+    assert all(
+        command[command.index("--find-links") + 1] == str(wheelhouse.resolve())
+        for command in installs
+    )
+
+
 def test_rendered_dirty_node_26_report_cannot_say_pass() -> None:
     identity = EnvironmentIdentity(
         "d" * 40, "dirty", "TestOS", "TestCPU", "Python 3.12.9", "v26.0.0", "11.5.0"

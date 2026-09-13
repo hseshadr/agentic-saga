@@ -7,9 +7,15 @@ from typing import Final
 import dagger
 from dagger import check, dag, function, object_type
 
-PYTHON_IMAGE: Final = (
-    "python:3.13.14-bookworm@sha256:"
-    "8b9a8b28d9cc221c6ab5d40e9cfcd99429959f6a8f5171612a99147975ab043f"
+PYTHON_IMAGES: Final = (
+    (
+        "python:3.12.12-bookworm@sha256:"
+        "c0abd0758831ad99b7a29e0c1a875da9c4abb9a2e3f21e2eeb585dbcadfb6cd0"
+    ),
+    (
+        "python:3.13.14-bookworm@sha256:"
+        "8b9a8b28d9cc221c6ab5d40e9cfcd99429959f6a8f5171612a99147975ab043f"
+    ),
 )
 UV_IMAGE: Final = (
     "ghcr.io/astral-sh/uv:0.11.32@sha256:"
@@ -23,6 +29,7 @@ REPOSITORY: Final = "hseshadr/agentic-saga"
 REPOSITORY_URL: Final = "https://github.com/hseshadr/agentic-saga.git"
 SOURCE_ROOT: Final = "/src"
 WEB_ROOT: Final = "/src/web/flight-recorder"
+RELEASE_WHEELHOUSE: Final = "/src/dist/release/wheelhouse"
 NODE_PATHS: Final = [
     "bin/corepack",
     "bin/node",
@@ -62,9 +69,9 @@ async def _dependency_audit(
     await audit.sync()
 
 
-def _python(source: dagger.Directory) -> dagger.Container:
+def _python(source: dagger.Directory, image: str) -> dagger.Container:
     uv = dag.container().from_(UV_IMAGE).file("/uv")
-    base = dag.container().from_(PYTHON_IMAGE).with_file("/usr/local/bin/uv", uv)
+    base = dag.container().from_(image).with_file("/usr/local/bin/uv", uv)
     base = base.with_directory(SOURCE_ROOT, source).with_workdir(SOURCE_ROOT)
     base = base.with_env_variable("UV_PROJECT_ENVIRONMENT", "/opt/venv")
     return base.with_exec(["uv", "sync", "--frozen", "--all-groups", "--all-extras"])
@@ -87,16 +94,27 @@ def _node_dependencies(base: dagger.Container) -> dagger.Container:
 
 
 def _with_browsers(base: dagger.Container) -> dagger.Container:
-    return base.with_exec(["pnpm", "exec", "playwright", "install", "--with-deps"])
+    return base.with_exec(["pnpm", "exec", "playwright", "install", "--with-deps", "chromium"])
 
 
 def _frontend(source: dagger.Directory) -> dagger.Container:
     return _with_browsers(_node(source))
 
 
-def _release(source: dagger.Directory) -> dagger.Container:
-    result = _with_browsers(_node_dependencies(_with_node(_python(source))))
+def _release(source: dagger.Directory, image: str) -> dagger.Container:
+    result = _with_browsers(_node_dependencies(_with_node(_python(source, image))))
     return result.with_workdir(SOURCE_ROOT)
+
+
+async def _verify_python_matrix(source: dagger.Directory) -> None:
+    for image in PYTHON_IMAGES:
+        await _python(source, image).with_exec(["uv", "run", "poe", "gate"]).sync()
+        candidate = _release(source, image).with_exec(["uv", "run", "poe", "release-candidate"])
+        await candidate.sync()
+        measured = candidate.with_env_variable(
+            "AGENTIC_SAGA_RELEASE_WHEELHOUSE", RELEASE_WHEELHOUSE
+        )
+        await measured.with_exec(["uv", "run", "python", "scripts/measure_release.py"]).sync()
 
 
 @object_type
@@ -111,12 +129,10 @@ class AgenticSaga:
         commit_sha: str,
         git_auth_header: dagger.Secret,
     ) -> str:
-        """Run the guarded Python, frontend, and release-candidate gates."""
+        """Run guarded dual-runtime, frontend, and measured release gates."""
         verified = await _release_source(source, commit_sha, git_auth_header)
-        await _python(verified).with_exec(["uv", "run", "poe", "gate"]).sync()
+        await _verify_python_matrix(verified)
         await _frontend(verified).with_exec(["pnpm", "gate"]).sync()
-        command = ["uv", "run", "poe", "release-candidate"]
-        await _release(verified).with_exec(command).sync()
         return "Agentic Saga canonical Dagger gate passed"
 
     @function

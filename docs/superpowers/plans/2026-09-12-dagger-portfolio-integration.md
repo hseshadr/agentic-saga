@@ -127,7 +127,9 @@ Test only behavior and stable boundaries:
 - Typed source, commit SHA, and secret boundaries.
 - Exact immutable shared-module pins.
 - The guard completes before any product command.
-- `ci` delegates to `uv run poe gate`, Flight Recorder `pnpm gate`, and `uv run poe release-candidate`.
+- `ci` runs `uv run poe gate`, `uv run poe release-candidate`, and
+  `uv run python scripts/measure_release.py` under both pinned Python 3.12 and 3.13 runtimes, then
+  runs the Flight Recorder `pnpm gate` once.
 - `security` delegates to shared locked Python audit and pnpm audit.
 - No public arbitrary image, command, argv, path, or package-install parameter.
 - No copied coverage floor, performance budget, or release algorithm in the adapter.
@@ -219,7 +221,10 @@ feat: add lean Dagger execution adapter
 
 **Step 1: Add the two-step CI workflow**
 
-Use only pinned checkout and pinned Dagger action. Pass exact `${{ github.sha }}` and a masked typed Git authorization header derived from `${{ github.token }}`. Name the required job/check exactly `Dagger`.
+Use only pinned checkout and pinned Dagger action. Pass exact `${{ github.sha }}` and the masked
+repository Actions secret `DAGGER_GIT_HTTP_AUTH_HEADER` as a typed Dagger secret. Its value is the
+value-only `Basic <base64(x-access-token:TOKEN)>` Git header; do not add the `Authorization:` name
+or derive credentials in the workflow. Name the required job/check exactly `Dagger`.
 
 **Step 2: Add the two-step scheduled/manual security workflow**
 
