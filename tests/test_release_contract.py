@@ -243,6 +243,27 @@ def _artifact_digests(output: Path) -> dict[str, str]:
     }
 
 
+def _release_path_links(output: Path, tmp_path: Path) -> tuple[Path, Path]:
+    direct = ROOT / "dist" / f"release-contract-direct-link-{tmp_path.name}"
+    ancestor = ROOT / "dist" / f"release-contract-ancestor-link-{tmp_path.name}"
+    _remove_path(direct)
+    _remove_path(ancestor)
+    direct.symlink_to(output, target_is_directory=True)
+    ancestor.symlink_to(output.parent, target_is_directory=True)
+    return direct, ancestor / output.name
+
+
+def _build_blocking_uv(tmp_path: Path) -> Path:
+    real_uv = shutil.which("uv")
+    assert real_uv is not None
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    wrapper = bin_dir / "uv"
+    wrapper.write_text(f'#!/bin/sh\n[ "$1" != "build" ] || exit 97\nexec "{real_uv}" "$@"\n')
+    wrapper.chmod(0o755)
+    return bin_dir
+
+
 def _prepare_escape_link(tmp_path: Path) -> tuple[Path, Path]:
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -521,6 +542,101 @@ def test_should_reject_modified_build_once_artifact_when_verifying_candidate(
         # Then verification fails before it can install or rebuild the wheel.
         assert result.returncode == 1
         assert "artifact digest mismatch" in result.stderr
+    finally:
+        shutil.rmtree(output, ignore_errors=True)
+
+
+def test_should_reject_tampered_requirements_before_candidate_install(tmp_path: Path) -> None:
+    # Given a valid first-party artifact set with modified locked requirements.
+    output = _dist_output(tmp_path, "requirements-candidate-tamper")
+    try:
+        _build(output)
+        (output / "runtime-requirements.txt").write_text("tampered\n")
+
+        # When candidate verification runs.
+        result = _run_script(VERIFY_SCRIPT, output)
+
+        # Then it fails before creating a wheelhouse or installing dependencies.
+        assert result.returncode == 1
+        assert "artifact digest mismatch: runtime-requirements.txt" in result.stderr
+        assert not (output / "wheelhouses").exists()
+    finally:
+        shutil.rmtree(output, ignore_errors=True)
+
+
+def test_should_reject_tampered_requirements_before_runtime_download(tmp_path: Path) -> None:
+    # Given a valid first-party artifact set with modified locked requirements.
+    output = _dist_output(tmp_path, "requirements-runtime-tamper")
+    try:
+        _build(output)
+        (output / "runtime-requirements.txt").write_text("tampered\n")
+
+        # When the runtime wheelhouse builder runs directly.
+        result = _run_script(RUNTIME_WHEELHOUSE_SCRIPT, output)
+
+        # Then it refuses before invoking pip download.
+        assert result.returncode == 1
+        assert "artifact digest mismatch: runtime-requirements.txt" in result.stderr
+        assert not (output / "wheelhouses").exists()
+    finally:
+        shutil.rmtree(output, ignore_errors=True)
+
+
+def test_should_reject_runtime_wheelhouse_when_source_commit_is_wrong(tmp_path: Path) -> None:
+    # Given a first-party artifact set whose source identity no longer matches HEAD.
+    output = _dist_output(tmp_path, "runtime-wrong-commit")
+    try:
+        _build(output)
+        (output / "SOURCE_COMMIT").write_text("0" * 40 + "\n")
+
+        # When the standalone wheelhouse builder validates the artifact set.
+        result = _run_script(RUNTIME_WHEELHOUSE_SCRIPT, output)
+
+        # Then it rejects the mismatch before downloading dependencies.
+        assert result.returncode == 1
+        assert "commit does not match HEAD" in result.stderr
+        assert not (output / "wheelhouses").exists()
+    finally:
+        shutil.rmtree(output, ignore_errors=True)
+
+
+def test_should_reject_direct_and_ancestor_symlink_release_paths(tmp_path: Path) -> None:
+    # Given direct and ancestor symlinks that both resolve inside dist.
+    output = _dist_output(tmp_path, "symlink-paths")
+    try:
+        _build(output)
+        direct, nested = _release_path_links(output, tmp_path)
+
+        # When either release script receives either symlinked path.
+        for script in (RUNTIME_WHEELHOUSE_SCRIPT, VERIFY_SCRIPT):
+            for unsafe_path in (direct, nested):
+                result = _run_script(script, unsafe_path)
+
+                # Then it fails closed without traversing the symlink path.
+                assert result.returncode == 2
+                assert "unsafe" in result.stderr
+    finally:
+        _remove_path(ROOT / "dist" / f"release-contract-direct-link-{tmp_path.name}")
+        _remove_path(ROOT / "dist" / f"release-contract-ancestor-link-{tmp_path.name}")
+        shutil.rmtree(output, ignore_errors=True)
+
+
+def test_should_reuse_valid_artifacts_without_invoking_uv_build(tmp_path: Path) -> None:
+    # Given a complete valid artifact set and a uv wrapper that blocks builds.
+    output = _dist_output(tmp_path, "reuse-without-build")
+    try:
+        _build(output)
+        blocking_bin = _build_blocking_uv(tmp_path)
+
+        # When candidate verification receives the existing artifact set.
+        result = _run_script(
+            VERIFY_SCRIPT,
+            output,
+            env={"PATH": f"{blocking_bin}:{os.environ['PATH']}", "UV_OFFLINE": "1"},
+        )
+
+        # Then verification succeeds because it never calls uv build.
+        assert result.returncode == 0, result.stderr
     finally:
         shutil.rmtree(output, ignore_errors=True)
 

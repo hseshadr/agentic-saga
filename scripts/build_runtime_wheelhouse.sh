@@ -23,14 +23,22 @@ if [[ "$release_arg" = /* ]]; then
 else
   requested="$working_dir/$release_arg"
 fi
+case "/$requested/" in
+  */../*) refuse "$release_arg" ;;
+esac
 canonical_dist_root="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$dist_root")"
+lexical_release="$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$requested")"
 canonical_release="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$requested")"
 case "$canonical_release" in
   "$canonical_dist_root"/*) ;;
   *) refuse "$release_arg" ;;
 esac
+case "$lexical_release" in
+  "$canonical_dist_root"/*) ;;
+  *) refuse "$release_arg" ;;
+esac
 [[ "$canonical_release" != "$canonical_dist_root" ]] || refuse "$release_arg"
-[[ ! -L "$requested" && -d "$canonical_release" ]] || refuse "$release_arg"
+[[ "$lexical_release" == "$canonical_release" && -d "$canonical_release" ]] || refuse "$release_arg"
 
 release_python="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
 [[ "$release_python" == "3.12" || "$release_python" == "3.13" ]] || {
@@ -49,6 +57,11 @@ recorded_commit="$(<"$source_commit")"
   printf 'invalid committed source marker\n' >&2
   exit 1
 }
+intended_commit="$(git -C "$repo_root" rev-parse --verify 'HEAD^{commit}')"
+[[ "$recorded_commit" == "$intended_commit" ]] || {
+  printf 'release artifact commit does not match HEAD\n' >&2
+  exit 1
+}
 
 wheel_count="$(find "$canonical_release" -maxdepth 1 -name '*.whl' | wc -l | tr -d ' ')"
 sdist_count="$(find "$canonical_release" -maxdepth 1 -name '*.tar.gz' | wc -l | tr -d ' ')"
@@ -60,8 +73,10 @@ wheel="$(find "$canonical_release" -maxdepth 1 -name '*.whl' -print -quit)"
 sdist="$(find "$canonical_release" -maxdepth 1 -name '*.tar.gz' -print -quit)"
 wheel_name="$(basename "$wheel")"
 sdist_name="$(basename "$sdist")"
+requirements_name="$(basename "$runtime_requirements")"
 wheel_digest=""
 sdist_digest=""
+requirements_digest=""
 manifest_lines=0
 while read -r expected filename extra; do
   [[ -n "$expected" && -n "$filename" && -z "${extra:-}" ]] || {
@@ -81,6 +96,10 @@ while read -r expected filename extra; do
       [[ -z "$sdist_digest" ]] || { printf 'duplicate artifact digest\n' >&2; exit 1; }
       sdist_digest="$expected"
       ;;
+    "$requirements_name")
+      [[ -z "$requirements_digest" ]] || { printf 'duplicate artifact digest\n' >&2; exit 1; }
+      requirements_digest="$expected"
+      ;;
     *)
       printf 'unknown artifact in digest manifest: %s\n' "$filename" >&2
       exit 1
@@ -88,12 +107,24 @@ while read -r expected filename extra; do
   esac
   manifest_lines=$((manifest_lines + 1))
 done < "$manifest"
-[[ "$manifest_lines" == "2" && -n "$wheel_digest" && -n "$sdist_digest" ]] || {
+[[ "$manifest_lines" == "3" && -n "$wheel_digest" && -n "$sdist_digest" && -n "$requirements_digest" ]] || {
   printf 'incomplete artifact digest manifest\n' >&2
   exit 1
 }
-[[ "$(sha256 "$wheel")" == "$wheel_digest" && "$(sha256 "$sdist")" == "$sdist_digest" ]] || {
-  printf 'artifact digest mismatch\n' >&2
+verify_digest() {
+  expected="$1"
+  artifact="$2"
+  [[ "$(sha256 "$artifact")" == "$expected" ]] || {
+    printf 'artifact digest mismatch: %s\n' "$(basename "$artifact")" >&2
+    exit 1
+  }
+}
+verify_digest "$wheel_digest" "$wheel"
+verify_digest "$sdist_digest" "$sdist"
+verify_digest "$requirements_digest" "$runtime_requirements"
+
+[[ "$(git -C "$repo_root" rev-parse --verify 'HEAD^{commit}')" == "$intended_commit" ]] || {
+  printf 'HEAD changed during runtime wheelhouse build\n' >&2
   exit 1
 }
 

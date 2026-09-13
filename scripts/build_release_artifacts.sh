@@ -57,4 +57,5 @@ printf '%s\n' "$source_commit" > "$output_dir/SOURCE_COMMIT"
 {
   printf '%s  %s\n' "$(sha256 "$wheel")" "$(basename "$wheel")"
   printf '%s  %s\n' "$(sha256 "$sdist")" "$(basename "$sdist")"
+  printf '%s  %s\n' "$(sha256 "$output_dir/runtime-requirements.txt")" "runtime-requirements.txt"
 } > "$output_dir/SHA256SUMS"
