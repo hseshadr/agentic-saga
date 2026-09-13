@@ -109,14 +109,22 @@ runtime_requirements="$output_dir/runtime-requirements.txt"
   printf 'missing locked runtime requirements: %s\n' "$runtime_requirements" >&2
   exit 1
 }
-wheelhouse="$output_dir/wheelhouse"
-[[ -d "$wheelhouse" && -n "$(find "$wheelhouse" -maxdepth 1 -name '*.whl' -print -quit)" ]] || {
-  printf 'missing offline runtime wheelhouse: %s\n' "$wheelhouse" >&2
-  exit 1
-}
 release_python="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
 [[ "$release_python" == "3.12" || "$release_python" == "3.13" ]] || {
   printf 'release verification requires Python 3.12 or 3.13\n' >&2
+  exit 1
+}
+wheelhouses="$output_dir/wheelhouses"
+[[ ! -L "$wheelhouses" ]] || {
+  printf 'refusing unsafe runtime wheelhouse directory: %s\n' "$wheelhouses" >&2
+  exit 2
+}
+wheelhouse="$wheelhouses/$release_python"
+if [[ ! -d "$wheelhouse" ]]; then
+  bash "$script_dir/build_runtime_wheelhouse.sh" "$output_dir"
+fi
+[[ ! -L "$wheelhouse" && -d "$wheelhouse" && -n "$(find "$wheelhouse" -maxdepth 1 -name '*.whl' -print -quit)" ]] || {
+  printf 'missing offline runtime wheelhouse: %s\n' "$wheelhouse" >&2
   exit 1
 }
 temp_root="$(mktemp -d)"

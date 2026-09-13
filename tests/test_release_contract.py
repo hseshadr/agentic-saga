@@ -1,9 +1,11 @@
+import hashlib
 import io
 import os
 import posixpath
 import re
 import shutil
 import subprocess
+import sys
 import tarfile
 from collections.abc import Mapping
 from html.parser import HTMLParser
@@ -15,6 +17,7 @@ import pytest
 
 ROOT = Path(__file__).parents[1]
 BUILD_SCRIPT = ROOT / "scripts" / "build_release_artifacts.sh"
+RUNTIME_WHEELHOUSE_SCRIPT = ROOT / "scripts" / "build_runtime_wheelhouse.sh"
 VERIFY_SCRIPT = ROOT / "scripts" / "verify_release_candidate.sh"
 PACKAGE_STATIC = ROOT / "src" / "agentic_saga" / "demo" / "static"
 SOURCE_TRACES = ROOT / "examples" / "ecommerce" / "flight-recorder" / "traces"
@@ -227,6 +230,19 @@ def _build(output: Path) -> None:
     assert result.returncode == 0, result.stderr
 
 
+def _build_runtime_wheelhouse(output: Path) -> None:
+    result = _run_script(RUNTIME_WHEELHOUSE_SCRIPT, output)
+    assert result.returncode == 0, result.stderr
+
+
+def _artifact_digests(output: Path) -> dict[str, str]:
+    return {
+        path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in output.iterdir()
+        if path.is_file()
+    }
+
+
 def _prepare_escape_link(tmp_path: Path) -> tuple[Path, Path]:
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -249,10 +265,8 @@ def _assert_artifacts(output: Path) -> None:
     requirements = (output / "runtime-requirements.txt").read_text()
     assert "pydantic==" in requirements
     assert "--hash=sha256:" in requirements
-    wheelhouse = output / "wheelhouse"
-    assert wheelhouse.is_dir()
-    assert len(tuple(wheelhouse.glob("*.whl"))) >= 6
-    assert not tuple(wheelhouse.glob("*.tar.gz"))
+    assert not (output / "wheelhouse").exists()
+    assert not (output / "wheelhouses").exists()
 
 
 def _assert_committed_identity(output: Path, dirty_file: Path) -> None:
@@ -268,6 +282,7 @@ def _assert_committed_identity(output: Path, dirty_file: Path) -> None:
 def test_release_scripts_are_strict_and_non_publishing() -> None:
     scripts = [
         ROOT / "scripts" / "build_release_artifacts.sh",
+        ROOT / "scripts" / "build_runtime_wheelhouse.sh",
         ROOT / "scripts" / "verify_release_candidate.sh",
     ]
     for script in scripts:
@@ -470,6 +485,46 @@ def test_build_uses_committed_head_and_excludes_dirty_files(tmp_path: Path) -> N
         shutil.rmtree(output, ignore_errors=True)
 
 
+def test_should_preserve_first_party_artifacts_when_building_a_second_runtime(
+    tmp_path: Path,
+) -> None:
+    # Given a complete first-party release artifact set.
+    output = _dist_output(tmp_path, "runtime-wheelhouse")
+    try:
+        _build(output)
+        before = _artifact_digests(output)
+
+        # When the executing runtime downloads its locked dependency wheels.
+        _build_runtime_wheelhouse(output)
+
+        # Then the release artifacts remain byte-for-byte identical and versioned.
+        assert _artifact_digests(output) == before
+        version = f"{sys.version_info.major}.{sys.version_info.minor}"
+        assert sorted(path.name for path in (output / "wheelhouses").iterdir()) == [version]
+    finally:
+        shutil.rmtree(output, ignore_errors=True)
+
+
+def test_should_reject_modified_build_once_artifact_when_verifying_candidate(
+    tmp_path: Path,
+) -> None:
+    # Given a valid first-party release artifact set with a modified wheel.
+    output = _dist_output(tmp_path, "build-once-tamper")
+    try:
+        _build(output)
+        wheel, _ = _single_artifacts(output)
+        wheel.write_bytes(b"tampered")
+
+        # When the release candidate is verified.
+        result = _run_script(VERIFY_SCRIPT, output)
+
+        # Then verification fails before it can install or rebuild the wheel.
+        assert result.returncode == 1
+        assert "artifact digest mismatch" in result.stderr
+    finally:
+        shutil.rmtree(output, ignore_errors=True)
+
+
 def test_verify_accepts_intact_committed_artifacts_offline(tmp_path: Path) -> None:
     output = _dist_output(tmp_path, "intact")
     try:
@@ -550,8 +605,9 @@ def test_release_proof_requires_frozen_hashed_offline_inputs() -> None:
     assert "--offline" in verify
     assert "--no-python-downloads" in verify
     assert "runtime-requirements.txt" in verify
-    assert "pip download" in build
-    assert "--only-binary=:all:" in build
+    assert "pip download" not in build
+    assert "pip download" in RUNTIME_WHEELHOUSE_SCRIPT.read_text()
+    assert "--only-binary=:all:" in RUNTIME_WHEELHOUSE_SCRIPT.read_text()
     assert '--find-links "$wheelhouse"' in verify
     assert '--python "$release_python"' in verify
     assert "--python 3.13" not in verify

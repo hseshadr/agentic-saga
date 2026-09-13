@@ -41,11 +41,6 @@ git -C "$repo_root" archive --format=tar "$source_commit" | tar -xf - -C "$sourc
 cd -- "$source_root"
 uv export --locked --no-dev --no-emit-project --format requirements.txt \
   -o "$output_dir/runtime-requirements.txt"
-wheelhouse="$output_dir/wheelhouse"
-mkdir -p -- "$wheelhouse"
-PIP_NO_INPUT=1 python3 -m pip download --disable-pip-version-check \
-  --only-binary=:all: --require-hashes --dest "$wheelhouse" \
-  --requirement "$output_dir/runtime-requirements.txt"
 uv build --offline --no-python-downloads --no-build-isolation --out-dir "$output_dir"
 wheel_count="$(find "$output_dir" -maxdepth 1 -name '*.whl' | wc -l | tr -d ' ')"
 sdist_count="$(find "$output_dir" -maxdepth 1 -name '*.tar.gz' | wc -l | tr -d ' ')"
