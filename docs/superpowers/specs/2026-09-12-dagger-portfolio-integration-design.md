@@ -1,18 +1,19 @@
 # Agentic Saga Dagger Portfolio Integration Design
 
 **Date:** 2026-09-12
-**Status:** Revised after written-spec review; awaiting approval
+**Status:** Implemented; corrected after final equivalence audit
 **Repositories:** `hseshadr/ci`, `hseshadr/agentic-saga`, `project-ideas`
 
 ## TL;DR
 
 Agentic Saga will reuse the portfolio's proven EdgeProc Dagger pattern: one 24-line, two-action
 GitHub workflow and one small typed adapter pinned to the shared `portfolio-foundation` module.
-The adapter does not rebuild Agentic Saga's CI logic. It calls the repository's existing
-authoritative commands: `uv run poe gate`, the Flight Recorder `pnpm gate`, and
-`uv run poe release-candidate`. A similarly thin scheduled entry point runs the existing locked
-dependency audits. The central fleet then verifies the exact `main` commit and branch protection,
-while `portfolio.json` records both the Dagger control plane and Agentic Saga as current facts.
+The adapter does not rebuild Agentic Saga's CI logic. Under each pinned Python 3.12 and 3.13
+runtime it calls `uv run poe gate`, `uv run poe release-candidate`, and
+`uv run python scripts/measure_release.py`; it also calls the Flight Recorder `pnpm gate` once.
+A similarly thin scheduled entry point runs the existing locked dependency audits. The central
+fleet then verifies eligible repositories, while `portfolio.json` records both the Dagger control
+plane and Agentic Saga as current facts.
 
 This is portfolio integration, not a product-runtime change. The Saga API, deterministic kernel,
 examples, and optional model adapters do not change.
@@ -87,9 +88,11 @@ GitHub event and permissions
 Agentic Saga local Dagger module      thin command adapter
         |
         +--> shared Foundation        source identity + history guard
-        +--> uv run poe gate          Python quality + tests + coverage
+        +--> Python 3.12 + 3.13       one immutable container per runtime
+        |    +--> uv run poe gate     quality + tests + coverage
+        |    +--> release-candidate   exact wheel + offline install
+        |    +--> measure_release.py  packaged browser + budgets
         +--> pnpm gate                frontend quality + browser proof
-        +--> poe release-candidate    wheel + dual Python + E2E + budgets
         +--> existing audits          locked Python + pnpm graphs
         |
         v
@@ -148,12 +151,13 @@ The public API accepts the exact source snapshot, exact commit identity, and one
 does not accept arbitrary execution configuration. Repository identity, toolchain versions,
 commands, cache namespaces, paths, and performance thresholds are fixed internal constants.
 
-`ci` first completes the shared source/history guard. It then runs three fixed repository-owned
-commands: the Python Poe gate, the Flight Recorder pnpm gate, and the Poe release-candidate gate.
-The release-candidate script continues to own artifact construction, both supported Python
-runtimes, offline hash-verified installation, packaged browser tests, and performance budgets.
-Dagger supplies reproducible containers and readable step boundaries; it does not duplicate the
-script's control flow.
+`ci` first completes the shared source/history guard. Under each pinned Python 3.12 and 3.13
+runtime it then runs three fixed repository-owned commands: the Python Poe gate, the Poe
+release-candidate gate, and `scripts/measure_release.py`. The release container imports the pinned
+Node toolchain and Playwright browser dependencies, so the measurement command exercises the
+packaged Flight Recorder against the installed CLI and enforces the existing performance budgets.
+The Flight Recorder `pnpm gate` runs once in its pinned Node container. Dagger supplies reproducible
+containers and readable step boundaries; it does not duplicate repository control flow.
 
 `security` is scheduled/manual and repeats the shared guard plus the repository's existing locked
 dependency-audit commands. It is not a second required branch-protection check.
@@ -207,10 +211,10 @@ The migration is incomplete if any of these disappear:
 | Kernel coverage | At least 90% total coverage and the existing kernel branch floor |
 | Complexity | Xenon Grade A and the existing function-size repository contract |
 | Frontend | The existing `pnpm gate` retains Node/pnpm pins, coverage, build, assets, and Playwright |
-| Packaged demo | `uv run poe release-candidate` retains both supported Python versions and the exact wheel |
+| Packaged demo | `uv run poe release-candidate` runs in each pinned runtime and retains the exact wheel |
 | Installation integrity | Hash-required dependencies, no-index install, `uv pip check` |
-| User journey | Packaged Flight Recorder Playwright test against the installed CLI |
-| Performance | Existing cold-start and 20-fresh-store p95 budgets, unchanged |
+| User journey | Per-runtime `scripts/measure_release.py` exercises the packaged recorder against the installed CLI |
+| Performance | Per-runtime measurement preserves the existing cold-start and 20-fresh-store p95 budgets |
 | Supply chain | Foundation guard plus the repository's existing locked Python and pnpm audits |
 | Mutation | Existing mutation command remains available; its current release status is documented |
 

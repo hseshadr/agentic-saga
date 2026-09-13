@@ -276,6 +276,9 @@ def test_current_dagger_docs_name_the_repository_auth_secret() -> None:
     )
     contents = tuple(path.read_text() for path in docs)
     assert all("DAGGER_GIT_HTTP_AUTH_HEADER" in text for text in contents)
+    assert all("scripts/measure_release.py" in text for text in contents)
+    assert "Under each pinned Python 3.12 and 3.13" in contents[0]
+    assert "The release-candidate script continues to own" not in contents[0]
     assert all("derived from `${{ github.token }}`" not in text for text in contents)
 
 
