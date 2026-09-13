@@ -17,7 +17,21 @@ import scripts.quality_proof as proof_module
 import scripts.release_runner as runner
 from agentic_saga.agents import deepagents as deepagents_module
 from agentic_saga.demo import assets as assets_module
-from scripts.release_contract import BUDGETS, EnvironmentIdentity, ReleaseReport, evaluate
+from scripts.release_contract import (
+    BUDGETS,
+    BudgetResult,
+    EnvironmentIdentity,
+    ReleaseReport,
+    evaluate,
+)
+
+_QUALITY_RESULT_NAMES = (
+    "core_branch_coverage_percent",
+    "release_scripts_branch_coverage_percent",
+    "frontend_branch_coverage_percent",
+    "python_complexity_grade_a",
+    "browser_behavior_checks",
+)
 
 
 def _proof_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -35,42 +49,54 @@ def _proof_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _write_proof_evidence(root: Path) -> None:
-    python = {
-        "files": {
-            "src/agentic_saga/kernel/runtime.py": {
-                "summary": {"covered_branches": 9, "num_branches": 10}
-            }
-        }
-    }
-    release = {
-        "files": {
-            "scripts/release_runner.py": {"summary": {"covered_branches": 19, "num_branches": 20}}
-        }
-    }
-    frontend = {"total": {"branches": {"covered": 9, "total": 10}}}
-    (root / ".coverage.json").write_text(json.dumps(python))
-    (root / ".coverage-release-scripts.json").write_text(json.dumps(release))
-    coverage = root / "web" / "flight-recorder" / "coverage" / "coverage-summary.json"
-    coverage.write_text(json.dumps(frontend))
+    _write_evidence(root / ".coverage.json", _python_evidence())
+    _write_evidence(root / ".coverage-release-scripts.json", _release_evidence())
+    _write_evidence(_frontend_coverage_path(root), _frontend_evidence())
+
+
+def _python_evidence() -> dict[str, object]:
+    summary = {"covered_branches": 9, "num_branches": 10}
+    return {"files": {"src/agentic_saga/kernel/runtime.py": {"summary": summary}}}
+
+
+def _release_evidence() -> dict[str, object]:
+    summary = {"covered_branches": 19, "num_branches": 20}
+    return {"files": {"scripts/release_runner.py": {"summary": summary}}}
+
+
+def _frontend_evidence() -> dict[str, object]:
+    return {"total": {"branches": {"covered": 9, "total": 10}}}
+
+
+def _frontend_coverage_path(root: Path) -> Path:
+    return root / "web" / "flight-recorder" / "coverage" / "coverage-summary.json"
+
+
+def _write_evidence(path: Path, evidence: dict[str, object]) -> None:
+    path.write_text(json.dumps(evidence))
 
 
 def _commit_proof_repository(root: Path) -> None:
-    commands = (
-        ("git", "init"),
-        ("git", "add", "."),
-        (
-            "git",
-            "-c",
-            "user.email=test@example.com",
-            "-c",
-            "user.name=Test",
-            "commit",
-            "-m",
-            "fixture",
-        ),
+    _git(root, "init")
+    _git(root, "add", ".")
+    _commit_fixture(root)
+
+
+def _commit_fixture(root: Path) -> None:
+    _git(
+        root,
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "user.name=Test",
+        "commit",
+        "-m",
+        "fixture",
     )
-    for command in commands:
-        subprocess.run(command, cwd=root, check=True, capture_output=True, text=True)
+
+
+def _git(root: Path, *arguments: str) -> None:
+    subprocess.run(("git", *arguments), cwd=root, check=True, capture_output=True, text=True)
 
 
 def _valid_quality_proof(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
@@ -89,6 +115,19 @@ def _tampered_quality_proof(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fie
         payload["input_digests"][field] = "0" * 64
     path.write_text(json.dumps(payload))
     return path
+
+
+def _proof_payload(path: Path) -> dict[str, object]:
+    return json.loads(path.read_text())
+
+
+def _write_proof_payload(path: Path, payload: dict[str, object]) -> None:
+    path.write_text(json.dumps(payload, allow_nan=True))
+
+
+def _result_payload(path: Path) -> dict[str, object]:
+    payload = _proof_payload(path)
+    return payload["results"][0]
 
 
 class _Stream:
@@ -212,17 +251,166 @@ def test_quality_evidence_enforces_python_and_frontend_branches_separately() -> 
 def test_valid_quality_proof_reuses_results_without_running_gates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Given
     proof = _valid_quality_proof(tmp_path, monkeypatch)
-
+    # When
     results = proof_module.quality_results_from_proof(proof)
+    # Then
+    assert tuple(result.name for result in results) == _QUALITY_RESULT_NAMES
 
-    assert tuple(result.name for result in results) == (
-        "core_branch_coverage_percent",
-        "release_scripts_branch_coverage_percent",
-        "frontend_branch_coverage_percent",
-        "python_complexity_grade_a",
-        "browser_behavior_checks",
-    )
+
+@pytest.mark.parametrize("field", ["p50", "maximum", "comparison", "lower"])
+def test_quality_proof_rejects_missing_required_result_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str
+) -> None:
+    # Given
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = _proof_payload(path)
+    del payload["results"][0][field]
+    _write_proof_payload(path, payload)
+
+    # When / Then
+    with pytest.raises(ValueError, match="quality proof schema"):
+        proof_module.quality_results_from_proof(path)
+
+
+def test_quality_proof_rejects_coerced_numeric_result_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = _proof_payload(path)
+    payload["results"][0]["actual"] = "90.0"
+    _write_proof_payload(path, payload)
+
+    # When / Then
+    with pytest.raises(ValueError, match="invalid quality proof schema"):
+        proof_module.quality_results_from_proof(path)
+
+
+def test_quality_proof_rejects_unknown_result_name_before_budget_lookup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = _proof_payload(path)
+    payload["results"][0]["name"] = "not-a-budget"
+    _write_proof_payload(path, payload)
+
+    # When / Then
+    with pytest.raises(ValueError, match="quality proof results differ"):
+        proof_module.quality_results_from_proof(path)
+
+
+def test_release_cli_returns_usage_error_for_unknown_proof_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = _proof_payload(path)
+    payload["results"][0]["name"] = "not-a-budget"
+    _write_proof_payload(path, payload)
+    monkeypatch.setattr(runner, "collect_environment", lambda: _passing_report().environment)
+
+    # When / Then
+    assert orchestrator.main(("--quality-proof", str(path))) == 2
+
+
+@pytest.mark.parametrize("contents", ["[", "[]"])
+def test_quality_proof_reader_rejects_invalid_or_nonobject_documents(
+    tmp_path: Path, contents: str
+) -> None:
+    # Given
+    path = tmp_path / "proof.json"
+    path.write_text(contents)
+
+    # When / Then
+    with pytest.raises(ValueError, match="quality proof"):
+        proof_module.read_json_object(path)
+
+
+def test_quality_proof_rejects_nonlist_completed_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = _proof_payload(path)
+    payload["completed_checks"] = {"python-gate": True}
+    _write_proof_payload(path, payload)
+
+    # When / Then
+    with pytest.raises(ValueError, match="quality proof schema"):
+        proof_module.quality_results_from_proof(path)
+
+
+def test_quality_proof_rejects_nonlist_results(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = _proof_payload(path)
+    payload["results"] = {"name": "not-a-list"}
+    _write_proof_payload(path, payload)
+
+    # When / Then
+    with pytest.raises(ValueError, match="quality proof schema"):
+        proof_module.quality_results_from_proof(path)
+
+
+def test_quality_proof_rejects_nonobject_result_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = _proof_payload(path)
+    payload["results"][0] = []
+    _write_proof_payload(path, payload)
+
+    # When / Then
+    with pytest.raises(ValueError, match="quality proof schema"):
+        proof_module.quality_results_from_proof(path)
+
+
+def test_quality_proof_rejects_nonobject_input_digests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = _proof_payload(path)
+    payload["input_digests"] = []
+    _write_proof_payload(path, payload)
+
+    # When / Then
+    with pytest.raises(ValueError, match="quality proof schema"):
+        proof_module.quality_results_from_proof(path)
+
+
+def test_quality_proof_rejects_result_that_disagrees_with_coverage_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = _proof_payload(path)
+    payload["results"][0]["actual"] = 91.0
+    _write_proof_payload(path, payload)
+
+    # When / Then
+    with pytest.raises(ValueError, match="quality proof evidence mismatch"):
+        proof_module.quality_results_from_proof(path)
+
+
+def test_quality_proof_rejects_tampered_result_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = _proof_payload(path)
+    payload["results"][0]["unit"] = "tampered"
+    _write_proof_payload(path, payload)
+
+    # When / Then
+    with pytest.raises(ValueError, match="result metadata mismatch"):
+        proof_module.quality_results_from_proof(path)
 
 
 @pytest.mark.parametrize("field", ["source_commit", "python_version", "uv_lock_sha256"])
@@ -239,18 +427,23 @@ def test_quality_proof_rejects_identity_mismatch(
 def test_quality_proof_rejects_nonexact_schema_keys(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
 ) -> None:
+    # Given
     path = _valid_quality_proof(tmp_path, monkeypatch)
-    payload = json.loads(path.read_text())
+    _tamper_schema(path, _proof_payload(path), change)
+
+    # When / Then
+    with pytest.raises(ValueError, match="quality proof schema keys"):
+        proof_module.quality_results_from_proof(path)
+
+
+def _tamper_schema(path: Path, payload: dict[str, object], change: str) -> None:
     if change == "unknown":
         payload["unrecognized"] = True
     elif change == "missing":
         del payload["results"]
     else:
         payload["input_digests"]["extra"] = "0" * 64
-    path.write_text(json.dumps(payload))
-
-    with pytest.raises(ValueError, match="quality proof schema keys"):
-        proof_module.quality_results_from_proof(path)
+    _write_proof_payload(path, payload)
 
 
 @pytest.mark.parametrize(
@@ -311,38 +504,47 @@ def test_quality_proof_rejects_invalid_repository_identity(
 def test_quality_proof_atomic_write_cleans_up_after_replace_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Given
     _proof_repository(tmp_path, monkeypatch)
     destination = tmp_path / "quality-proof.json"
-    monkeypatch.setattr(
-        proof_module.os,
-        "replace",
-        lambda _source, _target: (_ for _ in ()).throw(OSError("replace failed")),
-    )
-
+    monkeypatch.setattr(proof_module.os, "replace", _replace_failure)
+    # When / Then
     with pytest.raises(OSError, match="replace failed"):
         proof_module.write_quality_proof(destination)
-
     assert not destination.exists()
     assert not tuple(tmp_path.glob(".quality-proof-*.tmp"))
+
+
+def _replace_failure(_source: object, _target: object) -> None:
+    raise OSError("replace failed")
 
 
 def test_measure_release_reuses_quality_proof_without_running_quality_gates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # Given
     proof = _valid_quality_proof(tmp_path, monkeypatch)
     identity = _passing_report().environment
     expected = proof_module.quality_results_from_proof(proof)
+    _configure_proof_reuse(monkeypatch, identity, tmp_path)
+    # When
+    report = runner.measure_release(proof)
+    # Then
+    assert report.environment == identity
+    assert report.results == expected
+
+
+def _configure_proof_reuse(
+    monkeypatch: pytest.MonkeyPatch, identity: EnvironmentIdentity, tmp_path: Path
+) -> None:
     monkeypatch.setattr(runner, "collect_environment", lambda: identity)
-    monkeypatch.setattr(
-        runner, "_quality_results", lambda: pytest.fail("quality gates must not run")
-    )
+    monkeypatch.setattr(runner, "_quality_results", _unexpected_quality_gate)
     monkeypatch.setattr(runner, "_wheel_cli", lambda _workspace: tmp_path / "cli")
     monkeypatch.setattr(runner, "_release_results", lambda _cli, quality: quality)
 
-    report = runner.measure_release(proof)
 
-    assert report.environment == identity
-    assert report.results == expected
+def _unexpected_quality_gate() -> tuple[BudgetResult, ...]:
+    pytest.fail("quality gates must not run")
 
 
 def test_repository_coverage_command_fails_below_true_branch_floor(tmp_path: Path) -> None:

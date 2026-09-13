@@ -13,7 +13,15 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Final, Literal
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    StrictBool,
+    StrictFloat,
+    StrictInt,
+    StrictStr,
+    ValidationError,
+)
 
 from scripts.release_contract import BudgetResult, branch_percent, evaluate, frontend_branch_percent
 
@@ -53,34 +61,49 @@ _EVIDENCE_KEYS: Final[frozenset[str]] = frozenset(
         "frontend_coverage_sha256",
     }
 )
+_RESULT_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        "name",
+        "actual",
+        "limit",
+        "unit",
+        "samples",
+        "temperature",
+        "passed",
+        "p50",
+        "maximum",
+        "comparison",
+        "lower",
+    }
+)
 _COMMIT: Final[re.Pattern[str]] = re.compile(r"[0-9a-f]{40}")
 
 
 class ProofResult(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    name: str
-    actual: float
-    limit: float
-    unit: str
-    samples: int
-    temperature: str
-    passed: bool
-    p50: float | None = None
-    maximum: float | None = None
-    comparison: Literal["<=", ">=", "==", "range"] = "<="
-    lower: float | None = None
+    name: StrictStr
+    actual: StrictFloat
+    limit: StrictFloat
+    unit: StrictStr
+    samples: StrictInt
+    temperature: StrictStr
+    passed: StrictBool
+    p50: StrictFloat | None
+    maximum: StrictFloat | None
+    comparison: Literal["<=", ">=", "==", "range"]
+    lower: StrictFloat | None
 
 
 class QualityProof(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    schema_version: int
-    source_commit: str
-    python_version: str
-    input_digests: Mapping[str, str]
-    evidence_digests: Mapping[str, str]
-    completed_checks: tuple[str, ...]
+    schema_version: StrictInt
+    source_commit: StrictStr
+    python_version: StrictStr
+    input_digests: Mapping[StrictStr, StrictStr]
+    evidence_digests: Mapping[StrictStr, StrictStr]
+    completed_checks: tuple[StrictStr, ...]
     results: tuple[ProofResult, ...]
 
 
@@ -101,9 +124,17 @@ def quality_results_from_proof(path: Path) -> tuple[BudgetResult, ...]:
 def parse_quality_proof(payload: Mapping[str, object]) -> QualityProof:
     _require_schema_keys(payload)
     try:
-        return QualityProof.model_validate(payload)
+        return QualityProof.model_validate(_model_payload(payload))
     except ValidationError as error:
         raise ValueError("invalid quality proof schema") from error
+
+
+def _model_payload(payload: Mapping[str, object]) -> Mapping[str, object]:
+    checks = payload["completed_checks"]
+    results = payload["results"]
+    if not isinstance(checks, list) or not isinstance(results, list):
+        raise ValueError("quality proof schema keys differ")
+    return {**payload, "completed_checks": tuple(checks), "results": tuple(results)}
 
 
 def validate_quality_proof(proof: QualityProof) -> None:
@@ -178,6 +209,17 @@ def _require_schema_keys(payload: Mapping[str, object]) -> None:
     _require_exact_keys(payload, _SCHEMA_KEYS)
     _require_nested_keys(payload, "input_digests", _INPUT_KEYS)
     _require_nested_keys(payload, "evidence_digests", _EVIDENCE_KEYS)
+    _require_result_keys(payload)
+
+
+def _require_result_keys(payload: Mapping[str, object]) -> None:
+    results = payload.get("results")
+    if not isinstance(results, list):
+        raise ValueError("quality proof schema keys differ")
+    for result in results:
+        if not isinstance(result, Mapping):
+            raise ValueError("quality proof schema keys differ")
+        _require_exact_keys(result, _RESULT_KEYS)
 
 
 def _require_nested_keys(
@@ -218,10 +260,13 @@ def _validate_results(proof: QualityProof) -> None:
 
 
 def _proof_results(proof: QualityProof) -> tuple[BudgetResult, ...]:
-    results = tuple(_budget_result(result) for result in proof.results)
+    _require_result_names(proof.results)
+    return tuple(_budget_result(result) for result in proof.results)
+
+
+def _require_result_names(results: tuple[ProofResult, ...]) -> None:
     if tuple(result.name for result in results) != _RESULT_NAMES:
         raise ValueError("quality proof results differ")
-    return results
 
 
 def _budget_result(result: ProofResult) -> BudgetResult:
@@ -263,8 +308,8 @@ def _evidence_json(relative: str) -> Mapping[str, object]:
 def _proof_result(result: BudgetResult) -> ProofResult:
     return ProofResult(
         name=result.name,
-        actual=result.actual,
-        limit=result.limit,
+        actual=float(result.actual),
+        limit=float(result.limit),
         unit=result.unit,
         samples=result.samples,
         temperature=result.temperature,

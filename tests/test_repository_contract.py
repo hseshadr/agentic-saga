@@ -880,6 +880,8 @@ def test_python_tooling_targets_the_supported_312_floor() -> None:
         ),
         "env": {"MYPYPATH": "src"},
     }
+    release_test = config["tool"]["poe"]["tasks"]["release-script-test"]["cmd"]
+    assert "--cov=scripts.quality_proof" in release_test
 
 
 def test_flight_recorder_pins_its_package_manager_and_lockfile() -> None:
