@@ -94,7 +94,7 @@ def _node_dependencies(base: dagger.Container) -> dagger.Container:
 
 
 def _with_browsers(base: dagger.Container) -> dagger.Container:
-    return base.with_exec(["pnpm", "exec", "playwright", "install", "--with-deps"])
+    return base.with_exec(["pnpm", "exec", "playwright", "install", "--with-deps", "chromium"])
 
 
 def _frontend(source: dagger.Directory) -> dagger.Container:

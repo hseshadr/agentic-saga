@@ -79,18 +79,18 @@ CI_RUNTIME_TRACE = (
     ("uv", "sync", "--frozen", "--all-groups", "--all-extras"),
     ("corepack", "enable"),
     ("pnpm", "install", "--frozen-lockfile"),
-    ("pnpm", "exec", "playwright", "install", "--with-deps"),
+    ("pnpm", "exec", "playwright", "install", "--with-deps", "chromium"),
     *MATRIX_TRACE[2:],
     ("uv", "sync", "--frozen", "--all-groups", "--all-extras"),
     *MATRIX_TRACE[:2],
     ("uv", "sync", "--frozen", "--all-groups", "--all-extras"),
     ("corepack", "enable"),
     ("pnpm", "install", "--frozen-lockfile"),
-    ("pnpm", "exec", "playwright", "install", "--with-deps"),
+    ("pnpm", "exec", "playwright", "install", "--with-deps", "chromium"),
     *MATRIX_TRACE[2:],
     ("corepack", "enable"),
     ("pnpm", "install", "--frozen-lockfile"),
-    ("pnpm", "exec", "playwright", "install", "--with-deps"),
+    ("pnpm", "exec", "playwright", "install", "--with-deps", "chromium"),
     ("pnpm", "gate"),
     ("container-sync",),
 )
@@ -105,7 +105,7 @@ BOOTSTRAP_COMMANDS = frozenset(
         ("uv", "sync", "--frozen", "--all-groups", "--all-extras"),
         ("corepack", "enable"),
         ("pnpm", "install", "--frozen-lockfile"),
-        ("pnpm", "exec", "playwright", "install", "--with-deps"),
+        ("pnpm", "exec", "playwright", "install", "--with-deps", "chromium"),
     }
 )
 GENERATED_PATHS = (".dagger/sdk/generated.py", ".dagger/.venv/pyvenv.cfg")
@@ -589,7 +589,7 @@ def _runtime_view(
 UV_SYNC = ("uv", "sync", "--frozen", "--all-groups", "--all-extras")
 COREPACK = ("corepack", "enable")
 PNPM_INSTALL = ("pnpm", "install", "--frozen-lockfile")
-PLAYWRIGHT = ("pnpm", "exec", "playwright", "install", "--with-deps")
+PLAYWRIGHT = ("pnpm", "exec", "playwright", "install", "--with-deps", "chromium")
 UV_ORIGIN = _RuntimeView(UV_IMAGE, (), (), None, (), (), (), ("from",))
 NODE_ORIGIN = _RuntimeView(NODE_IMAGE, (), (), None, (), (), (), ("from",))
 UV_FILE = (("/usr/local/bin/uv", _ArtifactView("/uv", UV_ORIGIN)),)
@@ -765,6 +765,22 @@ def test_should_restore_each_supported_runtime_release_matrix(
     # Then each runtime owns a gate, immutable candidate, and packaged measured proof.
     actual = tuple((snapshot.image, snapshot.commands[-1]) for snapshot in trace.product_snapshots)
     assert actual == EXPECTED_MATRIX_PRODUCTS
+
+
+def test_should_install_only_chromium_for_every_browser_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given every release and frontend gate executes Playwright tests on Chromium.
+    module, trace = _adapter_module(monkeypatch)
+
+    # When the complete public CI lane builds its browser runtimes.
+    asyncio.run(module.AgenticSaga().ci(object(), "a" * 40, object()))
+
+    # Then each install targets Chromium exactly, preventing unused browser downloads.
+    installs = tuple(
+        command for command in _runtime_commands(trace) if command[:4] == PLAYWRIGHT[:4]
+    )
+    assert installs == (PLAYWRIGHT, PLAYWRIGHT, PLAYWRIGHT)
 
 
 def test_should_resolve_offline_measurement_from_verified_wheelhouse(
