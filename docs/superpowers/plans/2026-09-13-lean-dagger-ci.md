@@ -56,7 +56,7 @@
 
 **Interfaces:**
 - Consumes: existing `dist/release` artifact contract and locked `runtime-requirements.txt`.
-- Produces: `build_runtime_wheelhouse.sh RELEASE_DIR [PYTHON_VERSION]` and `dist/release/wheelhouses/<major>.<minor>/`; `verify_release_candidate.sh OUTPUT_DIR [PYTHON_VERSION]` reuses valid first-party artifacts.
+- Produces: `build_runtime_wheelhouse.sh RELEASE_DIR` and `dist/release/wheelhouses/<major>.<minor>/`; `verify_release_candidate.sh OUTPUT_DIR` derives the executing interpreter's version and reuses valid first-party artifacts.
 
 - [ ] **Step 1: Add failing release-contract tests**
 
@@ -66,16 +66,16 @@ Add tests that invoke the real shell scripts in a temporary repository and asser
 def test_first_party_artifacts_are_not_rebuilt_for_a_second_runtime(tmp_path: Path) -> None:
     release = build_release(tmp_path)
     before = artifact_digests(release)
-    build_runtime_wheelhouse(release, "3.12")
-    build_runtime_wheelhouse(release, "3.13")
+    build_runtime_wheelhouse(release)
     assert artifact_digests(release) == before
-    assert sorted(path.name for path in (release / "wheelhouses").iterdir()) == ["3.12", "3.13"]
+    version = f"{sys.version_info.major}.{sys.version_info.minor}"
+    assert sorted(path.name for path in (release / "wheelhouses").iterdir()) == [version]
 
 
 def test_candidate_verification_rejects_modified_build_once_artifact(tmp_path: Path) -> None:
     release = build_release(tmp_path)
     next(release.glob("*.whl")).write_bytes(b"tampered")
-    result = verify_candidate(release, "3.12")
+    result = verify_candidate(release)
     assert result.returncode == 1
     assert "artifact digest mismatch" in result.stderr
 ```
@@ -97,10 +97,10 @@ Expected: the build-once and versioned-wheelhouse tests fail because the new scr
 Implement `build_runtime_wheelhouse.sh` with this command contract:
 
 ```text
-scripts/build_runtime_wheelhouse.sh RELEASE_DIR [PYTHON_VERSION]
+scripts/build_runtime_wheelhouse.sh RELEASE_DIR
 ```
 
-Resolve `PYTHON_VERSION` to the executing interpreter's `<major>.<minor>` when omitted; accept only `3.12` or `3.13`; validate `RELEASE_DIR` under the repository `dist/`; require the locked requirements and immutable artifact manifests; create a temporary directory; run hash-required binary-only `pip download`; then atomically replace
+Resolve the executing interpreter's `<major>.<minor>` and accept only `3.12` or `3.13`; do not accept an override that could label wheels with the wrong ABI. Validate `RELEASE_DIR` under the repository `dist/`; require the locked requirements and immutable artifact manifests; create a temporary directory; run hash-required binary-only `pip download`; then atomically replace
 `RELEASE_DIR/wheelhouses/<version>/`. Reuse the safety checks and digest helper style already present in the release scripts.
 
 - [ ] **Step 4: Make artifact build and verification composable**
