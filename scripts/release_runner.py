@@ -37,6 +37,7 @@ from agentic_saga.evidence import run_trace as trace_module
 from agentic_saga.storage import SQLiteKernelStore
 from agentic_saga.storage import sqlite as sqlite_module
 from examples.ecommerce.demo import run_scenario
+from scripts.quality_proof import quality_results_from_proof
 from scripts.release_contract import (
     BUDGETS,
     BudgetResult,
@@ -772,13 +773,13 @@ def _install_wheel(venv: Path, requirements: Path, wheel: Path, wheelhouse: Path
     _checked((*common, "--no-deps", str(wheel)))
 
 
-def _release_results(cli: Path) -> tuple[BudgetResult, ...]:
-    return _static_results() + _workload_results(cli)
+def _release_results(cli: Path, quality: tuple[BudgetResult, ...]) -> tuple[BudgetResult, ...]:
+    return _static_results(quality) + _workload_results(cli)
 
 
-def _static_results() -> tuple[BudgetResult, ...]:
+def _static_results(quality: tuple[BudgetResult, ...]) -> tuple[BudgetResult, ...]:
     return (
-        *_quality_results(),
+        *quality,
         *_manifest_results(),
         *implementation_limit_results(),
         *_asset_results(),
@@ -799,10 +800,12 @@ def _workload_results(cli: Path) -> tuple[BudgetResult, ...]:
     )
 
 
-def measure_release() -> ReleaseReport:
+def measure_release(quality_proof: Path | None = None) -> ReleaseReport:
     identity = collect_environment()
+    quality = quality_results_from_proof(quality_proof) if quality_proof else _quality_results()
     with tempfile.TemporaryDirectory(prefix="agentic-saga-release-") as directory:
-        return ReleaseReport(identity, _release_results(_wheel_cli(Path(directory))))
+        results = _release_results(_wheel_cli(Path(directory)), quality)
+    return ReleaseReport(identity, results)
 
 
 def _render_result(result: BudgetResult) -> str:

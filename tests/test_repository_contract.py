@@ -876,7 +876,7 @@ def test_python_tooling_targets_the_supported_312_floor() -> None:
     assert release_typecheck == {
         "cmd": (
             "mypy --strict --explicit-package-bases scripts/measure_release.py "
-            "scripts/release_contract.py scripts/release_runner.py"
+            "scripts/release_contract.py scripts/release_runner.py scripts/quality_proof.py"
         ),
         "env": {"MYPYPATH": "src"},
     }

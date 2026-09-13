@@ -157,8 +157,8 @@ use_setproctitle = false
 lint-check = "ruff check src tests examples scripts"
 format-check = "ruff format --check src tests examples scripts"
 typecheck = "mypy --strict src tests examples"
-typecheck-release = { cmd = "mypy --strict --explicit-package-bases scripts/measure_release.py scripts/release_contract.py scripts/release_runner.py", env = { MYPYPATH = "src" } }
-complexity = "xenon --max-absolute A --max-modules A --max-average A src examples scripts/measure_release.py scripts/release_contract.py scripts/release_runner.py"
+typecheck-release = { cmd = "mypy --strict --explicit-package-bases scripts/measure_release.py scripts/release_contract.py scripts/release_runner.py scripts/quality_proof.py", env = { MYPYPATH = "src" } }
+complexity = "xenon --max-absolute A --max-modules A --max-average A src examples scripts/measure_release.py scripts/release_contract.py scripts/release_runner.py scripts/quality_proof.py"
 test = "pytest -m 'not live_model and not network' --cov=src/agentic_saga --cov-branch --cov-fail-under=90"
 core-coverage = "python -m scripts.release_runner --check-python-coverage .coverage.json"
 release-script-test = { cmd = "pytest -o addopts='' --strict-config --strict-markers --disable-socket --allow-unix-socket tests/test_measure_release.py tests/test_release_measurement_contract.py --cov=scripts.measure_release --cov=scripts.release_contract --cov=scripts.release_runner --cov-branch --cov-report=json:.coverage-release-scripts.json --cov-fail-under=90", env = { COVERAGE_FILE = ".coverage-release-scripts" } }

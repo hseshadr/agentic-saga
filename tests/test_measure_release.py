@@ -13,10 +13,82 @@ import pytest
 
 import agentic_saga.manifest as manifest_module
 import scripts.measure_release as orchestrator
+import scripts.quality_proof as proof_module
 import scripts.release_runner as runner
 from agentic_saga.agents import deepagents as deepagents_module
 from agentic_saga.demo import assets as assets_module
 from scripts.release_contract import BUDGETS, EnvironmentIdentity, ReleaseReport, evaluate
+
+
+def _proof_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    root = tmp_path / "proof-repository"
+    (root / "web" / "flight-recorder" / "coverage").mkdir(parents=True)
+    (root / "pyproject.toml").write_text("[project]\nname = 'proof-fixture'\n")
+    (root / "uv.lock").write_text("version = 1\n")
+    (root / "web" / "flight-recorder" / "package.json").write_text('{"name":"fixture"}\n')
+    (root / "web" / "flight-recorder" / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n")
+    (root / ".gitignore").write_text(".coverage*.json\nweb/flight-recorder/coverage/\n")
+    _commit_proof_repository(root)
+    _write_proof_evidence(root)
+    monkeypatch.setattr(proof_module, "ROOT", root)
+    return root
+
+
+def _write_proof_evidence(root: Path) -> None:
+    python = {
+        "files": {
+            "src/agentic_saga/kernel/runtime.py": {
+                "summary": {"covered_branches": 9, "num_branches": 10}
+            }
+        }
+    }
+    release = {
+        "files": {
+            "scripts/release_runner.py": {"summary": {"covered_branches": 19, "num_branches": 20}}
+        }
+    }
+    frontend = {"total": {"branches": {"covered": 9, "total": 10}}}
+    (root / ".coverage.json").write_text(json.dumps(python))
+    (root / ".coverage-release-scripts.json").write_text(json.dumps(release))
+    coverage = root / "web" / "flight-recorder" / "coverage" / "coverage-summary.json"
+    coverage.write_text(json.dumps(frontend))
+
+
+def _commit_proof_repository(root: Path) -> None:
+    commands = (
+        ("git", "init"),
+        ("git", "add", "."),
+        (
+            "git",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "user.name=Test",
+            "commit",
+            "-m",
+            "fixture",
+        ),
+    )
+    for command in commands:
+        subprocess.run(command, cwd=root, check=True, capture_output=True, text=True)
+
+
+def _valid_quality_proof(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    _proof_repository(tmp_path, monkeypatch)
+    path = tmp_path / "quality-proof.json"
+    proof_module.write_quality_proof(path)
+    return path
+
+
+def _tampered_quality_proof(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str) -> Path:
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = json.loads(path.read_text())
+    if field in {"source_commit", "python_version"}:
+        payload[field] = "tampered"
+    else:
+        payload["input_digests"][field] = "0" * 64
+    path.write_text(json.dumps(payload))
+    return path
 
 
 class _Stream:
@@ -135,6 +207,142 @@ def test_quality_evidence_enforces_python_and_frontend_branches_separately() -> 
     assert results[1].passed
     assert results[2].actual == 89
     assert not results[2].passed
+
+
+def test_valid_quality_proof_reuses_results_without_running_gates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proof = _valid_quality_proof(tmp_path, monkeypatch)
+
+    results = proof_module.quality_results_from_proof(proof)
+
+    assert tuple(result.name for result in results) == (
+        "core_branch_coverage_percent",
+        "release_scripts_branch_coverage_percent",
+        "frontend_branch_coverage_percent",
+        "python_complexity_grade_a",
+        "browser_behavior_checks",
+    )
+
+
+@pytest.mark.parametrize("field", ["source_commit", "python_version", "uv_lock_sha256"])
+def test_quality_proof_rejects_identity_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str
+) -> None:
+    proof = _tampered_quality_proof(tmp_path, monkeypatch, field)
+
+    with pytest.raises(ValueError, match="quality proof identity mismatch"):
+        proof_module.quality_results_from_proof(proof)
+
+
+@pytest.mark.parametrize("change", ["unknown", "missing", "extra"])
+def test_quality_proof_rejects_nonexact_schema_keys(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = json.loads(path.read_text())
+    if change == "unknown":
+        payload["unrecognized"] = True
+    elif change == "missing":
+        del payload["results"]
+    else:
+        payload["input_digests"]["extra"] = "0" * 64
+    path.write_text(json.dumps(payload))
+
+    with pytest.raises(ValueError, match="quality proof schema keys"):
+        proof_module.quality_results_from_proof(path)
+
+
+@pytest.mark.parametrize(
+    "checks",
+    [("python-gate",), ("python-gate", "python-gate"), ("frontend-gate", "python-gate")],
+)
+def test_quality_proof_rejects_missing_or_duplicate_completed_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, checks: tuple[str, ...]
+) -> None:
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = json.loads(path.read_text())
+    payload["completed_checks"] = checks
+    path.write_text(json.dumps(payload))
+
+    with pytest.raises(ValueError, match="completed checks"):
+        proof_module.quality_results_from_proof(path)
+
+
+def test_quality_proof_rejects_nonfinite_coverage_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = json.loads(path.read_text())
+    payload["results"][0]["actual"] = float("nan")
+    path.write_text(json.dumps(payload, allow_nan=True))
+
+    with pytest.raises(ValueError, match="non-finite"):
+        proof_module.quality_results_from_proof(path)
+
+
+def test_quality_proof_rejects_modified_coverage_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    root = proof_module.ROOT
+    (root / ".coverage.json").write_text("{}")
+
+    with pytest.raises(ValueError, match="quality proof evidence mismatch"):
+        proof_module.quality_results_from_proof(path)
+
+
+@pytest.mark.parametrize("change", ["abbreviated", "dirty"])
+def test_quality_proof_rejects_invalid_repository_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    if change == "abbreviated":
+        payload = json.loads(path.read_text())
+        payload["source_commit"] = payload["source_commit"][:7]
+        path.write_text(json.dumps(payload))
+    else:
+        (proof_module.ROOT / "pyproject.toml").write_text("dirty\n")
+
+    with pytest.raises(ValueError, match="quality proof identity mismatch"):
+        proof_module.quality_results_from_proof(path)
+
+
+def test_quality_proof_atomic_write_cleans_up_after_replace_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _proof_repository(tmp_path, monkeypatch)
+    destination = tmp_path / "quality-proof.json"
+    monkeypatch.setattr(
+        proof_module.os,
+        "replace",
+        lambda _source, _target: (_ for _ in ()).throw(OSError("replace failed")),
+    )
+
+    with pytest.raises(OSError, match="replace failed"):
+        proof_module.write_quality_proof(destination)
+
+    assert not destination.exists()
+    assert not tuple(tmp_path.glob(".quality-proof-*.tmp"))
+
+
+def test_measure_release_reuses_quality_proof_without_running_quality_gates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proof = _valid_quality_proof(tmp_path, monkeypatch)
+    identity = _passing_report().environment
+    expected = proof_module.quality_results_from_proof(proof)
+    monkeypatch.setattr(runner, "collect_environment", lambda: identity)
+    monkeypatch.setattr(
+        runner, "_quality_results", lambda: pytest.fail("quality gates must not run")
+    )
+    monkeypatch.setattr(runner, "_wheel_cli", lambda _workspace: tmp_path / "cli")
+    monkeypatch.setattr(runner, "_release_results", lambda _cli, quality: quality)
+
+    report = runner.measure_release(proof)
+
+    assert report.environment == identity
+    assert report.results == expected
 
 
 def test_repository_coverage_command_fails_below_true_branch_floor(tmp_path: Path) -> None:
@@ -790,6 +998,22 @@ def test_release_orchestrator_rejects_arguments_before_measuring(
     )
 
     assert orchestrator.main(("unexpected",)) == 2
+
+
+def test_release_orchestrator_accepts_only_quality_proof_option(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proof = tmp_path / "proof.json"
+    received: list[Path | None] = []
+    monkeypatch.setattr(
+        orchestrator,
+        "measure_release",
+        lambda path=None: received.append(path) or _passing_report(),
+    )
+
+    assert orchestrator.main(("--quality-proof", str(proof))) == 0
+    assert received == [proof]
+    assert orchestrator.main(("--quality-proof",)) == 2
 
 
 def test_release_orchestrator_renders_complete_pass(
