@@ -715,7 +715,7 @@ def _wheel_cli(workspace: Path) -> Path:
     _checked(_requirements_command(requirements))
     venv = workspace / "venv"
     _checked(("uv", "venv", "--offline", "--no-python-downloads", str(venv)))
-    _install_wheel(venv, requirements, wheel)
+    _install_wheel(venv, requirements, wheel, _release_wheelhouse())
     return venv / "bin" / "agentic-saga"
 
 
@@ -748,9 +748,26 @@ def _requirements_command(output: Path) -> tuple[str, ...]:
     )
 
 
-def _install_wheel(venv: Path, requirements: Path, wheel: Path) -> None:
+def _release_wheelhouse() -> Path | None:
+    configured = os.environ.get("AGENTIC_SAGA_RELEASE_WHEELHOUSE")
+    if configured is None:
+        return None
+    wheelhouse = Path(configured).resolve(strict=True)
+    if not wheelhouse.is_dir():
+        raise ValueError("release wheelhouse must be a directory")
+    return wheelhouse
+
+
+def _install_prefix(venv: Path, wheelhouse: Path | None) -> tuple[str, ...]:
     python = str(venv / "bin" / "python")
     common = ("uv", "pip", "install", "--offline", "--no-python-downloads", "--python", python)
+    if wheelhouse is None:
+        return common
+    return (*common, "--no-index", "--find-links", str(wheelhouse))
+
+
+def _install_wheel(venv: Path, requirements: Path, wheel: Path, wheelhouse: Path | None) -> None:
+    common = _install_prefix(venv, wheelhouse)
     _checked((*common, "--require-hashes", "-r", str(requirements)))
     _checked((*common, "--no-deps", str(wheel)))
 

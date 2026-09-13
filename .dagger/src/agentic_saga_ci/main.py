@@ -29,6 +29,7 @@ REPOSITORY: Final = "hseshadr/agentic-saga"
 REPOSITORY_URL: Final = "https://github.com/hseshadr/agentic-saga.git"
 SOURCE_ROOT: Final = "/src"
 WEB_ROOT: Final = "/src/web/flight-recorder"
+RELEASE_WHEELHOUSE: Final = "/src/dist/release/wheelhouse"
 NODE_PATHS: Final = [
     "bin/corepack",
     "bin/node",
@@ -110,7 +111,10 @@ async def _verify_python_matrix(source: dagger.Directory) -> None:
         await _python(source, image).with_exec(["uv", "run", "poe", "gate"]).sync()
         candidate = _release(source, image).with_exec(["uv", "run", "poe", "release-candidate"])
         await candidate.sync()
-        await candidate.with_exec(["uv", "run", "python", "scripts/measure_release.py"]).sync()
+        measured = candidate.with_env_variable(
+            "AGENTIC_SAGA_RELEASE_WHEELHOUSE", RELEASE_WHEELHOUSE
+        )
+        await measured.with_exec(["uv", "run", "python", "scripts/measure_release.py"]).sync()
 
 
 @object_type

@@ -596,6 +596,7 @@ UV_FILE = (("/usr/local/bin/uv", _ArtifactView("/uv", UV_ORIGIN)),)
 SOURCE_DIRECTORY = (("/src", "source", None),)
 PYTHON_ENV = (("UV_PROJECT_ENVIRONMENT", "/opt/venv"),)
 NODE_ENV = (("CI", "1"),)
+MEASUREMENT_ENV = (("AGENTIC_SAGA_RELEASE_WHEELHOUSE", "/src/dist/release/wheelhouse"),)
 PYTHON_GATE_OPERATIONS = (
     "from",
     "with_file",
@@ -672,6 +673,21 @@ def _release_view(image: str, product: tuple[tuple[str, ...], ...]) -> _RuntimeV
     )
 
 
+def _measured_release_view(image: str) -> _RuntimeView:
+    release = _release_view(image, MEASURED_CANDIDATE)
+    operations = (
+        *RELEASE_OPERATIONS,
+        "with_exec",
+        "with_env_variable",
+        "with_exec",
+    )
+    return replace(
+        release,
+        environment=(*release.environment, *MEASUREMENT_ENV),
+        operations=operations,
+    )
+
+
 SECURITY_VIEW = _RuntimeView(
     NODE_IMAGE,
     (),
@@ -698,10 +714,10 @@ MEASURED_CANDIDATE = (
 EXPECTED_CI_VIEWS = (
     _python_gate_view(PYTHON_312_IMAGE),
     _release_view(PYTHON_312_IMAGE, RELEASE_CANDIDATE),
-    _release_view(PYTHON_312_IMAGE, MEASURED_CANDIDATE),
+    _measured_release_view(PYTHON_312_IMAGE),
     _python_gate_view(PYTHON_IMAGE),
     _release_view(PYTHON_IMAGE, RELEASE_CANDIDATE),
-    _release_view(PYTHON_IMAGE, MEASURED_CANDIDATE),
+    _measured_release_view(PYTHON_IMAGE),
     FRONTEND_GATE_VIEW,
 )
 EXPECTED_MATRIX_PRODUCTS = (
@@ -749,6 +765,27 @@ def test_should_restore_each_supported_runtime_release_matrix(
     # Then each runtime owns a gate, immutable candidate, and packaged measured proof.
     actual = tuple((snapshot.image, snapshot.commands[-1]) for snapshot in trace.product_snapshots)
     assert actual == EXPECTED_MATRIX_PRODUCTS
+
+
+def test_should_resolve_offline_measurement_from_verified_wheelhouse(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given each release candidate has built a hash-pinned offline wheelhouse.
+    module, trace = _adapter_module(monkeypatch)
+
+    # When the nested release measurements execute.
+    asyncio.run(module.AgenticSaga().ci(object(), "a" * 40, object()))
+
+    # Then uv must resolve only from that candidate wheelhouse, never an ambient cache or index.
+    measured = tuple(
+        snapshot
+        for snapshot in trace.product_snapshots
+        if snapshot.commands[-1] == ("uv", "run", "python", "scripts/measure_release.py")
+    )
+    assert len(measured) == len((PYTHON_312_IMAGE, PYTHON_IMAGE))
+    assert all(
+        snapshot.environment[-len(MEASUREMENT_ENV) :] == MEASUREMENT_ENV for snapshot in measured
+    )
 
 
 def test_should_detect_all_legal_function_decorator_forms() -> None:
