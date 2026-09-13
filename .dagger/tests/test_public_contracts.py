@@ -20,6 +20,10 @@ MODULE = ROOT / ".dagger" / "src" / "agentic_saga_ci" / "main.py"
 FOUNDATION_SHA = "5cf3b7550442bb06d1cce1f146e48c064dcf511c"
 FOUNDATION = "github.com/hseshadr/ci/modules/portfolio-foundation"
 PYTHON_PACKAGE = "github.com/hseshadr/ci/modules/python-package"
+PYTHON_312_IMAGE = (
+    "python:3.12.12-bookworm@sha256:"
+    "c0abd0758831ad99b7a29e0c1a875da9c4abb9a2e3f21e2eeb585dbcadfb6cd0"
+)
 PYTHON_IMAGE = (
     "python:3.13.14-bookworm@sha256:"
     "8b9a8b28d9cc221c6ab5d40e9cfcd99429959f6a8f5171612a99147975ab043f"
@@ -49,12 +53,18 @@ PUBLIC_INPUTS = (
     ("commit_sha", "str"),
     ("git_auth_header", "dagger.Secret"),
 )
-CI_TRACE = (
+MATRIX_TRACE = (
     ("uv", "run", "poe", "gate"),
     ("container-sync",),
-    ("pnpm", "gate"),
-    ("container-sync",),
     ("uv", "run", "poe", "release-candidate"),
+    ("container-sync",),
+    ("uv", "run", "python", "scripts/measure_release.py"),
+    ("container-sync",),
+)
+CI_TRACE = (
+    *MATRIX_TRACE,
+    *MATRIX_TRACE,
+    ("pnpm", "gate"),
     ("container-sync",),
 )
 SECURITY_TRACE = (
@@ -65,16 +75,24 @@ SECURITY_TRACE = (
 )
 CI_RUNTIME_TRACE = (
     ("uv", "sync", "--frozen", "--all-groups", "--all-extras"),
-    *CI_TRACE[:2],
-    ("corepack", "enable"),
-    ("pnpm", "install", "--frozen-lockfile"),
-    ("pnpm", "exec", "playwright", "install", "--with-deps"),
-    *CI_TRACE[2:4],
+    *MATRIX_TRACE[:2],
     ("uv", "sync", "--frozen", "--all-groups", "--all-extras"),
     ("corepack", "enable"),
     ("pnpm", "install", "--frozen-lockfile"),
     ("pnpm", "exec", "playwright", "install", "--with-deps"),
-    *CI_TRACE[4:],
+    *MATRIX_TRACE[2:],
+    ("uv", "sync", "--frozen", "--all-groups", "--all-extras"),
+    *MATRIX_TRACE[:2],
+    ("uv", "sync", "--frozen", "--all-groups", "--all-extras"),
+    ("corepack", "enable"),
+    ("pnpm", "install", "--frozen-lockfile"),
+    ("pnpm", "exec", "playwright", "install", "--with-deps"),
+    *MATRIX_TRACE[2:],
+    ("corepack", "enable"),
+    ("pnpm", "install", "--frozen-lockfile"),
+    ("pnpm", "exec", "playwright", "install", "--with-deps"),
+    ("pnpm", "gate"),
+    ("container-sync",),
 )
 SECURITY_RUNTIME_TRACE = (
     *SECURITY_TRACE[:2],
@@ -578,24 +596,30 @@ UV_FILE = (("/usr/local/bin/uv", _ArtifactView("/uv", UV_ORIGIN)),)
 SOURCE_DIRECTORY = (("/src", "source", None),)
 PYTHON_ENV = (("UV_PROJECT_ENVIRONMENT", "/opt/venv"),)
 NODE_ENV = (("CI", "1"),)
-PYTHON_GATE_VIEW = _RuntimeView(
-    PYTHON_IMAGE,
-    UV_FILE,
-    SOURCE_DIRECTORY,
-    "/src",
-    PYTHON_ENV,
-    (UV_SYNC, ("uv", "run", "poe", "gate")),
-    (),
-    (
-        "from",
-        "with_file",
-        "with_directory",
-        "with_workdir",
-        "with_env_variable",
-        "with_exec",
-        "with_exec",
-    ),
+PYTHON_GATE_OPERATIONS = (
+    "from",
+    "with_file",
+    "with_directory",
+    "with_workdir",
+    "with_env_variable",
+    "with_exec",
+    "with_exec",
 )
+
+
+def _python_gate_view(image: str) -> _RuntimeView:
+    return _RuntimeView(
+        image,
+        UV_FILE,
+        SOURCE_DIRECTORY,
+        "/src",
+        PYTHON_ENV,
+        (UV_SYNC, ("uv", "run", "poe", "gate")),
+        (),
+        PYTHON_GATE_OPERATIONS,
+    )
+
+
 FRONTEND_GATE_VIEW = _RuntimeView(
     NODE_IMAGE,
     (),
@@ -615,38 +639,39 @@ FRONTEND_GATE_VIEW = _RuntimeView(
         "with_exec",
     ),
 )
-RELEASE_VIEW = _RuntimeView(
-    PYTHON_IMAGE,
-    UV_FILE,
+RELEASE_DIRECTORIES = (
+    *SOURCE_DIRECTORY,
     (
-        *SOURCE_DIRECTORY,
-        (
-            "/usr/local",
-            _ArtifactView("/usr/local", NODE_ORIGIN),
-            tuple(["bin/corepack", "bin/node", "bin/npm", "bin/npx", "lib/node_modules/**"]),
-        ),
-    ),
-    "/src",
-    (*PYTHON_ENV, *NODE_ENV),
-    (UV_SYNC, COREPACK, PNPM_INSTALL, PLAYWRIGHT, ("uv", "run", "poe", "release-candidate")),
-    (),
-    (
-        "from",
-        "with_file",
-        "with_directory",
-        "with_workdir",
-        "with_env_variable",
-        "with_exec",
-        "with_directory",
-        "with_workdir",
-        "with_env_variable",
-        "with_exec",
-        "with_exec",
-        "with_exec",
-        "with_workdir",
-        "with_exec",
+        "/usr/local",
+        _ArtifactView("/usr/local", NODE_ORIGIN),
+        tuple(["bin/corepack", "bin/node", "bin/npm", "bin/npx", "lib/node_modules/**"]),
     ),
 )
+RELEASE_OPERATIONS = (
+    *PYTHON_GATE_OPERATIONS[:-1],
+    "with_directory",
+    "with_workdir",
+    "with_env_variable",
+    "with_exec",
+    "with_exec",
+    "with_exec",
+    "with_workdir",
+)
+
+
+def _release_view(image: str, product: tuple[tuple[str, ...], ...]) -> _RuntimeView:
+    return _RuntimeView(
+        image,
+        UV_FILE,
+        RELEASE_DIRECTORIES,
+        "/src",
+        (*PYTHON_ENV, *NODE_ENV),
+        (UV_SYNC, COREPACK, PNPM_INSTALL, PLAYWRIGHT, *product),
+        (),
+        (*RELEASE_OPERATIONS, *("with_exec",) * len(product)),
+    )
+
+
 SECURITY_VIEW = _RuntimeView(
     NODE_IMAGE,
     (),
@@ -665,11 +690,33 @@ SECURITY_VIEW = _RuntimeView(
         "with_exec",
     ),
 )
-EXPECTED_CI_VIEWS = (PYTHON_GATE_VIEW, FRONTEND_GATE_VIEW, RELEASE_VIEW)
+RELEASE_CANDIDATE = (("uv", "run", "poe", "release-candidate"),)
+MEASURED_CANDIDATE = (
+    *RELEASE_CANDIDATE,
+    ("uv", "run", "python", "scripts/measure_release.py"),
+)
+EXPECTED_CI_VIEWS = (
+    _python_gate_view(PYTHON_312_IMAGE),
+    _release_view(PYTHON_312_IMAGE, RELEASE_CANDIDATE),
+    _release_view(PYTHON_312_IMAGE, MEASURED_CANDIDATE),
+    _python_gate_view(PYTHON_IMAGE),
+    _release_view(PYTHON_IMAGE, RELEASE_CANDIDATE),
+    _release_view(PYTHON_IMAGE, MEASURED_CANDIDATE),
+    FRONTEND_GATE_VIEW,
+)
+EXPECTED_MATRIX_PRODUCTS = (
+    (PYTHON_312_IMAGE, ("uv", "run", "poe", "gate")),
+    (PYTHON_312_IMAGE, ("uv", "run", "poe", "release-candidate")),
+    (PYTHON_312_IMAGE, ("uv", "run", "python", "scripts/measure_release.py")),
+    (PYTHON_IMAGE, ("uv", "run", "poe", "gate")),
+    (PYTHON_IMAGE, ("uv", "run", "poe", "release-candidate")),
+    (PYTHON_IMAGE, ("uv", "run", "python", "scripts/measure_release.py")),
+    (NODE_IMAGE, ("pnpm", "gate")),
+)
 UV_EXTRACTION = 'uv = dag.container().from_(UV_IMAGE).file("/uv")'
 UV_OVERWRITE = (
     'uv = dag.container().from_(UV_IMAGE).with_file("/uv", '
-    'dag.container().from_(PYTHON_IMAGE).file("/etc/passwd")).file("/uv")'
+    'dag.container().from_(image).file("/etc/passwd")).file("/uv")'
 )
 NODE_EXTRACTION = 'node = dag.container().from_(NODE_IMAGE).directory("/usr/local")'
 NODE_OVERLAY = (
@@ -688,6 +735,20 @@ def _assert_runtime_lineage(
         product is synchronized
         for product, synchronized in zip(trace.product_snapshots, trace.sync_snapshots, strict=True)
     )
+
+
+def test_should_restore_each_supported_runtime_release_matrix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given the closed public CI entry point and both supported Python runtimes.
+    module, trace = _adapter_module(monkeypatch)
+
+    # When the complete candidate proof executes.
+    asyncio.run(module.AgenticSaga().ci(object(), "a" * 40, object()))
+
+    # Then each runtime owns a gate, immutable candidate, and packaged measured proof.
+    actual = tuple((snapshot.image, snapshot.commands[-1]) for snapshot in trace.product_snapshots)
+    assert actual == EXPECTED_MATRIX_PRODUCTS
 
 
 def test_should_detect_all_legal_function_decorator_forms() -> None:
@@ -769,9 +830,13 @@ def test_should_pin_exact_runtime_images_and_python_base() -> None:
     assignments = _constants(tree)
     pyproject = (ROOT / ".dagger" / "pyproject.toml").read_text()
 
-    # When the three runtime identities are inspected.
+    # When the four runtime identities are inspected.
     # Then each is immutable and the module build uses the same Git-capable Python image.
-    expected = {"PYTHON_IMAGE": PYTHON_IMAGE, "UV_IMAGE": UV_IMAGE, "NODE_IMAGE": NODE_IMAGE}
+    expected = {
+        "PYTHON_IMAGES": (PYTHON_312_IMAGE, PYTHON_IMAGE),
+        "UV_IMAGE": UV_IMAGE,
+        "NODE_IMAGE": NODE_IMAGE,
+    }
     assert assignments.items() >= expected.items()
     assert f'base-image = "{PYTHON_IMAGE}"' in pyproject
 
@@ -880,7 +945,19 @@ def test_should_not_attach_shared_mutable_caches_to_product_containers() -> None
     (
         (
             "ci",
-            (UV_IMAGE, PYTHON_IMAGE, NODE_IMAGE, UV_IMAGE, PYTHON_IMAGE, NODE_IMAGE),
+            (
+                UV_IMAGE,
+                PYTHON_312_IMAGE,
+                UV_IMAGE,
+                PYTHON_312_IMAGE,
+                NODE_IMAGE,
+                UV_IMAGE,
+                PYTHON_IMAGE,
+                UV_IMAGE,
+                PYTHON_IMAGE,
+                NODE_IMAGE,
+                NODE_IMAGE,
+            ),
             CI_RUNTIME_TRACE,
         ),
         ("security", (NODE_IMAGE,), SECURITY_RUNTIME_TRACE),
