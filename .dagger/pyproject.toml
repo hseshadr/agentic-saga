@@ -1,0 +1,52 @@
+[project]
+name = "agentic-saga-ci"
+version = "0.1.0"
+requires-python = ">=3.13,<3.14"
+dependencies = ["dagger-io"]
+
+[project.entry-points."dagger.mod"]
+main_object = "agentic_saga_ci:AgenticSaga"
+
+[dependency-groups]
+dev = ["mypy", "pip-audit", "poethepoet", "pytest", "pytest-cov", "ruff", "xenon"]
+
+[build-system]
+requires = ["uv_build>=0.8.4,<0.9.0"]
+build-backend = "uv_build"
+
+[tool.uv.sources]
+dagger-io = { path = "sdk", editable = true }
+
+[tool.dagger]
+base-image = "python:3.13.14-bookworm@sha256:8b9a8b28d9cc221c6ab5d40e9cfcd99429959f6a8f5171612a99147975ab043f"
+
+[tool.poe.tasks]
+fmt = "ruff format src tests"
+lint = { shell = "ruff check src tests && ruff format --check src tests" }
+typecheck = "mypy --strict src"
+complexity = "xenon --max-absolute A --max-modules A --max-average A src"
+test = "pytest --cov=src/agentic_saga_ci --cov-branch --cov-fail-under=90"
+audit = "pip-audit"
+gate = ["lint", "typecheck", "complexity", "test"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "C901", "B", "UP", "SIM", "N", "RUF", "ASYNC", "S", "PL"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 5
+
+[tool.mypy]
+strict = true
+python_version = "3.13"
+warn_unreachable = true
+disallow_any_explicit = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

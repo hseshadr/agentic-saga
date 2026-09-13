@@ -4,9 +4,13 @@ import inspect
 import json
 import pkgutil
 import tomllib
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from types import ModuleType
+from typing import cast
+
+import pytest
+from ruamel.yaml import YAML
 
 import agentic_saga
 from agentic_saga.agents import __all__ as agents_all
@@ -511,57 +515,321 @@ def test_contributor_guide_contains_required_workflow() -> None:
     assert all(value in contributing for value in required)
 
 
-def test_workflows_use_sha_pinned_shared_ci() -> None:
-    workflows = "\n".join(
-        path.read_text() for path in (ROOT / ".github" / "workflows").glob("*.yml")
-    )
-    shared_ref = "@8166345c9355dde54c12fa95d0457c4ea97d3e64"
-    callers = (
-        "python-gate.yml",
-        "secret-scan.yml",
-        "security-audit.yml",
-    )
-    assert all(
-        f"uses: hseshadr/ci/.github/workflows/{caller}{shared_ref}" in workflows
-        for caller in callers
-    )
-    assert workflows.count(shared_ref) == 7
-    assert "@main" not in workflows
-    assert "@ci-v" not in workflows.replace("# ci-v3.3.0", "")
+def _workflow_paths() -> tuple[Path, ...]:
+    workflows = ROOT / ".github" / "workflows"
+    return tuple(sorted({*workflows.glob("*.yml"), *workflows.glob("*.yaml")}))
 
 
-def test_security_schedule_requests_full_history() -> None:
-    workflow = (ROOT / ".github/workflows/security-audit.yml").read_text()
-    assert _contains_sequence(workflow, ("on:", "  schedule:", '    - cron: "17 8 * * 1"'))
-    assert _contains_sequence(workflow, ("    with:", "      full-history: true"))
-    assert _contains_sequence(workflow, ("    with:", "      run-python-audit: true"))
+def _workflow_document(path: Path) -> dict[str, object]:
+    assert path.is_file(), f"{path.name} must be a Dagger ingress workflow"
+    parsed = YAML(typ="safe").load(path.read_text())
+    assert isinstance(parsed, dict)
+    return cast(dict[str, object], parsed)
 
 
-def test_ci_triggers_main_push_and_pull_request() -> None:
-    workflow = (ROOT / ".github/workflows/ci.yml").read_text()
-    assert _contains_sequence(workflow, ("on:", "  push:", "    branches: [main]"))
-    assert _contains_sequence(workflow, ("  pull_request:",))
+def _mapping(value: object) -> dict[str, object]:
+    assert isinstance(value, dict)
+    return cast(dict[str, object], value)
 
 
-def test_workflows_grant_read_only_permissions() -> None:
-    for filename in ("ci.yml", "security-audit.yml"):
-        workflow = (ROOT / ".github/workflows" / filename).read_text()
-        permissions = workflow.split("permissions:", 1)[1].split("\n\n", 1)[0]
-        assert _contains_sequence(permissions, ("  contents: read", "  pull-requests: read"))
-        assert "write" not in permissions
+def _steps(document: dict[str, object], job_name: str = "Dagger") -> tuple[dict[str, object], ...]:
+    jobs = _mapping(document["jobs"])
+    assert list(jobs) == ["dagger"]
+    job = _mapping(jobs["dagger"])
+    assert set(job) == {"name", "runs-on", "steps"}
+    assert job["name"] == job_name and job["runs-on"] == "ubuntu-latest"
+    steps = job["steps"]
+    assert isinstance(steps, list)
+    return tuple(_mapping(step) for step in steps)
 
 
-def test_ci_python_gate_uses_the_supported_locked_matrix() -> None:
-    workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+def _assert_checkout(step: dict[str, object]) -> None:
+    assert set(step) == {"uses", "with"}
+    assert step["uses"] == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+    assert _mapping(step["with"]) == {
+        "fetch-depth": 0,
+        "ref": "${{ github.sha }}",
+        "persist-credentials": False,
+    }
+
+
+def _assert_dagger(step: dict[str, object], operation: str) -> None:
+    assert set(step) == {"uses", "env", "with"}
+    assert step["uses"] == "dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77"
+    assert _mapping(step["env"]) == {
+        "DAGGER_GIT_HTTP_AUTH_HEADER": "${{ secrets.DAGGER_GIT_HTTP_AUTH_HEADER }}"
+    }
     expected = (
-        "    strategy:",
-        "      fail-fast: false",
-        "      matrix:",
-        '        python-version: ["3.12", "3.13"]',
+        f"{operation} --source=. --commit-sha="
+        "${{ github.sha }} "
+        "--git-auth-header=env:DAGGER_GIT_HTTP_AUTH_HEADER"
     )
-    assert _contains_sequence(workflow, expected)
-    assert "      python-version: ${{ matrix.python-version }}" in workflow
-    assert '      sync-args: "--frozen --group dev"' in workflow
+    assert _mapping(step["with"]) == {"version": "0.21.8", "verb": "call", "args": expected}
+
+
+def _assert_ingress(document: dict[str, object], operation: str, job_name: str = "Dagger") -> None:
+    assert _mapping(document["permissions"]) == {"contents": "read"}
+    steps = _steps(document, job_name)
+    assert len(steps) == 2 and all("run" not in step for step in steps)
+    _assert_checkout(steps[0])
+    _assert_dagger(steps[1], operation)
+
+
+def _assert_ci_triggers(triggers: Mapping[str, object]) -> None:
+    assert triggers == {
+        "pull_request": None,
+        "push": {"branches": ["main"]},
+        "workflow_dispatch": None,
+    }
+
+
+def _assert_security_triggers(triggers: Mapping[str, object]) -> None:
+    assert triggers == {
+        "schedule": [{"cron": "17 8 * * 1"}],
+        "workflow_dispatch": None,
+    }
+
+
+def _active_line_count(path: Path) -> int:
+    lines = path.read_text().splitlines()
+    return sum(bool(line.strip()) and not line.lstrip().startswith("#") for line in lines)
+
+
+def _ingress_fixture(operation: str = "ci") -> dict[str, object]:
+    return {
+        "permissions": {"contents": "read"},
+        "jobs": {
+            "dagger": {
+                "name": "Dagger",
+                "runs-on": "ubuntu-latest",
+                "steps": [
+                    {
+                        "uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+                        "with": {
+                            "fetch-depth": 0,
+                            "ref": "${{ github.sha }}",
+                            "persist-credentials": False,
+                        },
+                    },
+                    {
+                        "uses": "dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77",
+                        "env": {
+                            "DAGGER_GIT_HTTP_AUTH_HEADER": (
+                                "${{ secrets.DAGGER_GIT_HTTP_AUTH_HEADER }}"
+                            )
+                        },
+                        "with": {
+                            "version": "0.21.8",
+                            "verb": "call",
+                            "args": (
+                                f"{operation} --source=. --commit-sha="
+                                "${{ github.sha }} "
+                                "--git-auth-header=env:DAGGER_GIT_HTTP_AUTH_HEADER"
+                            ),
+                        },
+                    },
+                ],
+            }
+        },
+    }
+
+
+def _fixture_job(document: dict[str, object]) -> dict[str, object]:
+    return _mapping(_mapping(document["jobs"])["dagger"])
+
+
+def _fixture_steps(document: dict[str, object]) -> list[dict[str, object]]:
+    steps = _fixture_job(document)["steps"]
+    assert isinstance(steps, list)
+    return cast(list[dict[str, object]], steps)
+
+
+def test_workflows_are_only_24_line_two_action_dagger_ingress() -> None:
+    # Given repository-authored workflow documents in either supported YAML extension.
+    paths = _workflow_paths()
+
+    # When their transport surfaces are structurally inspected.
+    actual = {path.name for path in paths}
+
+    # Then only two compact Dagger ingress workflows remain.
+    assert actual == {"dagger.yml", "dagger-security.yml"}
+    assert all(_active_line_count(path) <= 24 for path in paths)
+
+
+def test_dagger_ci_ingress_is_structurally_closed_and_exact() -> None:
+    # Given the CI ingress document.
+    document = _workflow_document(ROOT / ".github/workflows/dagger.yml")
+
+    # When its event and execution boundaries are inspected.
+    triggers = _mapping(document["on"])
+
+    # Then it accepts PRs and main pushes through one closed Dagger job.
+    _assert_ci_triggers(triggers)
+    _assert_ingress(document, "ci")
+
+
+def test_dagger_security_ingress_is_structurally_closed_and_exact() -> None:
+    # Given the scheduled security ingress document.
+    document = _workflow_document(ROOT / ".github/workflows/dagger-security.yml")
+
+    # When its event and execution boundaries are inspected.
+    triggers = _mapping(document["on"])
+
+    # Then it exposes only scheduled/manual security through one closed Dagger job.
+    _assert_security_triggers(triggers)
+    _assert_ingress(document, "security", "Dagger security audit")
+
+
+def test_dagger_ingress_rejects_extra_jobs_and_job_reuse() -> None:
+    # Given bypasses through a second job and a reusable job call.
+    extra_job = _ingress_fixture()
+    _mapping(extra_job["jobs"])["escape"] = {}
+    reusable_job = _ingress_fixture()
+    _fixture_job(reusable_job)["uses"] = "hseshadr/ci/.github/workflows/python-gate.yml@main"
+
+    # When the closed ingress policy is evaluated.
+    with pytest.raises(AssertionError):
+        _assert_ingress(extra_job, "ci")
+    with pytest.raises(AssertionError):
+        _assert_ingress(reusable_job, "ci")
+
+    # Then neither hosted execution bypass is accepted.
+
+
+def test_dagger_ingress_rejects_shell_and_mutable_action_steps() -> None:
+    # Given a shell execution bypass and a mutable Dagger action reference.
+    shell_step = _ingress_fixture()
+    _fixture_steps(shell_step)[0]["run"] = "echo bypass"
+    mutable_action = _ingress_fixture()
+    _fixture_steps(mutable_action)[1]["uses"] = "dagger/dagger-for-github@main"
+
+    # When the closed ingress policy is evaluated.
+    with pytest.raises(AssertionError):
+        _assert_ingress(shell_step, "ci")
+    with pytest.raises(AssertionError):
+        _assert_ingress(mutable_action, "ci")
+
+    # Then neither execution bypass is accepted.
+
+
+def test_dagger_ingress_rejects_untyped_or_unmasked_secret_forwarding() -> None:
+    # Given direct, embedded Basic, and embedded Bearer credentials.
+    direct = _ingress_fixture()
+    _fixture_steps(direct)[1]["env"] = {"GITHUB_TOKEN": "${{ github.token }}"}
+    basic = _ingress_fixture()
+    _fixture_steps(basic)[1]["env"] = {"DAGGER_GIT_HTTP_AUTH_HEADER": "Basic encoded-token"}
+    bearer = _ingress_fixture()
+    _fixture_steps(bearer)[1]["env"] = {"DAGGER_GIT_HTTP_AUTH_HEADER": "Bearer ${{ github.token }}"}
+
+    # When the closed ingress policy is evaluated.
+    for document in (direct, basic, bearer):
+        with pytest.raises(AssertionError):
+            _assert_ingress(document, "ci")
+
+    # Then only the named, precomputed repository secret can reach Dagger.
+
+
+def test_should_reject_conditional_dagger_step_when_validating_ingress() -> None:
+    # Given a Dagger step that can skip the required check.
+    document = _ingress_fixture()
+    _fixture_steps(document)[1]["if"] = "${{ false }}"
+
+    # When / Then the closed ingress policy is evaluated.
+    with pytest.raises(AssertionError):
+        _assert_ingress(document, "ci")
+
+
+def test_should_reject_continue_on_error_when_validating_ingress() -> None:
+    # Given a Dagger step that can hide a failed required check.
+    document = _ingress_fixture()
+    _fixture_steps(document)[1]["continue-on-error"] = True
+
+    # When / Then the closed ingress policy is evaluated.
+    with pytest.raises(AssertionError):
+        _assert_ingress(document, "ci")
+
+
+def test_should_reject_job_permission_override_when_validating_ingress() -> None:
+    # Given a job that escalates the workflow's read-only permission.
+    document = _ingress_fixture()
+    _fixture_job(document)["permissions"] = {"contents": "write"}
+
+    # When / Then the closed ingress policy is evaluated.
+    with pytest.raises(AssertionError):
+        _assert_ingress(document, "ci")
+
+
+def test_should_reject_missing_manual_trigger_when_validating_ci_events() -> None:
+    # Given CI events without the required manual entry point.
+    triggers = {"pull_request": None, "push": {"branches": ["main"]}}
+
+    # When / Then the exact CI event policy is evaluated.
+    with pytest.raises(AssertionError):
+        _assert_ci_triggers(triggers)
+
+
+def test_should_reject_extra_trigger_when_validating_ci_events() -> None:
+    # Given CI events with an unapproved scheduled entry point.
+    triggers = {
+        "pull_request": None,
+        "push": {"branches": ["main"]},
+        "workflow_dispatch": None,
+        "schedule": [{"cron": "0 0 * * *"}],
+    }
+
+    # When / Then the exact CI event policy is evaluated.
+    with pytest.raises(AssertionError):
+        _assert_ci_triggers(triggers)
+
+
+def test_should_reject_dispatch_inputs_when_validating_ci_events() -> None:
+    # Given CI events whose manual entry point accepts arbitrary inputs.
+    triggers = {
+        "pull_request": None,
+        "push": {"branches": ["main"]},
+        "workflow_dispatch": {"inputs": {"command": {"required": False}}},
+    }
+
+    # When / Then the exact CI event policy is evaluated.
+    with pytest.raises(AssertionError):
+        _assert_ci_triggers(triggers)
+
+
+def test_should_reject_wrong_cron_when_validating_security_events() -> None:
+    # Given security events with a drifted weekly schedule.
+    triggers = {
+        "schedule": [{"cron": "0 0 * * 0"}],
+        "workflow_dispatch": None,
+    }
+
+    # When / Then the exact security event policy is evaluated.
+    with pytest.raises(AssertionError):
+        _assert_security_triggers(triggers)
+
+
+def test_should_reject_extra_trigger_when_validating_security_events() -> None:
+    # Given security events with an unapproved issue entry point.
+    triggers = {
+        "schedule": [{"cron": "17 8 * * 1"}],
+        "workflow_dispatch": None,
+        "issues": None,
+    }
+
+    # When / Then the exact security event policy is evaluated.
+    with pytest.raises(AssertionError):
+        _assert_security_triggers(triggers)
+
+
+def test_should_reject_dispatch_inputs_when_validating_security_events() -> None:
+    # Given security events whose manual entry point accepts arbitrary inputs.
+    triggers = {
+        "schedule": [{"cron": "17 8 * * 1"}],
+        "workflow_dispatch": {"inputs": {"command": {"required": False}}},
+    }
+
+    # When / Then the exact security event policy is evaluated.
+    with pytest.raises(AssertionError):
+        _assert_security_triggers(triggers)
 
 
 def test_python_tooling_targets_the_supported_312_floor() -> None:
@@ -577,72 +845,6 @@ def test_python_tooling_targets_the_supported_312_floor() -> None:
         ),
         "env": {"MYPYPATH": "src"},
     }
-
-
-def test_frontend_ci_uses_the_exact_frozen_toolchain() -> None:
-    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
-    audit = (ROOT / ".github" / "workflows" / "security-audit.yml").read_text()
-    required = (
-        "working-directory: web/flight-recorder",
-        "package-json-file: web/flight-recorder/package.json",
-        "cache-dependency-path: web/flight-recorder/pnpm-lock.yaml",
-        'node-version: "24"',
-        'install-args: "--frozen-lockfile"',
-        "run: pnpm exec playwright install --with-deps chromium",
-        "run: pnpm gate",
-    )
-    assert all(value in ci for value in required)
-    assert "run-pnpm-audit: true" in audit
-    assert "frontend-working-directory: web/flight-recorder" in audit
-    assert "secrets: inherit" not in ci
-
-
-def test_ci_runs_the_packaged_browser_and_offline_release_measurement() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
-    shared_ref = "@8166345c9355dde54c12fa95d0457c4ea97d3e64"
-    packaged = workflow.split("  packaged-demo:", 1)[1].split("\n  secrets:", 1)[0]
-
-    assert "  packaged-demo:" in workflow
-    assert _contains_sequence(
-        packaged,
-        (
-            "    strategy:",
-            "      fail-fast: false",
-            "      matrix:",
-            '        python-version: ["3.12", "3.13"]',
-        ),
-    )
-    assert "          python-version: ${{ matrix.python-version }}" in packaged
-    assert "    timeout-minutes: 30" in packaged
-    for action in ("setup-python-uv", "setup-pnpm"):
-        assert f"uses: hseshadr/ci/.github/actions/{action}{shared_ref}" in workflow
-    assert "hseshadr/ci/.github/actions/setup-playwright" not in workflow
-    assert packaged.count("pnpm exec playwright install --with-deps chromium") == 1
-    setup_pnpm = packaged.split("actions/setup-pnpm", 1)[1].split("      - uses:", 1)[0]
-    assert '          node-version: "24"' in setup_pnpm
-    assert '          install-args: "--frozen-lockfile"' in setup_pnpm
-    required_commands = (
-        "uv run poe artifacts",
-        "uv venv --offline --no-python-downloads --python "
-        "${{ matrix.python-version }} .venv-package",
-        "uv pip install --offline --no-python-downloads --no-index "
-        "--find-links dist/release/wheelhouse --python .venv-package/bin/python "
-        "--require-hashes -r dist/release/runtime-requirements.txt",
-        "uv pip install --offline --no-python-downloads --python "
-        ".venv-package/bin/python --no-deps dist/release/*.whl",
-        "uv pip check --offline --no-python-downloads --python .venv-package/bin/python",
-    )
-    assert all(command in packaged for command in required_commands)
-    assert '          UV_OFFLINE: "1"' in packaged
-    assert "          UV_PYTHON_DOWNLOADS: never" in packaged
-    browser = packaged.split("      - name: Exercise", 1)[1].split("      - name: Enforce", 1)[0]
-    measurement = packaged.split("      - name: Enforce", 1)[1]
-    assert '          npm_config_offline: "true"' in browser
-    assert '          UV_OFFLINE: "1"' in measurement
-    assert "          UV_PYTHON_DOWNLOADS: never" in measurement
-    assert '          npm_config_offline: "true"' in measurement
-    assert "pnpm test:e2e:packaged" in workflow
-    assert "uv run python scripts/measure_release.py" in workflow
 
 
 def test_flight_recorder_pins_its_package_manager_and_lockfile() -> None:
@@ -707,8 +909,6 @@ def test_flight_recorder_dev_server_is_loopback_only() -> None:
     wildcard_host = ".".join(("0", "0", "0", "0"))
     sources = [
         ROOT / "docs" / "flight-recorder.md",
-        ROOT / ".github" / "workflows" / "ci.yml",
-        ROOT / ".github" / "workflows" / "security-audit.yml",
     ]
 
     assert package["scripts"]["dev"] == "vite --host 127.0.0.1"

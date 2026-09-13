@@ -1,0 +1,23 @@
+name: Dagger
+on: {pull_request: null, push: {branches: [main]}, workflow_dispatch: null}
+permissions: {contents: read}
+concurrency:
+  group: dagger-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  dagger:
+    name: Dagger
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77 # v8.4.1
+        env:
+          DAGGER_GIT_HTTP_AUTH_HEADER: ${{ secrets.DAGGER_GIT_HTTP_AUTH_HEADER }} # zizmor: ignore[secrets-outside-env] Read-only CI uses the precomputed repository secret.
+        with:
+          version: "0.21.8"
+          verb: call
+          args: ci --source=. --commit-sha=${{ github.sha }} --git-auth-header=env:DAGGER_GIT_HTTP_AUTH_HEADER

@@ -1,0 +1,26 @@
+{
+  "name": "agentic-saga",
+  "engineVersion": "v0.21.8",
+  "sdk": {
+    "source": "python"
+  },
+  "include": [
+    ".dagger/pyproject.toml",
+    ".dagger/uv.lock",
+    ".dagger/sdk/**",
+    ".dagger/src/**"
+  ],
+  "dependencies": [
+    {
+      "name": "foundation",
+      "source": "github.com/hseshadr/ci/modules/portfolio-foundation@5cf3b7550442bb06d1cce1f146e48c064dcf511c",
+      "pin": "5cf3b7550442bb06d1cce1f146e48c064dcf511c"
+    },
+    {
+      "name": "python-package",
+      "source": "github.com/hseshadr/ci/modules/python-package@5cf3b7550442bb06d1cce1f146e48c064dcf511c",
+      "pin": "5cf3b7550442bb06d1cce1f146e48c064dcf511c"
+    }
+  ],
+  "source": ".dagger"
+}
