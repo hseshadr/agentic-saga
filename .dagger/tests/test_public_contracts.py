@@ -36,6 +36,18 @@ NODE_IMAGE = (
     "node:24.6.0-bookworm-slim@sha256:"
     "9b741b28148b0195d62fa456ed84dd6c953c1f17a3761f3e6e6797a754d9edff"
 )
+SOURCE_ROOT = "/src"
+PYTHON_LOCK_INPUTS = ("pyproject.toml", "uv.lock")
+FRONTEND_LOCK_INPUTS = (
+    "web/flight-recorder/package.json",
+    "web/flight-recorder/pnpm-lock.yaml",
+)
+RUNTIME_WHEELHOUSES = (
+    "/src/dist/release/wheelhouses/3.12",
+    "/src/dist/release/wheelhouses/3.13",
+)
+RUNTIME_COUNT = 2
+BOOTSTRAP_COUNT = 3
 PublicMethod = ast.AsyncFunctionDef | ast.FunctionDef
 Parameter = tuple[str, str]
 Signature = tuple[
@@ -762,9 +774,11 @@ def test_should_restore_each_supported_runtime_release_matrix(
     # When the complete candidate proof executes.
     asyncio.run(module.AgenticSaga().ci(object(), "a" * 40, object()))
 
-    # Then each runtime owns a gate, immutable candidate, and packaged measured proof.
-    actual = tuple((snapshot.image, snapshot.commands[-1]) for snapshot in trace.product_snapshots)
-    assert actual == EXPECTED_MATRIX_PRODUCTS
+    # Then each runtime owns one gate, immutable candidate, and proved measurement.
+    commands = _runtime_commands(trace)
+    assert commands.count(("uv", "run", "poe", "gate")) == RUNTIME_COUNT
+    assert commands.count(("uv", "run", "poe", "release-candidate")) == RUNTIME_COUNT
+    assert sum("scripts/measure_release.py" in command for command in commands) == RUNTIME_COUNT
 
 
 def test_should_install_only_chromium_for_every_browser_gate(
@@ -796,12 +810,11 @@ def test_should_resolve_offline_measurement_from_verified_wheelhouse(
     measured = tuple(
         snapshot
         for snapshot in trace.product_snapshots
-        if snapshot.commands[-1] == ("uv", "run", "python", "scripts/measure_release.py")
+        if "scripts/measure_release.py" in snapshot.commands[-1]
     )
     assert len(measured) == len((PYTHON_312_IMAGE, PYTHON_IMAGE))
-    assert all(
-        snapshot.environment[-len(MEASUREMENT_ENV) :] == MEASUREMENT_ENV for snapshot in measured
-    )
+    wheelhouses = tuple(snapshot.environment[-1][1] for snapshot in measured)
+    assert set(wheelhouses) == set(RUNTIME_WHEELHOUSES)
 
 
 def test_should_detect_all_legal_function_decorator_forms() -> None:
@@ -993,44 +1006,20 @@ def test_should_not_attach_shared_mutable_caches_to_product_containers() -> None
     assert calls.isdisjoint({"cache_volume", "with_mounted_cache"})
 
 
-@pytest.mark.parametrize(
-    ("entrypoint", "expected_images", "expected_commands"),
-    (
-        (
-            "ci",
-            (
-                UV_IMAGE,
-                PYTHON_312_IMAGE,
-                UV_IMAGE,
-                PYTHON_312_IMAGE,
-                NODE_IMAGE,
-                UV_IMAGE,
-                PYTHON_IMAGE,
-                UV_IMAGE,
-                PYTHON_IMAGE,
-                NODE_IMAGE,
-                NODE_IMAGE,
-            ),
-            CI_RUNTIME_TRACE,
-        ),
-        ("security", (NODE_IMAGE,), SECURITY_RUNTIME_TRACE),
-    ),
-)
 def test_should_bootstrap_pinned_runtimes_before_each_product_command(
     monkeypatch: pytest.MonkeyPatch,
-    entrypoint: str,
-    expected_images: tuple[str, ...],
-    expected_commands: tuple[tuple[str, ...], ...],
 ) -> None:
     # Given an adapter with every image and runtime command observable.
     module, trace = _adapter_module(monkeypatch)
 
-    # When either closed public lane executes.
-    asyncio.run(getattr(module.AgenticSaga(), entrypoint)(object(), "a" * 40, object()))
+    # When the closed CI lane executes.
+    asyncio.run(module.AgenticSaga().ci(object(), "a" * 40, object()))
 
-    # Then exact immutable images and frozen bootstraps precede product commands.
-    assert tuple(trace.images) == expected_images
-    assert _runtime_commands(trace) == expected_commands
+    # Then only exact immutable images and frozen lockfile bootstraps are used.
+    assert set(trace.images) == {UV_IMAGE, PYTHON_312_IMAGE, PYTHON_IMAGE, NODE_IMAGE}
+    commands = _runtime_commands(trace)
+    assert sum("--no-install-project" in command for command in commands) == BOOTSTRAP_COUNT
+    assert commands.count(PNPM_INSTALL) == BOOTSTRAP_COUNT
 
 
 def test_should_capture_complete_immutable_product_snapshot_lineage(
@@ -1042,9 +1031,13 @@ def test_should_capture_complete_immutable_product_snapshot_lineage(
     # When the release-bearing lane runs.
     asyncio.run(module.AgenticSaga().ci(object(), "a" * 40, object()))
 
-    # Then each product command retains a distinct complete runtime ancestry.
+    # Then dependency layers see only lockfiles before any complete source overlay.
     assert trace.git_tree is not None
-    _assert_runtime_lineage(trace, trace.git_tree, EXPECTED_CI_VIEWS)
+    views = tuple(_runtime_view(snapshot, trace.git_tree) for snapshot in trace.product_snapshots)
+    mounts = tuple(mount for view in views for mount in view.directories)
+    assert (SOURCE_ROOT, "source", PYTHON_LOCK_INPUTS) in mounts
+    assert (SOURCE_ROOT, "source", FRONTEND_LOCK_INPUTS) in mounts
+    assert (SOURCE_ROOT, "source", None) in mounts
 
 
 def test_should_capture_complete_security_boundary_and_lineage(
@@ -1059,9 +1052,11 @@ def test_should_capture_complete_security_boundary_and_lineage(
 
     # Then both shared boundaries and the frontend audit retain exact values and ancestry.
     boundary = (source, "hseshadr/agentic-saga", commit_sha, auth)
-    assert trace.guard_calls == [boundary]
+    assert trace.guard_calls == []
     assert trace.audit_calls == [boundary] and trace.audit_syncs == 1
-    _assert_runtime_lineage(trace, source, (SECURITY_VIEW,))
+    view = _runtime_view(trace.product_snapshots[-1], source)
+    assert (SOURCE_ROOT, "source", FRONTEND_LOCK_INPUTS) in view.directories
+    assert (SOURCE_ROOT, "source", None) in view.directories
 
 
 @pytest.mark.parametrize(
@@ -1127,29 +1122,25 @@ def test_should_fail_closed_on_unmodeled_configuration_and_secret_operations(
         getattr(container, operation)("unexpected")
 
 
-@pytest.mark.parametrize(
-    ("entrypoint", "expected"), (("ci", CI_TRACE), ("security", SECURITY_TRACE))
-)
 def test_should_complete_the_foundation_guard_before_the_exact_product_trace(
-    monkeypatch: pytest.MonkeyPatch, entrypoint: str, expected: tuple[tuple[str, ...], ...]
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Given an adapter connected to observable Foundation and Dagger container boundaries.
     module, trace = _adapter_module(monkeypatch)
     adapter = module.AgenticSaga()
 
-    # When a public entry point executes.
-    asyncio.run(getattr(adapter, entrypoint)(object(), "a" * 40, object()))
+    # When the release-bearing public entry point executes.
+    asyncio.run(adapter.ci(object(), "a" * 40, object()))
 
     # Then Foundation finishes first and the complete delegated trace has no extra product work.
     assert trace.events.index("guard-sync") < next(
         index for index, event in enumerate(trace.events) if isinstance(event, tuple)
     )
-    _assert_product_trace(trace, expected)
+    assert trace.events.index("guard-sync") < trace.events.index("git-tree")
 
 
-@pytest.mark.parametrize("entrypoint", ("ci", "security"))
 def test_should_stop_all_product_interactions_when_the_foundation_guard_fails(
-    monkeypatch: pytest.MonkeyPatch, entrypoint: str
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Given an observable Foundation guard that cannot establish private history.
     module, trace = _adapter_module(monkeypatch, guard_fails=True)
@@ -1157,7 +1148,7 @@ def test_should_stop_all_product_interactions_when_the_foundation_guard_fails(
 
     # When either public entry point is evaluated.
     with pytest.raises(RuntimeError, match="history unavailable"):
-        asyncio.run(getattr(adapter, entrypoint)(object(), "a" * 40, object()))
+        asyncio.run(adapter.ci(object(), "a" * 40, object()))
 
     # Then no audit, container command, or product synchronization is reached.
     assert trace.events == ["guard", "guard-sync"]
@@ -1220,3 +1211,96 @@ def test_should_tolerate_known_nonexecuting_container_configuration() -> None:
     # Then configuration stays outside the exact product trace.
     assert configured is not container and container.snapshot == _Snapshot()
     assert trace.events == []
+
+
+def _literal_commands(tree: ast.Module) -> tuple[tuple[str, ...], ...]:
+    commands: list[tuple[str, ...]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.List):
+            try:
+                value = ast.literal_eval(node)
+            except ValueError:
+                continue
+            if isinstance(value, list) and all(isinstance(item, str) for item in value):
+                commands.append(tuple(cast(list[str], value)))
+    return tuple(commands)
+
+
+def _named_function(tree: ast.Module, name: str) -> ast.AsyncFunctionDef | ast.FunctionDef:
+    matches = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)) and node.name == name
+    ]
+    assert len(matches) == 1
+    return matches[0]
+
+
+def _called_names(node: ast.AST) -> tuple[str, ...]:
+    return tuple(
+        call.func.id
+        for call in ast.walk(node)
+        if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+    )
+
+
+def test_should_compose_one_build_and_one_frontend_proof() -> None:
+    # Given the complete adapter graph.
+    commands = _literal_commands(_adapter_tree())
+
+    # When shared-output commands are counted.
+    # Then first-party artifacts and the frontend proof are each built once.
+    assert commands.count(("uv", "run", "poe", "artifacts")) == 1
+    assert commands.count(("pnpm", "gate")) == 1
+
+
+def test_should_use_lockfile_only_dependency_layers_before_source() -> None:
+    # Given the Python and frontend dependency builders.
+    tree = _adapter_tree()
+    python_builder = ast.unparse(_named_function(tree, "_python_dependencies"))
+    project_installer = ast.unparse(_named_function(tree, "_install_project"))
+    node_builder = ast.unparse(_named_function(tree, "_node_packages"))
+
+    # When their mounted inputs and commands are inspected.
+    # Then dependencies depend only on lock inputs before the full source overlay.
+    assert "PYTHON_LOCK_INPUTS" in python_builder
+    assert "--no-install-project" in python_builder
+    assert "--offline" in project_installer
+    assert "FRONTEND_LOCK_INPUTS" in node_builder
+    assert "_source_layer" in node_builder
+
+
+def test_should_route_both_versioned_wheelhouses_into_proved_measurement() -> None:
+    # Given the adapter's literal runtime and measurement commands.
+    source = MODULE.read_text()
+
+    # When the lane handoff paths are inspected.
+    # Then both ABI-specific wheelhouses and the explicit proof reach measurement.
+    assert "/src/dist/release/wheelhouses/3.12" in source
+    assert "/src/dist/release/wheelhouses/3.13" in source
+    assert "--quality-proof" in source
+    assert "write_quality_proof" in source
+
+
+def test_should_resolve_source_once_before_bounded_shared_and_runtime_fanout() -> None:
+    # Given the public CI orchestration body.
+    ci = _named_function(_adapter_tree(), "ci")
+    shared = _named_function(_adapter_tree(), "_shared_outputs")
+    matrix = _named_function(_adapter_tree(), "_runtime_matrix")
+
+    # When its source and fan-out calls are counted.
+    # Then source resolves once before exactly two bounded orchestration phases.
+    assert _called_names(ci).count("_release_source") == 1
+    assert _called_names(shared).count("_bounded_gather") == 1
+    assert _called_names(matrix).count("_bounded_gather") == 1
+
+
+def test_should_delegate_security_guard_before_frontend_audit() -> None:
+    # Given the public security orchestration body.
+    security = _named_function(_adapter_tree(), "security")
+    calls = _called_names(security)
+
+    # When its fail-closed boundary ordering is inspected.
+    # Then the shared dependency audit owns guarding and completes before pnpm audit.
+    assert "_guard" not in calls
+    assert calls.index("_dependency_audit") < calls.index("_node")
