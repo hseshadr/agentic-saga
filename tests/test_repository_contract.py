@@ -253,9 +253,30 @@ def test_oss_metadata_and_contributor_routes_are_complete() -> None:
     assert {"Homepage", "Documentation", "Repository", "Issues"} <= set(config["urls"])
     readme = (ROOT / "README.md").read_text()
     contributing = (ROOT / "CONTRIBUTING.md").read_text()
-    assert "actions/workflows/ci.yml/badge.svg" in readme
+    assert "actions/workflows/dagger.yml/badge.svg" in readme
     for value in ("Python 3.12 and 3.13", "pnpm@11.5.0 gate", "SECURITY.md", "CODE_OF_CONDUCT.md"):
         assert value in contributing
+
+
+def test_readme_records_current_hosted_dagger_proof() -> None:
+    readme = (ROOT / "README.md").read_text()
+    current = ("635974d51f87aa802886914be6a46bfd28518c66", "34727077866", "34727111885")
+    stale = (
+        "matching hosted CI evidence still must be recorded",
+        "matching hosted CI run have not yet been recorded",
+    )
+    assert all(value in readme for value in current)
+    assert all(value not in readme for value in stale)
+
+
+def test_current_dagger_docs_name_the_repository_auth_secret() -> None:
+    docs = (
+        ROOT / "docs/superpowers/specs/2026-09-12-dagger-portfolio-integration-design.md",
+        ROOT / "docs/superpowers/plans/2026-09-12-dagger-portfolio-integration.md",
+    )
+    contents = tuple(path.read_text() for path in docs)
+    assert all("DAGGER_GIT_HTTP_AUTH_HEADER" in text for text in contents)
+    assert all("derived from `${{ github.token }}`" not in text for text in contents)
 
 
 def test_default_development_gate_installs_optional_agent_dependencies() -> None:
@@ -447,22 +468,30 @@ def test_security_policy_states_v01_safety_exclusions() -> None:
     assert all(value in security for value in exclusions)
 
 
-def test_provenance_distinguishes_local_evidence_from_planned_controls() -> None:
+def test_provenance_names_current_hosted_controls_and_evidence() -> None:
     # Given the provenance and release-status document.
     provenance = (ROOT / "PROVENANCE.md").read_text()
 
     # When local evidence and repository controls are inspected.
-    current = ("Current evidence", "local `uv run poe gate`", "No registry artifacts exist yet")
+    current = (
+        "Current evidence",
+        "local `uv run poe gate`",
+        "No registry artifacts exist yet",
+        "635974d51f87aa802886914be6a46bfd28518c66",
+    )
     controls = (
         "Repository controls",
-        "`.github/workflows/ci.yml`",
-        "`.github/workflows/security-audit.yml`",
-        "No hosted run is claimed",
+        "`.github/workflows/dagger.yml`",
+        "`.github/workflows/dagger-security.yml`",
+        "34727077866",
+        "34727111885",
     )
 
-    # Then only local results are evidence and configured workflows are named without a run claim.
+    # Then local and hosted evidence are bound to the immutable commit and controls.
     assert all(value in provenance for value in current)
     assert all(value in provenance for value in controls)
+    assert ".github/workflows/ci.yml" not in provenance
+    assert ".github/workflows/security-audit.yml" not in provenance
 
 
 def test_provenance_requires_authorized_trusted_publication() -> None:

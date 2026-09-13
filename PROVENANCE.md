@@ -38,27 +38,25 @@ reference scenarios and the packaged Chromium recorder; and reports sample count
 latencies, bundle/catalog sizes, peak RSS, boundary limits, and a result for every budget. It makes
 no paid model call.
 
-The final clean-current-commit measurement and matching hosted workflow URL have not yet been
-recorded. A dirty-tree measurement is diagnostic only, even when every individual budget passes.
-No registry artifacts exist yet, and none of these commands publishes one.
+Exact main commit `635974d51f87aa802886914be6a46bfd28518c66` passed hosted
+[Dagger run 34727077866](https://github.com/hseshadr/agentic-saga/actions/runs/34727077866)
+and [security run 34727111885](https://github.com/hseshadr/agentic-saga/actions/runs/34727111885).
+The Dagger graph verified exact source identity, Python 3.12 and 3.13, the frontend and packaged
+browser, dependency and secret audits, and the release budgets. A dirty-tree measurement remains
+diagnostic only. No registry artifacts exist yet, and none of these commands publishes one.
 
 ## Repository controls
 
-`.github/workflows/ci.yml` defines Python gates on 3.12 and 3.13, the frozen Node 24/pnpm 11.5.0
-frontend gate, a packaged-recorder matrix on both Python versions, hash-verified offline wheel
-installation, packaged Chromium proof, release measurement, and secret scanning for pushes and pull requests.
-`.github/workflows/security-audit.yml` schedules full-history secret and locked Python/pnpm
-dependency audits. Shared workflows and setup actions are pinned to the full
-`hseshadr/ci` commit `8166345c9355dde54c12fa95d0457c4ea97d3e64`, documented upstream as
-`ci-v3.3.0`; Playwright itself installs Chromium directly because that release's Playwright
-composite does not validate on the current runner. Checkout credentials remain disabled and jobs
-use read-only permissions.
+`.github/workflows/dagger.yml` and `.github/workflows/dagger-security.yml` are compact, read-only
+ingress into the version-pinned Dagger graph. The graph composes shared Foundation and Python-package
+controls from exact `hseshadr/ci` commit `5cf3b7550442bb06d1cce1f146e48c064dcf511c` with the
+product-specific Python, frontend, packaged-browser, and release-measurement gates. Checkout
+credentials remain disabled.
 
-Configuration is not execution evidence. No hosted run is claimed here. Before calling a release
-reviewed and ready, record the hosted workflow URL, exact commit, artifact digests, Python 3.12/3.13
-wheel results, packaged-demo browser result, dependency and secret scans, and measurement report
-together. Hosted deployment availability is N/A because v0.1 is a non-hosted library and local
-loopback viewer.
+Branch protection requires the exact GitHub Actions `Dagger` check, enforces administrator rules
+and conversation resolution, and disallows force pushes and branch deletion. The run links above
+bind execution evidence to the exact main commit. Hosted deployment availability is N/A because
+v0.1 is a non-hosted library with a local loopback viewer.
 
 ## Publication boundary
 

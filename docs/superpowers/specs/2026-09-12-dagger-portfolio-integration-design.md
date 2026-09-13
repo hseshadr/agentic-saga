@@ -177,8 +177,10 @@ repository.
 ## Private-repository authentication
 
 GitHub checks out Agentic Saga at `${{ github.sha }}` with `persist-credentials: false` and full
-history. The workflow passes `${{ github.token }}` to Dagger as a masked secret containing an HTTP
-authorization header. The local module passes that typed secret to the shared Foundation.
+history. The workflow reads the repository Actions secret `DAGGER_GIT_HTTP_AUTH_HEADER`, whose
+masked value is the value-only `Basic <base64(x-access-token:TOKEN)>` Git authorization header.
+It passes that value to Dagger as a typed secret; the local module forwards it to the shared
+Foundation without exposing it in logs or ordinary command arguments.
 
 Foundation binds the supplied source directory to `hseshadr/agentic-saga@<full-sha>` and fetches
 the canonical Git tree/history at the same commit using Dagger's authenticated Git API. The guard

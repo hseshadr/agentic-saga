@@ -219,7 +219,10 @@ feat: add lean Dagger execution adapter
 
 **Step 1: Add the two-step CI workflow**
 
-Use only pinned checkout and pinned Dagger action. Pass exact `${{ github.sha }}` and a masked typed Git authorization header derived from `${{ github.token }}`. Name the required job/check exactly `Dagger`.
+Use only pinned checkout and pinned Dagger action. Pass exact `${{ github.sha }}` and the masked
+repository Actions secret `DAGGER_GIT_HTTP_AUTH_HEADER` as a typed Dagger secret. Its value is the
+value-only `Basic <base64(x-access-token:TOKEN)>` Git header; do not add the `Authorization:` name
+or derive credentials in the workflow. Name the required job/check exactly `Dagger`.
 
 **Step 2: Add the two-step scheduled/manual security workflow**
 

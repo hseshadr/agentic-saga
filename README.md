@@ -1,6 +1,6 @@
 # Agentic Saga
 
-[![CI](https://github.com/hseshadr/agentic-saga/actions/workflows/ci.yml/badge.svg)](https://github.com/hseshadr/agentic-saga/actions/workflows/ci.yml)
+[![Dagger](https://github.com/hseshadr/agentic-saga/actions/workflows/dagger.yml/badge.svg)](https://github.com/hseshadr/agentic-saga/actions/workflows/dagger.yml)
 
 TL;DR: **Under private development.** Agentic Saga is a generic Python library for agent-directed,
 side-effecting work. A smart agent chooses the next typed action; a deterministic Saga kernel
@@ -97,8 +97,10 @@ composition setting. See the complete working assembly in
 - A keyboard-operable Flight Recorder implementation with four distribution-bound captured traces,
   bounded strict loading, user-controlled replay, and Story, Ledger, and Proof views.
 - An offline release-measurement harness, dual-Python hosted workflow, exact package-content checks,
-  and packaged-browser gate. A clean-current-commit report and its matching hosted CI evidence still
-  must be recorded before release.
+  and packaged-browser gate. Exact main commit
+  `635974d51f87aa802886914be6a46bfd28518c66` passed the hosted
+  [Dagger gate](https://github.com/hseshadr/agentic-saga/actions/runs/34727077866) and independent
+  [security gate](https://github.com/hseshadr/agentic-saga/actions/runs/34727111885).
 
 ## Prove it locally
 
@@ -112,7 +114,8 @@ The quality gate and implemented measurement harness stay offline and credential
 measurement command runs the Python and frontend gates, builds and installs a wheel from locked
 inputs, exercises all four scenarios and the packaged recorder, and enforces the published resource
 and latency budgets. It reports the exact commit and environment; a dirty-tree result is diagnostic
-only. The final clean-current-commit result and matching hosted CI run have not yet been recorded.
+only. The hosted Dagger gate above verified the clean exact main commit, including both supported
+Python versions, the frontend gate, packaged-browser checks, dependency audits, and release budgets.
 
 ## Boundaries
 
