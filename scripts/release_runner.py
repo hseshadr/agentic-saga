@@ -736,15 +736,32 @@ def _shared_release_inputs() -> tuple[Path, Path] | None:
 
 def _shared_release_root(configured: str) -> Path:
     requested = Path(configured)
-    if not configured or requested.is_symlink():
+    _require_direct_artifact_root(configured, requested)
+    root = _resolve_artifact_root(requested)
+    _require_canonical_artifact_root(configured, root)
+    return root
+
+
+def _require_direct_artifact_root(configured: str, requested: Path) -> None:
+    if not configured:
         raise ValueError("release artifacts must be a real directory")
+    if requested.is_symlink():
+        raise ValueError("release artifacts must be a real directory")
+
+
+def _resolve_artifact_root(requested: Path) -> Path:
     try:
-        root = requested.resolve(strict=True)
+        return requested.resolve(strict=True)
     except OSError as error:
         raise ValueError("release artifacts must be a real directory") from error
+
+
+def _require_canonical_artifact_root(configured: str, root: Path) -> None:
+    lexical = Path(os.path.abspath(configured))
+    if lexical != root:
+        raise ValueError("release artifacts must be a real directory")
     if not root.is_dir():
         raise ValueError("release artifacts must be a real directory")
-    return root
 
 
 def _shared_release_wheel(root: Path) -> Path:

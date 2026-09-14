@@ -1086,6 +1086,18 @@ def _command_recorder(commands: list[tuple[str, ...]]) -> Callable[[tuple[str, .
     return checked
 
 
+def _assert_shared_installs(
+    commands: list[tuple[str, ...]], artifacts: Path, wheelhouse: Path
+) -> None:
+    installs = tuple(command for command in commands if command[:3] == ("uv", "pip", "install"))
+    assert len(installs) == 2
+    assert all(
+        "--no-index" in command and str(wheelhouse.resolve()) in command for command in installs
+    )
+    assert str((artifacts / "runtime-requirements.txt").resolve()) in installs[0]
+    assert str(next(artifacts.glob("*.whl")).resolve()) in installs[1]
+
+
 def test_wheel_cli_installs_the_shared_release_wheel_without_building(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1101,7 +1113,7 @@ def test_wheel_cli_installs_the_shared_release_wheel_without_building(
     runner._wheel_cli(workspace)
 
     assert not any(command[:2] in {("uv", "build"), ("uv", "export")} for command in commands)
-    assert any(str(next(artifacts.glob("*.whl")).resolve()) in command for command in commands)
+    _assert_shared_installs(commands, artifacts, wheelhouse)
 
 
 @pytest.mark.parametrize("wheel_count", [0, 2])
@@ -1153,6 +1165,20 @@ def test_wheel_cli_rejects_symlinked_shared_artifacts(
     link = tmp_path / "release"
     link.symlink_to(target, target_is_directory=True)
     monkeypatch.setenv("AGENTIC_SAGA_RELEASE_ARTIFACTS", str(link))
+
+    with pytest.raises(ValueError, match="release artifacts"):
+        runner._wheel_cli(tmp_path / "workspace")
+
+
+def test_wheel_cli_rejects_shared_artifacts_through_symlinked_ancestor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    _shared_release_artifacts(target / "release")
+    alias = tmp_path / "alias"
+    alias.symlink_to(target, target_is_directory=True)
+    monkeypatch.setenv("AGENTIC_SAGA_RELEASE_ARTIFACTS", str(alias / "release"))
 
     with pytest.raises(ValueError, match="release artifacts"):
         runner._wheel_cli(tmp_path / "workspace")
