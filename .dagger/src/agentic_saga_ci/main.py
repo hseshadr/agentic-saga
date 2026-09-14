@@ -68,24 +68,28 @@ class FrontendArtifacts:
     coverage: dagger.Directory
 
 
-async def _run_bounded(operation: Awaitable[object], semaphore: asyncio.Semaphore) -> None:
+async def _run_bounded[ResultT](
+    operation: Awaitable[ResultT], semaphore: asyncio.Semaphore
+) -> ResultT:
     async with semaphore:
-        await operation
+        return await operation
 
 
-async def _cancel_tasks(tasks: tuple[asyncio.Task[None], ...]) -> None:
+async def _cancel_tasks[ResultT](tasks: tuple[asyncio.Task[ResultT], ...]) -> None:
     for task in tasks:
         task.cancel()
     await asyncio.gather(*tasks, return_exceptions=True)
 
 
-async def _bounded_gather(*operations: Awaitable[object], limit: int = 2) -> None:
+async def _bounded_gather[ResultT](
+    *operations: Awaitable[ResultT], limit: int = 2
+) -> tuple[ResultT, ...]:
     semaphore = asyncio.Semaphore(limit)
     tasks = tuple(
         asyncio.create_task(_run_bounded(operation, semaphore)) for operation in operations
     )
     try:
-        await asyncio.gather(*tasks)
+        return tuple(await asyncio.gather(*tasks))
     except (Exception, asyncio.CancelledError):
         await _cancel_tasks(tasks)
         raise
@@ -278,14 +282,17 @@ def _proved_candidate(
     return proved.with_exec(_quality_proof_command())
 
 
-async def _runtime_lane(
+async def _prove_runtime(
     source: dagger.Directory,
     image: str,
-    wheelhouse: str,
     artifacts: dagger.Directory,
     frontend: FrontendArtifacts,
-) -> None:
+) -> dagger.Container:
     proved = _proved_candidate(source, image, artifacts, frontend)
+    return await proved.sync()
+
+
+async def _measure_runtime(proved: dagger.Container, wheelhouse: str) -> None:
     measured = proved.with_env_variable("AGENTIC_SAGA_RELEASE_ARTIFACTS", RELEASE_ROOT)
     measured = measured.with_env_variable("AGENTIC_SAGA_RELEASE_WHEELHOUSE", wheelhouse)
     await measured.with_exec(_measurement_command()).sync()
@@ -305,9 +312,11 @@ async def _shared_outputs(
 async def _runtime_matrix(
     source: dagger.Directory, artifacts: dagger.Directory, frontend: FrontendArtifacts
 ) -> None:
-    lanes = zip(PYTHON_IMAGES, RUNTIME_WHEELHOUSES, strict=True)
-    operations = (_runtime_lane(source, *lane, artifacts, frontend) for lane in lanes)
-    await _bounded_gather(*operations, limit=2)
+    lanes = tuple(zip(PYTHON_IMAGES, RUNTIME_WHEELHOUSES, strict=True))
+    operations = (_prove_runtime(source, image, artifacts, frontend) for image, _ in lanes)
+    candidates = await _bounded_gather(*operations, limit=2)
+    for candidate, (_, wheelhouse) in zip(candidates, lanes, strict=True):
+        await _measure_runtime(candidate, wheelhouse)
 
 
 @object_type

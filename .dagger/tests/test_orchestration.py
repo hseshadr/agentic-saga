@@ -42,6 +42,25 @@ class FailureProbe:
         raise RuntimeError("python 3.13 failed")
 
 
+@dataclass
+class RuntimeMatrixProbe:
+    proofs: ConcurrencyProbe = field(default_factory=ConcurrencyProbe)
+    measurements: ConcurrencyProbe = field(default_factory=ConcurrencyProbe)
+    candidates: dict[str, object] = field(
+        default_factory=lambda: {image: object() for image in main.PYTHON_IMAGES}
+    )
+    measured: list[tuple[object, str]] = field(default_factory=list)
+
+    async def prove(self, _: object, image: str, *__: object) -> object:
+        await self.proofs.operation(len(self.proofs.completed))
+        return self.candidates[image]
+
+    async def measure(self, candidate: object, wheelhouse: str) -> None:
+        assert len(self.proofs.completed) == len(main.PYTHON_IMAGES)
+        self.measured.append((candidate, wheelhouse))
+        await self.measurements.operation(len(self.measurements.completed))
+
+
 async def _observe_failure_cleanup(probe: FailureProbe) -> tuple[str, ...]:
     try:
         await main._bounded_gather(probe.sibling(), probe.fail(), limit=CONCURRENCY_LIMIT)
@@ -72,6 +91,44 @@ def test_bounded_gather_never_runs_more_than_two_operations() -> None:
     # Then every operation completes without more than two running together.
     assert probe.maximum_active == CONCURRENCY_LIMIT
     assert sorted(probe.completed) == list(range(5))
+
+
+def test_runtime_matrix_parallelizes_proofs_but_serializes_measurements(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given ordinary async proof and measurement collaborators.
+    probe = RuntimeMatrixProbe()
+    monkeypatch.setattr(main, "_prove_runtime", probe.prove)
+    monkeypatch.setattr(main, "_measure_runtime", probe.measure)
+
+    # When the runtime matrix runs.
+    asyncio.run(main._runtime_matrix(object(), object(), object()))
+
+    # Then proof overlaps, while both measurements run alone and stay paired.
+    expected = zip(main.PYTHON_IMAGES, main.RUNTIME_WHEELHOUSES, strict=True)
+    assert probe.proofs.maximum_active == len(main.PYTHON_IMAGES)
+    assert probe.measurements.maximum_active == 1
+    assert probe.measured == [
+        (probe.candidates[image], wheelhouse) for image, wheelhouse in expected
+    ]
+
+
+def test_runtime_matrix_skips_measurement_after_proof_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given one runtime proof that fails before the measurement barrier.
+    async def failed_proof(*_: object) -> object:
+        raise RuntimeError("runtime proof failed")
+
+    async def unexpected_measurement(*_: object) -> None:
+        pytest.fail("measurement started after failed proof")
+
+    monkeypatch.setattr(main, "_prove_runtime", failed_proof)
+    monkeypatch.setattr(main, "_measure_runtime", unexpected_measurement)
+
+    # When the matrix runs, then the proof failure remains visible and measurement never starts.
+    with pytest.raises(RuntimeError, match="runtime proof failed"):
+        asyncio.run(main._runtime_matrix(object(), object(), object()))
 
 
 def test_bounded_gather_propagates_a_lane_failure() -> None:

@@ -170,9 +170,11 @@ def _assert_ordered(body: str, markers: tuple[str, ...]) -> None:
     assert positions == tuple(sorted(positions)), "runtime stages must preserve saga proof order"
 
 
-def _assert_runtime_lane_contract(source: str) -> None:
+def _assert_runtime_phase_contract(source: str) -> None:
     proof = _function_body(source, "_proved_candidate")
-    runtime = _function_body(source, "_runtime_lane")
+    proof_runtime = _function_body(source, "_prove_runtime")
+    measurement = _function_body(source, "_measure_runtime")
+    matrix = _function_body(source, "_runtime_matrix")
     proof_steps = (
         "poe', 'gate",
         "RELEASE_ROOT",
@@ -180,13 +182,17 @@ def _assert_runtime_lane_contract(source: str) -> None:
         "FRONTEND_COVERAGE",
         "_quality_proof_command",
     )
-    runtime_steps = (
-        "_proved_candidate",
+    proof_runtime_steps = ("_proved_candidate", "return await proved.sync()")
+    measurement_steps = (
         "with_env_variable('AGENTIC_SAGA_RELEASE_ARTIFACTS', RELEASE_ROOT)",
+        "with_env_variable('AGENTIC_SAGA_RELEASE_WHEELHOUSE', wheelhouse)",
         "_measurement_command",
     )
+    matrix_steps = ("_bounded_gather", "_measure_runtime")
     _assert_ordered(proof, proof_steps)
-    _assert_ordered(runtime, runtime_steps)
+    _assert_ordered(proof_runtime, proof_runtime_steps)
+    _assert_ordered(measurement, measurement_steps)
+    _assert_ordered(matrix, matrix_steps)
 
 
 def _assert_frontend_runtime_contract(source: str) -> None:
@@ -386,12 +392,12 @@ def test_should_include_the_pnpm_executable_in_the_node_handoff() -> None:
 
 
 def test_should_bind_shared_artifacts_and_preserve_runtime_stage_order() -> None:
-    # Given the real runtime-lane composition.
+    # Given the real runtime-phase composition.
     source = MODULE.read_text()
 
     # When its ordered proof handoffs are inspected.
     # Then measurement follows the verified wheel and every required proof stage.
-    _assert_runtime_lane_contract(source)
+    _assert_runtime_phase_contract(source)
 
 
 def test_should_install_the_project_offline_without_build_isolation() -> None:
@@ -440,6 +446,14 @@ def test_should_reject_frontend_identity_without_package_manifest() -> None:
             '"AGENTIC_SAGA_RELEASE_ARTIFACTS", RELEASE_ROOT',
             '"AGENTIC_SAGA_RELEASE_ARTIFACTS", "/unverified"',
         ),
+        (
+            "    candidates = await _bounded_gather(*operations, limit=2)\n"
+            "    for candidate, (_, wheelhouse) in zip(candidates, lanes, strict=True):\n"
+            "        await _measure_runtime(candidate, wheelhouse)\n",
+            "    for candidate, (_, wheelhouse) in zip(candidates, lanes, strict=True):\n"
+            "        await _measure_runtime(candidate, wheelhouse)\n"
+            "    candidates = await _bounded_gather(*operations, limit=2)\n",
+        ),
     ),
 )
 def test_should_reject_missing_pnpm_or_reordered_runtime_proof(
@@ -454,7 +468,7 @@ def test_should_reject_missing_pnpm_or_reordered_runtime_proof(
         if original == '    "bin/pnpm",\n':
             _assert_immutable_runtime_contract(source)
         else:
-            _assert_runtime_lane_contract(source)
+            _assert_runtime_phase_contract(source)
 
 
 @pytest.mark.parametrize(
@@ -791,25 +805,6 @@ def test_should_create_shared_outputs_from_real_lazy_dagger_containers(
     # Then all returned artifacts originate from the real Dagger SDK graph.
     assert isinstance(artifacts, Directory)
     assert isinstance(frontend.coverage, Directory)
-
-
-def test_should_start_the_two_runtime_lanes_with_real_awaitables(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Given a runtime lane collaborator that records ordinary async calls.
-    calls: list[tuple[str, str]] = []
-
-    async def lane(_: object, image: str, wheelhouse: str, *__: object) -> None:
-        calls.append((image, wheelhouse))
-        await asyncio.sleep(0)
-
-    monkeypatch.setattr(main, "_runtime_lane", lane)
-
-    # When the real matrix fan-out runs.
-    asyncio.run(main._runtime_matrix(object(), object(), object()))
-
-    # Then both pinned runtimes receive their matching immutable wheelhouse.
-    assert calls == list(zip(main.PYTHON_IMAGES, main.RUNTIME_WHEELHOUSES, strict=True))
 
 
 def test_should_propagate_a_runtime_lane_failure() -> None:
