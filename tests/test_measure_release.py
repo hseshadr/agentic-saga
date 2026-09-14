@@ -7,7 +7,9 @@ import runpy
 import signal
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -108,26 +110,35 @@ def _valid_quality_proof(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pat
 
 def _tampered_quality_proof(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str) -> Path:
     path = _valid_quality_proof(tmp_path, monkeypatch)
-    payload = json.loads(path.read_text())
+    payload = _proof_payload(path)
     if field in {"source_commit", "python_version"}:
         payload[field] = "tampered"
     else:
-        payload["input_digests"][field] = "0" * 64
+        _mutable_mapping(payload["input_digests"])[field] = "0" * 64
     path.write_text(json.dumps(payload))
     return path
 
 
 def _proof_payload(path: Path) -> dict[str, object]:
-    return json.loads(path.read_text())
+    return dict(proof_module.read_json_object(path))
 
 
 def _write_proof_payload(path: Path, payload: dict[str, object]) -> None:
     path.write_text(json.dumps(payload, allow_nan=True))
 
 
-def _result_payload(path: Path) -> dict[str, object]:
-    payload = _proof_payload(path)
-    return payload["results"][0]
+def _mutable_mapping(value: object) -> dict[str, object]:
+    assert isinstance(value, dict)
+    return cast(dict[str, object], value)
+
+
+def _mutable_list(value: object) -> list[object]:
+    assert isinstance(value, list)
+    return cast(list[object], value)
+
+
+def _first_result(payload: dict[str, object]) -> dict[str, object]:
+    return _mutable_mapping(_mutable_list(payload["results"])[0])
 
 
 class _Stream:
@@ -223,6 +234,16 @@ def _passing_report() -> ReleaseReport:
     return ReleaseReport(identity, results)
 
 
+def _recording_measurement(
+    received: list[Path | None],
+) -> Callable[[Path | None], ReleaseReport]:
+    def measure(path: Path | None = None) -> ReleaseReport:
+        received.append(path)
+        return _passing_report()
+
+    return measure
+
+
 def test_quality_evidence_enforces_python_and_frontend_branches_separately() -> None:
     python = {
         "files": {
@@ -266,7 +287,7 @@ def test_quality_proof_rejects_missing_required_result_fields(
     # Given
     path = _valid_quality_proof(tmp_path, monkeypatch)
     payload = _proof_payload(path)
-    del payload["results"][0][field]
+    del _first_result(payload)[field]
     _write_proof_payload(path, payload)
 
     # When / Then
@@ -280,7 +301,7 @@ def test_quality_proof_rejects_coerced_numeric_result_values(
     # Given
     path = _valid_quality_proof(tmp_path, monkeypatch)
     payload = _proof_payload(path)
-    payload["results"][0]["actual"] = "90.0"
+    _first_result(payload)["actual"] = "90.0"
     _write_proof_payload(path, payload)
 
     # When / Then
@@ -294,7 +315,7 @@ def test_quality_proof_rejects_unknown_result_name_before_budget_lookup(
     # Given
     path = _valid_quality_proof(tmp_path, monkeypatch)
     payload = _proof_payload(path)
-    payload["results"][0]["name"] = "not-a-budget"
+    _first_result(payload)["name"] = "not-a-budget"
     _write_proof_payload(path, payload)
 
     # When / Then
@@ -308,7 +329,7 @@ def test_release_cli_returns_usage_error_for_unknown_proof_budget(
     # Given
     path = _valid_quality_proof(tmp_path, monkeypatch)
     payload = _proof_payload(path)
-    payload["results"][0]["name"] = "not-a-budget"
+    _first_result(payload)["name"] = "not-a-budget"
     _write_proof_payload(path, payload)
     monkeypatch.setattr(runner, "collect_environment", lambda: _passing_report().environment)
 
@@ -363,7 +384,7 @@ def test_quality_proof_rejects_nonobject_result_entry(
     # Given
     path = _valid_quality_proof(tmp_path, monkeypatch)
     payload = _proof_payload(path)
-    payload["results"][0] = []
+    _mutable_list(payload["results"])[0] = []
     _write_proof_payload(path, payload)
 
     # When / Then
@@ -391,7 +412,7 @@ def test_quality_proof_rejects_result_that_disagrees_with_coverage_evidence(
     # Given
     path = _valid_quality_proof(tmp_path, monkeypatch)
     payload = _proof_payload(path)
-    payload["results"][0]["actual"] = 91.0
+    _first_result(payload)["actual"] = 91.0
     _write_proof_payload(path, payload)
 
     # When / Then
@@ -405,7 +426,7 @@ def test_quality_proof_rejects_tampered_result_metadata(
     # Given
     path = _valid_quality_proof(tmp_path, monkeypatch)
     payload = _proof_payload(path)
-    payload["results"][0]["unit"] = "tampered"
+    _first_result(payload)["unit"] = "tampered"
     _write_proof_payload(path, payload)
 
     # When / Then
@@ -442,7 +463,7 @@ def _tamper_schema(path: Path, payload: dict[str, object], change: str) -> None:
     elif change == "missing":
         del payload["results"]
     else:
-        payload["input_digests"]["extra"] = "0" * 64
+        _mutable_mapping(payload["input_digests"])["extra"] = "0" * 64
     _write_proof_payload(path, payload)
 
 
@@ -454,7 +475,7 @@ def test_quality_proof_rejects_missing_or_duplicate_completed_checks(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, checks: tuple[str, ...]
 ) -> None:
     path = _valid_quality_proof(tmp_path, monkeypatch)
-    payload = json.loads(path.read_text())
+    payload = _proof_payload(path)
     payload["completed_checks"] = checks
     path.write_text(json.dumps(payload))
 
@@ -466,8 +487,8 @@ def test_quality_proof_rejects_nonfinite_coverage_result(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = _valid_quality_proof(tmp_path, monkeypatch)
-    payload = json.loads(path.read_text())
-    payload["results"][0]["actual"] = float("nan")
+    payload = _proof_payload(path)
+    _first_result(payload)["actual"] = float("nan")
     path.write_text(json.dumps(payload, allow_nan=True))
 
     with pytest.raises(ValueError, match="non-finite"):
@@ -491,8 +512,8 @@ def test_quality_proof_rejects_invalid_repository_identity(
 ) -> None:
     path = _valid_quality_proof(tmp_path, monkeypatch)
     if change == "abbreviated":
-        payload = json.loads(path.read_text())
-        payload["source_commit"] = payload["source_commit"][:7]
+        payload = _proof_payload(path)
+        payload["source_commit"] = cast(str, payload["source_commit"])[:7]
         path.write_text(json.dumps(payload))
     else:
         (proof_module.ROOT / "pyproject.toml").write_text("dirty\n")
@@ -507,7 +528,7 @@ def test_quality_proof_atomic_write_cleans_up_after_replace_failure(
     # Given
     _proof_repository(tmp_path, monkeypatch)
     destination = tmp_path / "quality-proof.json"
-    monkeypatch.setattr(proof_module.os, "replace", _replace_failure)
+    monkeypatch.setattr(os, "replace", _replace_failure)
     # When / Then
     with pytest.raises(OSError, match="replace failed"):
         proof_module.write_quality_proof(destination)
@@ -1210,7 +1231,7 @@ def test_release_orchestrator_accepts_only_quality_proof_option(
     monkeypatch.setattr(
         orchestrator,
         "measure_release",
-        lambda path=None: received.append(path) or _passing_report(),
+        _recording_measurement(received),
     )
 
     assert orchestrator.main(("--quality-proof", str(proof))) == 0
