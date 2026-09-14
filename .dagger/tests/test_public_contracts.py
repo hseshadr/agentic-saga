@@ -46,6 +46,21 @@ WHEELHOUSES = (
     "/src/dist/release/wheelhouses/3.12",
     "/src/dist/release/wheelhouses/3.13",
 )
+NODE_PATHS = (
+    "bin/corepack",
+    "bin/node",
+    "bin/npm",
+    "bin/npx",
+    "bin/pnpm",
+    "lib/node_modules/**",
+)
+VALID_MANIFEST = "\n".join(
+    (
+        f"{'a' * 64}  agentic_saga-0.1.0-py3-none-any.whl",
+        f"{'b' * 64}  agentic_saga-0.1.0.tar.gz",
+        f"{'c' * 64}  runtime-requirements.txt",
+    )
+)
 PUBLIC_INPUTS = (
     ("source", "dagger.Directory"),
     ("commit_sha", "str"),
@@ -135,6 +150,41 @@ def _literal_constants(source: str) -> dict[str, object]:
     }
 
 
+def _function_body(source: str, name: str) -> str:
+    functions = [
+        node
+        for node in _tree(source).body
+        if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)) and node.name == name
+    ]
+    assert len(functions) == 1
+    return "\n".join(ast.unparse(statement) for statement in functions[0].body)
+
+
+def _assert_ordered(body: str, markers: tuple[str, ...]) -> None:
+    assert all(marker in body for marker in markers), "required runtime stage is missing"
+    positions = tuple(body.index(marker) for marker in markers)
+    assert positions == tuple(sorted(positions)), "runtime stages must preserve saga proof order"
+
+
+def _assert_runtime_lane_contract(source: str) -> None:
+    proof = _function_body(source, "_proved_candidate")
+    runtime = _function_body(source, "_runtime_lane")
+    proof_steps = (
+        "poe', 'gate",
+        "RELEASE_ROOT",
+        "release-candidate",
+        "FRONTEND_COVERAGE",
+        "_quality_proof_command",
+    )
+    runtime_steps = (
+        "_proved_candidate",
+        "with_env_variable('AGENTIC_SAGA_RELEASE_ARTIFACTS', RELEASE_ROOT)",
+        "_measurement_command",
+    )
+    _assert_ordered(proof, proof_steps)
+    _assert_ordered(runtime, runtime_steps)
+
+
 def _assert_public_schema(source: str) -> None:
     actual = tuple(_signature(method) for method in _public_methods(_adapter_class(_tree(source))))
     expected = (
@@ -162,6 +212,7 @@ def _assert_immutable_runtime_contract(source: str) -> None:
         "UV_IMAGE": UV_IMAGE,
         "NODE_IMAGE": NODE_IMAGE,
         "RUNTIME_WHEELHOUSES": WHEELHOUSES,
+        "NODE_PATHS": NODE_PATHS,
     }
     assert constants.items() >= expected.items(), (
         "runtime identities must remain immutable and versioned"
@@ -307,6 +358,57 @@ def test_should_pin_each_runtime_and_keep_separate_wheelhouses() -> None:
     # When runtime identities are checked.
     # Then Python 3.12 and 3.13 retain pinned images and ABI-specific wheelhouses.
     _assert_immutable_runtime_contract(source)
+
+
+def test_should_include_the_pnpm_executable_in_the_node_handoff() -> None:
+    # Given the exact pinned Node-to-Python /usr/local handoff.
+    source = MODULE.read_text()
+
+    # When the immutable handoff paths are checked.
+    # Then pnpm's executable and its package payload both reach each runtime lane.
+    _assert_immutable_runtime_contract(source)
+
+
+def test_should_bind_shared_artifacts_and_preserve_runtime_stage_order() -> None:
+    # Given the real runtime-lane composition.
+    source = MODULE.read_text()
+
+    # When its ordered proof handoffs are inspected.
+    # Then measurement follows the verified wheel and every required proof stage.
+    _assert_runtime_lane_contract(source)
+
+
+@pytest.mark.parametrize(
+    ("original", "replacement"),
+    (
+        ('    "bin/pnpm",\n', ""),
+        (
+            "    candidate = gated.with_directory(RELEASE_ROOT, artifacts)\n"
+            '    candidate = candidate.with_exec(["uv", "run", "poe", "release-candidate"])\n'
+            "    proved = candidate.with_directory(FRONTEND_COVERAGE, frontend.coverage)\n",
+            "    proved = gated.with_directory(FRONTEND_COVERAGE, frontend.coverage)\n"
+            "    candidate = proved.with_directory(RELEASE_ROOT, artifacts)\n"
+            '    candidate = candidate.with_exec(["uv", "run", "poe", "release-candidate"])\n',
+        ),
+        (
+            '"AGENTIC_SAGA_RELEASE_ARTIFACTS", RELEASE_ROOT',
+            '"AGENTIC_SAGA_RELEASE_ARTIFACTS", "/unverified"',
+        ),
+    ),
+)
+def test_should_reject_missing_pnpm_or_reordered_runtime_proof(
+    original: str, replacement: str
+) -> None:
+    # Given copied production source with a broken runtime handoff or stage order.
+    source = MODULE.read_text().replace(original, replacement, 1)
+
+    # When the corresponding contract is applied.
+    # Then the unsafe mutation fails closed.
+    with pytest.raises(AssertionError):
+        if original == '    "bin/pnpm",\n':
+            _assert_immutable_runtime_contract(source)
+        else:
+            _assert_runtime_lane_contract(source)
 
 
 @pytest.mark.parametrize(
@@ -542,6 +644,34 @@ def test_should_construct_the_real_lazy_dependency_and_release_graph() -> None:
     assert main._measurement_command()[-1] == main.QUALITY_PROOF
 
 
+def test_should_validate_the_shared_release_artifact_manifest() -> None:
+    # Given a three-entry wheel, sdist, and runtime-requirements SHA256 manifest.
+    manifest = VALID_MANIFEST
+
+    # When the public-result boundary validates it.
+    result = main._validated_manifest(manifest)
+
+    # Then the exact digest evidence is retained.
+    assert result == manifest
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    (
+        "",
+        "not-a-digest  agentic_saga.whl",
+        VALID_MANIFEST + f"\n{'d' * 64}  unexpected.txt",
+        VALID_MANIFEST.replace("runtime-requirements.txt", "private-auth-token.txt"),
+    ),
+)
+def test_should_fail_closed_for_an_invalid_shared_artifact_manifest(manifest: str) -> None:
+    # Given malformed, incomplete, extra, or unapproved manifest content.
+    # When the public-result boundary validates it.
+    # Then hosted evidence cannot be emitted ambiguously.
+    with pytest.raises(ValueError, match="artifact manifest"):
+        main._validated_manifest(manifest)
+
+
 def test_should_orchestrate_ci_with_plain_async_collaborators(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -562,16 +692,24 @@ def test_should_orchestrate_ci_with_plain_async_collaborators(
         assert received == (verified, artifacts, frontend)
         events.append("matrix")
 
+    async def manifest(received: object) -> str:
+        assert received is artifacts
+        events.append("manifest")
+        return VALID_MANIFEST
+
     monkeypatch.setattr(main, "_release_source", resolve)
     monkeypatch.setattr(main, "_shared_outputs", shared)
     monkeypatch.setattr(main, "_runtime_matrix", matrix)
+    monkeypatch.setattr(main, "_artifact_manifest", manifest, raising=False)
 
     # When public CI is awaited.
-    result = asyncio.run(main.AgenticSaga().ci(source, "a" * 40, object()))
+    auth_header = f"Basic {uuid.uuid4().hex}"
+    result = asyncio.run(main.AgenticSaga().ci(source, "a" * 40, auth_header))
 
     # Then the resolved source flows into both later orchestration phases.
-    assert result == "Agentic Saga canonical Dagger gate passed"
-    assert events == ["resolve", "shared", "matrix"]
+    assert result == f"Agentic Saga canonical Dagger gate passed\nSHA256SUMS\n{VALID_MANIFEST}"
+    assert auth_header not in result
+    assert events == ["resolve", "shared", "matrix", "manifest"]
 
 
 def test_should_propagate_security_audit_failure_before_frontend_work(
@@ -676,11 +814,8 @@ def test_should_reject_a_copied_bounded_gather_that_returns_exceptions(
 ) -> None:
     # Given copied production module code that turns lane failures into results.
     source = MODULE.read_text().replace(
-        "await asyncio.gather(*(_run_bounded(operation, semaphore) for operation in operations))",
-        "await asyncio.gather(\n"
-        "        *(_run_bounded(operation, semaphore) for operation in operations),\n"
-        "        return_exceptions=True,\n"
-        "    )",
+        "await asyncio.gather(*tasks)",
+        "await asyncio.gather(*tasks, return_exceptions=True)",
         1,
     )
     module = _copied_module(monkeypatch, tmp_path, source)

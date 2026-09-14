@@ -42,6 +42,25 @@ class FailureProbe:
         raise RuntimeError("python 3.13 failed")
 
 
+async def _observe_failure_cleanup(probe: FailureProbe) -> tuple[str, ...]:
+    try:
+        await main._bounded_gather(probe.sibling(), probe.fail(), limit=CONCURRENCY_LIMIT)
+    except RuntimeError:
+        return tuple(probe.events)
+    raise AssertionError("runtime failure was swallowed")
+
+
+async def _observe_parent_cancellation(probe: FailureProbe) -> tuple[str, ...]:
+    runner = asyncio.create_task(
+        main._bounded_gather(probe.sibling(), asyncio.Event().wait(), limit=CONCURRENCY_LIMIT)
+    )
+    await probe.started.wait()
+    runner.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await runner
+    return tuple(probe.events)
+
+
 def test_bounded_gather_never_runs_more_than_two_operations() -> None:
     # Given five real awaitables that expose their active concurrency.
     probe = ConcurrencyProbe()
@@ -60,7 +79,29 @@ def test_bounded_gather_propagates_a_lane_failure() -> None:
     probe = FailureProbe()
 
     # When the bounded fan-out awaits that lane.
-    # Then its failure remains visible; event-loop teardown stops the active sibling.
+    # Then its failure remains visible and the helper stops its sibling before returning.
     with pytest.raises(RuntimeError, match=r"python 3\.13 failed"):
         asyncio.run(main._bounded_gather(probe.sibling(), probe.fail(), limit=CONCURRENCY_LIMIT))
     assert probe.events == ["started", "stopped"]
+
+
+def test_bounded_gather_awaits_sibling_cancellation_before_propagating_failure() -> None:
+    # Given a failing lane and a sibling whose cleanup is observable inside the event loop.
+    probe = FailureProbe()
+
+    # When the caller observes the propagated failure.
+    events_at_failure = asyncio.run(_observe_failure_cleanup(probe))
+
+    # Then helper-owned sibling cancellation has already completed.
+    assert events_at_failure == ("started", "stopped")
+
+
+def test_bounded_gather_awaits_siblings_when_its_parent_is_cancelled() -> None:
+    # Given an active fan-out cancelled by its parent.
+    probe = FailureProbe()
+
+    # When cancellation reaches the bounded helper.
+    events_at_cancellation = asyncio.run(_observe_parent_cancellation(probe))
+
+    # Then active siblings finish cleanup before cancellation propagates.
+    assert events_at_cancellation == ("started", "stopped")

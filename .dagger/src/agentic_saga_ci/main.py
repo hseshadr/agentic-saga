@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import Final
@@ -51,8 +52,12 @@ NODE_PATHS: Final = (
     "bin/node",
     "bin/npm",
     "bin/npx",
+    "bin/pnpm",
     "lib/node_modules/**",
 )
+SHA256_PATTERN: Final = r"[0-9a-f]{64}"
+ARTIFACT_NAME_PATTERN: Final = r"[A-Za-z0-9_.+-]+"
+MANIFEST_ENTRY_COUNT: Final = 3
 
 
 @dataclass(frozen=True)
@@ -68,9 +73,22 @@ async def _run_bounded(operation: Awaitable[object], semaphore: asyncio.Semaphor
         await operation
 
 
+async def _cancel_tasks(tasks: tuple[asyncio.Task[None], ...]) -> None:
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
 async def _bounded_gather(*operations: Awaitable[object], limit: int = 2) -> None:
     semaphore = asyncio.Semaphore(limit)
-    await asyncio.gather(*(_run_bounded(operation, semaphore) for operation in operations))
+    tasks = tuple(
+        asyncio.create_task(_run_bounded(operation, semaphore)) for operation in operations
+    )
+    try:
+        await asyncio.gather(*tasks)
+    except (Exception, asyncio.CancelledError):
+        await _cancel_tasks(tasks)
+        raise
 
 
 async def _guard(source: dagger.Directory, commit_sha: str, git_auth_header: dagger.Secret) -> None:
@@ -201,6 +219,42 @@ def _measurement_command() -> list[str]:
     ]
 
 
+def _valid_manifest_line(digest: str, separator: str, name: str) -> bool:
+    valid_digest = re.fullmatch(SHA256_PATTERN, digest)
+    valid_name = re.fullmatch(ARTIFACT_NAME_PATTERN, name)
+    return separator == "  " and valid_digest is not None and valid_name is not None
+
+
+def _manifest_name(line: str) -> str:
+    digest, separator, name = line.partition("  ")
+    if not _valid_manifest_line(digest, separator, name):
+        raise ValueError("invalid artifact manifest")
+    return name
+
+
+def _valid_manifest_names(names: tuple[str, ...]) -> bool:
+    if len(names) != MANIFEST_ENTRY_COUNT:
+        return False
+    return (
+        names[0].endswith(".whl")
+        and names[1].endswith(".tar.gz")
+        and names[2] == "runtime-requirements.txt"
+    )
+
+
+def _validated_manifest(contents: str) -> str:
+    manifest = contents.strip()
+    names = tuple(_manifest_name(line) for line in manifest.splitlines())
+    if not _valid_manifest_names(names):
+        raise ValueError("invalid artifact manifest")
+    return manifest
+
+
+async def _artifact_manifest(artifacts: dagger.Directory) -> str:
+    contents = await artifacts.file("SHA256SUMS").contents()
+    return _validated_manifest(contents)
+
+
 def _proved_candidate(
     source: dagger.Directory,
     image: str,
@@ -222,7 +276,8 @@ async def _runtime_lane(
     frontend: FrontendArtifacts,
 ) -> None:
     proved = _proved_candidate(source, image, artifacts, frontend)
-    measured = proved.with_env_variable("AGENTIC_SAGA_RELEASE_WHEELHOUSE", wheelhouse)
+    measured = proved.with_env_variable("AGENTIC_SAGA_RELEASE_ARTIFACTS", RELEASE_ROOT)
+    measured = measured.with_env_variable("AGENTIC_SAGA_RELEASE_WHEELHOUSE", wheelhouse)
     await measured.with_exec(_measurement_command()).sync()
 
 
@@ -261,7 +316,8 @@ class AgenticSaga:
         verified = await _release_source(source, commit_sha, git_auth_header)
         artifacts, frontend = await _shared_outputs(verified)
         await _runtime_matrix(verified, artifacts, frontend)
-        return "Agentic Saga canonical Dagger gate passed"
+        manifest = await _artifact_manifest(artifacts)
+        return f"Agentic Saga canonical Dagger gate passed\nSHA256SUMS\n{manifest}"
 
     @function
     async def security(
