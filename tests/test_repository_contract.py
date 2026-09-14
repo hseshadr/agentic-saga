@@ -876,10 +876,12 @@ def test_python_tooling_targets_the_supported_312_floor() -> None:
     assert release_typecheck == {
         "cmd": (
             "mypy --strict --explicit-package-bases scripts/measure_release.py "
-            "scripts/release_contract.py scripts/release_runner.py"
+            "scripts/release_contract.py scripts/release_runner.py scripts/quality_proof.py"
         ),
         "env": {"MYPYPATH": "src"},
     }
+    release_test = config["tool"]["poe"]["tasks"]["release-script-test"]["cmd"]
+    assert "--cov=scripts.quality_proof" in release_test
 
 
 def test_flight_recorder_pins_its_package_manager_and_lockfile() -> None:

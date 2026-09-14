@@ -330,6 +330,9 @@ def test_python_gate_generates_json_then_enforces_true_kernel_branches() -> None
     assert ".coverage-release-scripts.json" in pyproject
     assert "--check-release-coverage .coverage-release-scripts.json" in pyproject
     assert "--cov-fail-under=90" in pyproject
-    scripts = "scripts/measure_release.py scripts/release_contract.py scripts/release_runner.py"
+    scripts = (
+        "scripts/measure_release.py scripts/release_contract.py "
+        "scripts/release_runner.py scripts/quality_proof.py"
+    )
     assert scripts in pyproject
     assert 'gate = ["lint-check", "format-check", "typecheck", "typecheck-release",' in pyproject

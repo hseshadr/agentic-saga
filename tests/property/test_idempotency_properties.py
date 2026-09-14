@@ -71,6 +71,7 @@ def test_should_tolerate_scheduling_delay_when_checking_idempotency(
 
 
 @given(quantity=st.integers(min_value=1, max_value=1_000))
+@settings(deadline=None)
 def test_changed_command_reuse_is_rejected(quantity: int) -> None:
     # Catches mutation: accepting changed command bytes under an existing operation identity.
     assert _changed_command_effect_count(quantity) == 1

@@ -7,16 +7,138 @@ import runpy
 import signal
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 import agentic_saga.manifest as manifest_module
 import scripts.measure_release as orchestrator
+import scripts.quality_proof as proof_module
 import scripts.release_runner as runner
 from agentic_saga.agents import deepagents as deepagents_module
 from agentic_saga.demo import assets as assets_module
-from scripts.release_contract import BUDGETS, EnvironmentIdentity, ReleaseReport, evaluate
+from scripts.release_contract import (
+    BUDGETS,
+    BudgetResult,
+    EnvironmentIdentity,
+    ReleaseReport,
+    evaluate,
+)
+
+_QUALITY_RESULT_NAMES = (
+    "core_branch_coverage_percent",
+    "release_scripts_branch_coverage_percent",
+    "frontend_branch_coverage_percent",
+    "python_complexity_grade_a",
+    "browser_behavior_checks",
+)
+
+
+def _proof_repository(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    root = tmp_path / "proof-repository"
+    (root / "web" / "flight-recorder" / "coverage").mkdir(parents=True)
+    (root / "pyproject.toml").write_text("[project]\nname = 'proof-fixture'\n")
+    (root / "uv.lock").write_text("version = 1\n")
+    (root / "web" / "flight-recorder" / "package.json").write_text('{"name":"fixture"}\n')
+    (root / "web" / "flight-recorder" / "pnpm-lock.yaml").write_text("lockfileVersion: '9.0'\n")
+    (root / ".gitignore").write_text(".coverage*.json\nweb/flight-recorder/coverage/\n")
+    _commit_proof_repository(root)
+    _write_proof_evidence(root)
+    monkeypatch.setattr(proof_module, "ROOT", root)
+    return root
+
+
+def _write_proof_evidence(root: Path) -> None:
+    _write_evidence(root / ".coverage.json", _python_evidence())
+    _write_evidence(root / ".coverage-release-scripts.json", _release_evidence())
+    _write_evidence(_frontend_coverage_path(root), _frontend_evidence())
+
+
+def _python_evidence() -> dict[str, object]:
+    summary = {"covered_branches": 9, "num_branches": 10}
+    return {"files": {"src/agentic_saga/kernel/runtime.py": {"summary": summary}}}
+
+
+def _release_evidence() -> dict[str, object]:
+    summary = {"covered_branches": 19, "num_branches": 20}
+    return {"files": {"scripts/release_runner.py": {"summary": summary}}}
+
+
+def _frontend_evidence() -> dict[str, object]:
+    return {"total": {"branches": {"covered": 9, "total": 10}}}
+
+
+def _frontend_coverage_path(root: Path) -> Path:
+    return root / "web" / "flight-recorder" / "coverage" / "coverage-summary.json"
+
+
+def _write_evidence(path: Path, evidence: dict[str, object]) -> None:
+    path.write_text(json.dumps(evidence))
+
+
+def _commit_proof_repository(root: Path) -> None:
+    _git(root, "init")
+    _git(root, "add", ".")
+    _commit_fixture(root)
+
+
+def _commit_fixture(root: Path) -> None:
+    _git(
+        root,
+        "-c",
+        "user.email=test@example.com",
+        "-c",
+        "user.name=Test",
+        "commit",
+        "-m",
+        "fixture",
+    )
+
+
+def _git(root: Path, *arguments: str) -> None:
+    subprocess.run(("git", *arguments), cwd=root, check=True, capture_output=True, text=True)
+
+
+def _valid_quality_proof(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    _proof_repository(tmp_path, monkeypatch)
+    path = tmp_path / "quality-proof.json"
+    proof_module.write_quality_proof(path)
+    return path
+
+
+def _tampered_quality_proof(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str) -> Path:
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = _proof_payload(path)
+    if field in {"source_commit", "python_version"}:
+        payload[field] = "tampered"
+    else:
+        _mutable_mapping(payload["input_digests"])[field] = "0" * 64
+    path.write_text(json.dumps(payload))
+    return path
+
+
+def _proof_payload(path: Path) -> dict[str, object]:
+    return dict(proof_module.read_json_object(path))
+
+
+def _write_proof_payload(path: Path, payload: dict[str, object]) -> None:
+    path.write_text(json.dumps(payload, allow_nan=True))
+
+
+def _mutable_mapping(value: object) -> dict[str, object]:
+    assert isinstance(value, dict)
+    return cast(dict[str, object], value)
+
+
+def _mutable_list(value: object) -> list[object]:
+    assert isinstance(value, list)
+    return cast(list[object], value)
+
+
+def _first_result(payload: dict[str, object]) -> dict[str, object]:
+    return _mutable_mapping(_mutable_list(payload["results"])[0])
 
 
 class _Stream:
@@ -112,6 +234,16 @@ def _passing_report() -> ReleaseReport:
     return ReleaseReport(identity, results)
 
 
+def _recording_measurement(
+    received: list[Path | None],
+) -> Callable[[Path | None], ReleaseReport]:
+    def measure(path: Path | None = None) -> ReleaseReport:
+        received.append(path)
+        return _passing_report()
+
+    return measure
+
+
 def test_quality_evidence_enforces_python_and_frontend_branches_separately() -> None:
     python = {
         "files": {
@@ -135,6 +267,307 @@ def test_quality_evidence_enforces_python_and_frontend_branches_separately() -> 
     assert results[1].passed
     assert results[2].actual == 89
     assert not results[2].passed
+
+
+def test_valid_quality_proof_reuses_results_without_running_gates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given
+    proof = _valid_quality_proof(tmp_path, monkeypatch)
+    # When
+    results = proof_module.quality_results_from_proof(proof)
+    # Then
+    assert tuple(result.name for result in results) == _QUALITY_RESULT_NAMES
+
+
+@pytest.mark.parametrize("field", ["p50", "maximum", "comparison", "lower"])
+def test_quality_proof_rejects_missing_required_result_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str
+) -> None:
+    # Given
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = _proof_payload(path)
+    del _first_result(payload)[field]
+    _write_proof_payload(path, payload)
+
+    # When / Then
+    with pytest.raises(ValueError, match="quality proof schema"):
+        proof_module.quality_results_from_proof(path)
+
+
+def test_quality_proof_rejects_coerced_numeric_result_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = _proof_payload(path)
+    _first_result(payload)["actual"] = "90.0"
+    _write_proof_payload(path, payload)
+
+    # When / Then
+    with pytest.raises(ValueError, match="invalid quality proof schema"):
+        proof_module.quality_results_from_proof(path)
+
+
+def test_quality_proof_rejects_unknown_result_name_before_budget_lookup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = _proof_payload(path)
+    _first_result(payload)["name"] = "not-a-budget"
+    _write_proof_payload(path, payload)
+
+    # When / Then
+    with pytest.raises(ValueError, match="quality proof results differ"):
+        proof_module.quality_results_from_proof(path)
+
+
+def test_release_cli_returns_usage_error_for_unknown_proof_budget(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = _proof_payload(path)
+    _first_result(payload)["name"] = "not-a-budget"
+    _write_proof_payload(path, payload)
+    monkeypatch.setattr(runner, "collect_environment", lambda: _passing_report().environment)
+
+    # When / Then
+    assert orchestrator.main(("--quality-proof", str(path))) == 2
+
+
+@pytest.mark.parametrize("contents", ["[", "[]"])
+def test_quality_proof_reader_rejects_invalid_or_nonobject_documents(
+    tmp_path: Path, contents: str
+) -> None:
+    # Given
+    path = tmp_path / "proof.json"
+    path.write_text(contents)
+
+    # When / Then
+    with pytest.raises(ValueError, match="quality proof"):
+        proof_module.read_json_object(path)
+
+
+def test_quality_proof_rejects_nonlist_completed_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = _proof_payload(path)
+    payload["completed_checks"] = {"python-gate": True}
+    _write_proof_payload(path, payload)
+
+    # When / Then
+    with pytest.raises(ValueError, match="quality proof schema"):
+        proof_module.quality_results_from_proof(path)
+
+
+def test_quality_proof_rejects_nonlist_results(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = _proof_payload(path)
+    payload["results"] = {"name": "not-a-list"}
+    _write_proof_payload(path, payload)
+
+    # When / Then
+    with pytest.raises(ValueError, match="quality proof schema"):
+        proof_module.quality_results_from_proof(path)
+
+
+def test_quality_proof_rejects_nonobject_result_entry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = _proof_payload(path)
+    _mutable_list(payload["results"])[0] = []
+    _write_proof_payload(path, payload)
+
+    # When / Then
+    with pytest.raises(ValueError, match="quality proof schema"):
+        proof_module.quality_results_from_proof(path)
+
+
+def test_quality_proof_rejects_nonobject_input_digests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = _proof_payload(path)
+    payload["input_digests"] = []
+    _write_proof_payload(path, payload)
+
+    # When / Then
+    with pytest.raises(ValueError, match="quality proof schema"):
+        proof_module.quality_results_from_proof(path)
+
+
+def test_quality_proof_rejects_result_that_disagrees_with_coverage_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = _proof_payload(path)
+    _first_result(payload)["actual"] = 91.0
+    _write_proof_payload(path, payload)
+
+    # When / Then
+    with pytest.raises(ValueError, match="quality proof evidence mismatch"):
+        proof_module.quality_results_from_proof(path)
+
+
+def test_quality_proof_rejects_tampered_result_metadata(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = _proof_payload(path)
+    _first_result(payload)["unit"] = "tampered"
+    _write_proof_payload(path, payload)
+
+    # When / Then
+    with pytest.raises(ValueError, match="result metadata mismatch"):
+        proof_module.quality_results_from_proof(path)
+
+
+@pytest.mark.parametrize("field", ["source_commit", "python_version", "uv_lock_sha256"])
+def test_quality_proof_rejects_identity_mismatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, field: str
+) -> None:
+    proof = _tampered_quality_proof(tmp_path, monkeypatch, field)
+
+    with pytest.raises(ValueError, match="quality proof identity mismatch"):
+        proof_module.quality_results_from_proof(proof)
+
+
+@pytest.mark.parametrize("change", ["unknown", "missing", "extra"])
+def test_quality_proof_rejects_nonexact_schema_keys(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    # Given
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    _tamper_schema(path, _proof_payload(path), change)
+
+    # When / Then
+    with pytest.raises(ValueError, match="quality proof schema keys"):
+        proof_module.quality_results_from_proof(path)
+
+
+def _tamper_schema(path: Path, payload: dict[str, object], change: str) -> None:
+    if change == "unknown":
+        payload["unrecognized"] = True
+    elif change == "missing":
+        del payload["results"]
+    else:
+        _mutable_mapping(payload["input_digests"])["extra"] = "0" * 64
+    _write_proof_payload(path, payload)
+
+
+@pytest.mark.parametrize(
+    "checks",
+    [("python-gate",), ("python-gate", "python-gate"), ("frontend-gate", "python-gate")],
+)
+def test_quality_proof_rejects_missing_or_duplicate_completed_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, checks: tuple[str, ...]
+) -> None:
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = _proof_payload(path)
+    payload["completed_checks"] = checks
+    path.write_text(json.dumps(payload))
+
+    with pytest.raises(ValueError, match="completed checks"):
+        proof_module.quality_results_from_proof(path)
+
+
+def test_quality_proof_rejects_nonfinite_coverage_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    payload = _proof_payload(path)
+    _first_result(payload)["actual"] = float("nan")
+    path.write_text(json.dumps(payload, allow_nan=True))
+
+    with pytest.raises(ValueError, match="non-finite"):
+        proof_module.quality_results_from_proof(path)
+
+
+def test_quality_proof_rejects_modified_coverage_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    root = proof_module.ROOT
+    (root / ".coverage.json").write_text("{}")
+
+    with pytest.raises(ValueError, match="quality proof evidence mismatch"):
+        proof_module.quality_results_from_proof(path)
+
+
+@pytest.mark.parametrize("change", ["abbreviated", "dirty"])
+def test_quality_proof_rejects_invalid_repository_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    path = _valid_quality_proof(tmp_path, monkeypatch)
+    if change == "abbreviated":
+        payload = _proof_payload(path)
+        source_commit = payload["source_commit"]
+        assert isinstance(source_commit, str)
+        payload["source_commit"] = source_commit[:7]
+        path.write_text(json.dumps(payload))
+    else:
+        (proof_module.ROOT / "pyproject.toml").write_text("dirty\n")
+
+    with pytest.raises(ValueError, match="quality proof identity mismatch"):
+        proof_module.quality_results_from_proof(path)
+
+
+def test_quality_proof_atomic_write_cleans_up_after_replace_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given
+    _proof_repository(tmp_path, monkeypatch)
+    destination = tmp_path / "quality-proof.json"
+    monkeypatch.setattr(os, "replace", _replace_failure)
+    # When / Then
+    with pytest.raises(OSError, match="replace failed"):
+        proof_module.write_quality_proof(destination)
+    assert not destination.exists()
+    assert not tuple(tmp_path.glob(".quality-proof-*.tmp"))
+
+
+def _replace_failure(_source: object, _target: object) -> None:
+    raise OSError("replace failed")
+
+
+def test_measure_release_reuses_quality_proof_without_running_quality_gates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Given
+    proof = _valid_quality_proof(tmp_path, monkeypatch)
+    identity = _passing_report().environment
+    expected = proof_module.quality_results_from_proof(proof)
+    _configure_proof_reuse(monkeypatch, identity, tmp_path)
+    # When
+    report = runner.measure_release(proof)
+    # Then
+    assert report.environment == identity
+    assert report.results == expected
+
+
+def _configure_proof_reuse(
+    monkeypatch: pytest.MonkeyPatch, identity: EnvironmentIdentity, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(runner, "collect_environment", lambda: identity)
+    monkeypatch.setattr(runner, "_quality_results", _unexpected_quality_gate)
+    monkeypatch.setattr(runner, "_wheel_cli", lambda _workspace: tmp_path / "cli")
+    monkeypatch.setattr(runner, "_release_results", lambda _cli, quality: quality)
+
+
+def _unexpected_quality_gate() -> tuple[BudgetResult, ...]:
+    pytest.fail("quality gates must not run")
 
 
 def test_repository_coverage_command_fails_below_true_branch_floor(tmp_path: Path) -> None:
@@ -623,8 +1056,157 @@ def test_wheel_cli_uses_explicit_installed_executable(
     cli = tmp_path / "agentic-saga"
     cli.write_text("executable")
     monkeypatch.setenv("AGENTIC_SAGA_CLI", str(cli))
+    monkeypatch.setenv("AGENTIC_SAGA_RELEASE_ARTIFACTS", str(tmp_path / "missing"))
 
     assert runner._wheel_cli(tmp_path / "workspace") == cli.resolve()
+
+
+def _shared_release_artifacts(root: Path, wheel_count: int = 1) -> Path:
+    root.mkdir()
+    (root / "runtime-requirements.txt").write_text("locked")
+    for index in range(wheel_count):
+        (root / f"agentic_saga-{index}-py3-none-any.whl").touch()
+    return root
+
+
+def _configure_shared_artifacts(
+    monkeypatch: pytest.MonkeyPatch, artifacts: Path, wheelhouse: Path
+) -> None:
+    monkeypatch.delenv("AGENTIC_SAGA_CLI", raising=False)
+    monkeypatch.setenv("AGENTIC_SAGA_RELEASE_ARTIFACTS", str(artifacts))
+    monkeypatch.setenv("AGENTIC_SAGA_RELEASE_WHEELHOUSE", str(wheelhouse))
+
+
+def _command_recorder(commands: list[tuple[str, ...]]) -> Callable[[tuple[str, ...], Path], str]:
+    def checked(command: tuple[str, ...], cwd: Path = runner.ROOT) -> str:
+        del cwd
+        commands.append(command)
+        return ""
+
+    return checked
+
+
+def _assert_shared_installs(
+    commands: list[tuple[str, ...]], artifacts: Path, wheelhouse: Path
+) -> None:
+    installs = tuple(command for command in commands if command[:3] == ("uv", "pip", "install"))
+    assert len(installs) == 2
+    assert all(
+        "--no-index" in command and str(wheelhouse.resolve()) in command for command in installs
+    )
+    assert str((artifacts / "runtime-requirements.txt").resolve()) in installs[0]
+    assert str(next(artifacts.glob("*.whl")).resolve()) in installs[1]
+
+
+def test_wheel_cli_installs_the_shared_release_wheel_without_building(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifacts = _shared_release_artifacts(tmp_path / "release")
+    wheelhouse = tmp_path / "wheelhouse"
+    wheelhouse.mkdir()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    commands: list[tuple[str, ...]] = []
+    _configure_shared_artifacts(monkeypatch, artifacts, wheelhouse)
+    monkeypatch.setattr(runner, "_checked", _command_recorder(commands))
+
+    runner._wheel_cli(workspace)
+
+    assert not any(command[:2] in {("uv", "build"), ("uv", "export")} for command in commands)
+    _assert_shared_installs(commands, artifacts, wheelhouse)
+
+
+def test_wheel_cli_creates_venv_with_the_executing_interpreter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifacts = _shared_release_artifacts(tmp_path / "release")
+    wheelhouse = tmp_path / "wheelhouse"
+    wheelhouse.mkdir()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    commands: list[tuple[str, ...]] = []
+    _configure_shared_artifacts(monkeypatch, artifacts, wheelhouse)
+    monkeypatch.setattr(runner, "_checked", _command_recorder(commands))
+
+    runner._wheel_cli(workspace)
+
+    assert commands[0] == (
+        "uv",
+        "venv",
+        "--offline",
+        "--no-python-downloads",
+        "--python",
+        sys.executable,
+        str(workspace / "venv"),
+    )
+
+
+@pytest.mark.parametrize("wheel_count", [0, 2])
+def test_wheel_cli_rejects_nonexact_shared_wheel_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wheel_count: int
+) -> None:
+    artifacts = _shared_release_artifacts(tmp_path / "release", wheel_count)
+    monkeypatch.setenv("AGENTIC_SAGA_RELEASE_ARTIFACTS", str(artifacts))
+
+    with pytest.raises(ValueError, match="exactly one wheel"):
+        runner._wheel_cli(tmp_path / "workspace")
+
+
+def test_wheel_cli_rejects_shared_artifacts_without_requirements(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifacts = _shared_release_artifacts(tmp_path / "release")
+    (artifacts / "runtime-requirements.txt").unlink()
+    monkeypatch.setenv("AGENTIC_SAGA_RELEASE_ARTIFACTS", str(artifacts))
+
+    with pytest.raises(ValueError, match="runtime requirements"):
+        runner._wheel_cli(tmp_path / "workspace")
+
+
+def test_wheel_cli_rejects_missing_shared_artifact_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTIC_SAGA_RELEASE_ARTIFACTS", str(tmp_path / "missing"))
+
+    with pytest.raises(ValueError, match="release artifacts"):
+        runner._wheel_cli(tmp_path / "workspace")
+
+
+def test_wheel_cli_rejects_nondirectory_shared_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact_file = tmp_path / "release"
+    artifact_file.touch()
+    monkeypatch.setenv("AGENTIC_SAGA_RELEASE_ARTIFACTS", str(artifact_file))
+
+    with pytest.raises(ValueError, match="release artifacts"):
+        runner._wheel_cli(tmp_path / "workspace")
+
+
+def test_wheel_cli_rejects_symlinked_shared_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = _shared_release_artifacts(tmp_path / "target")
+    link = tmp_path / "release"
+    link.symlink_to(target, target_is_directory=True)
+    monkeypatch.setenv("AGENTIC_SAGA_RELEASE_ARTIFACTS", str(link))
+
+    with pytest.raises(ValueError, match="release artifacts"):
+        runner._wheel_cli(tmp_path / "workspace")
+
+
+def test_wheel_cli_rejects_shared_artifacts_through_symlinked_ancestor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    _shared_release_artifacts(target / "release")
+    alias = tmp_path / "alias"
+    alias.symlink_to(target, target_is_directory=True)
+    monkeypatch.setenv("AGENTIC_SAGA_RELEASE_ARTIFACTS", str(alias / "release"))
+
+    with pytest.raises(ValueError, match="release artifacts"):
+        runner._wheel_cli(tmp_path / "workspace")
 
 
 def test_wheel_cli_installs_only_from_explicit_release_wheelhouse(
@@ -790,6 +1372,22 @@ def test_release_orchestrator_rejects_arguments_before_measuring(
     )
 
     assert orchestrator.main(("unexpected",)) == 2
+
+
+def test_release_orchestrator_accepts_only_quality_proof_option(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    proof = tmp_path / "proof.json"
+    received: list[Path | None] = []
+    monkeypatch.setattr(
+        orchestrator,
+        "measure_release",
+        _recording_measurement(received),
+    )
+
+    assert orchestrator.main(("--quality-proof", str(proof))) == 0
+    assert received == [proof]
+    assert orchestrator.main(("--quality-proof",)) == 2
 
 
 def test_release_orchestrator_renders_complete_pass(

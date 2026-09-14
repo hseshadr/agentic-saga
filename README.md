@@ -54,6 +54,44 @@ Ecommerce is an example, not a workflow hidden in the core. The ticket-booking m
 same authoring shape; applications register their own typed tools, adapters, policies, and
 invariants.
 
+## Lean release proof
+
+TL;DR: every pull request and the exact commit merged to `main` receive the complete release
+proof behind the single protected **Dagger** check. The graph resolves authenticated source once,
+builds the first-party wheel and sdist once, proves the frontend once, and then validates those
+same immutable inputs on Python 3.12 and 3.13 before one result is reported.
+
+```text
+authenticated exact source (once)
+                |
+       +--------+--------+
+       |                 |
+release artifacts     frontend proof
+wheel + sdist (once)      (once)
+       |                 |
+       +--------+--------+
+                |
+     +----------+----------+
+     |                     |
+Python 3.12 validation  Python 3.13 validation
+     |                     |
+     +----------+----------+
+                |
+     one protected Dagger check
+```
+
+Each Python lane runs its quality proof, uses its own runtime-specific dependency wheelhouse, and
+installs the already-built first-party wheel offline. The quality handoff is identity-bound: it
+rejects changed source, lockfiles, coverage evidence, runtime, or results rather than treating a
+previous green run as a shortcut. After both lanes pass, the check emits the wheel, sdist, and
+runtime-requirements SHA-256 manifest as hosted evidence. The separate Dagger security audit
+remains required on its own schedule.
+
+Hosted performance evidence is still pending. A cold Dagger job of at most 20 minutes and a warm
+job of at most 12 minutes are targets, not measurements or a claim that this pipeline is faster.
+Only run URLs for the same pull-request SHA—and separately for the exact merged `main` SHA—can
+establish that proof.
+
 ## Compose the supported runtime
 
 The root package provides one supported composition path. Applications construct the typed Lego

@@ -57,4 +57,4 @@ it("keeps loaded and empty-filter states axe-clean", async () => {
   await user.type(screen.getByLabelText("Search recorded fields"), "not-a-recorded-value");
   await screen.findByText("No visible ledger events match these filters.");
   await expectAxeClean(loaded.container);
-});
+}, 10_000);

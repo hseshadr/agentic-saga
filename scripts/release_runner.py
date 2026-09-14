@@ -37,6 +37,7 @@ from agentic_saga.evidence import run_trace as trace_module
 from agentic_saga.storage import SQLiteKernelStore
 from agentic_saga.storage import sqlite as sqlite_module
 from examples.ecommerce.demo import run_scenario
+from scripts.quality_proof import quality_results_from_proof
 from scripts.release_contract import (
     BUDGETS,
     BudgetResult,
@@ -707,16 +708,86 @@ def _wheel_cli(workspace: Path) -> Path:
     configured = os.environ.get("AGENTIC_SAGA_CLI")
     if configured:
         return Path(configured).resolve(strict=True)
+    shared = _shared_release_inputs()
+    wheel, requirements = shared or _built_release_inputs(workspace)
+    venv = workspace / "venv"
+    _checked(_venv_command(venv))
+    _install_wheel(venv, requirements, wheel, _release_wheelhouse())
+    return venv / "bin" / "agentic-saga"
+
+
+def _venv_command(venv: Path) -> tuple[str, ...]:
+    return (
+        "uv",
+        "venv",
+        "--offline",
+        "--no-python-downloads",
+        "--python",
+        sys.executable,
+        str(venv),
+    )
+
+
+def _built_release_inputs(workspace: Path) -> tuple[Path, Path]:
     artifacts = workspace / "wheel"
     artifacts.mkdir()
     _checked(_wheel_build_command(artifacts))
     wheel = next(artifacts.glob("*.whl"))
     requirements = artifacts / "runtime-requirements.txt"
     _checked(_requirements_command(requirements))
-    venv = workspace / "venv"
-    _checked(("uv", "venv", "--offline", "--no-python-downloads", str(venv)))
-    _install_wheel(venv, requirements, wheel, _release_wheelhouse())
-    return venv / "bin" / "agentic-saga"
+    return wheel, requirements
+
+
+def _shared_release_inputs() -> tuple[Path, Path] | None:
+    configured = os.environ.get("AGENTIC_SAGA_RELEASE_ARTIFACTS")
+    if configured is None:
+        return None
+    root = _shared_release_root(configured)
+    return _shared_release_wheel(root), _shared_runtime_requirements(root)
+
+
+def _shared_release_root(configured: str) -> Path:
+    requested = Path(configured)
+    _require_direct_artifact_root(configured, requested)
+    root = _resolve_artifact_root(requested)
+    _require_canonical_artifact_root(configured, root)
+    return root
+
+
+def _require_direct_artifact_root(configured: str, requested: Path) -> None:
+    if not configured:
+        raise ValueError("release artifacts must be a real directory")
+    if requested.is_symlink():
+        raise ValueError("release artifacts must be a real directory")
+
+
+def _resolve_artifact_root(requested: Path) -> Path:
+    try:
+        return requested.resolve(strict=True)
+    except OSError as error:
+        raise ValueError("release artifacts must be a real directory") from error
+
+
+def _require_canonical_artifact_root(configured: str, root: Path) -> None:
+    lexical = Path(os.path.abspath(configured))
+    if lexical != root:
+        raise ValueError("release artifacts must be a real directory")
+    if not root.is_dir():
+        raise ValueError("release artifacts must be a real directory")
+
+
+def _shared_release_wheel(root: Path) -> Path:
+    wheels = tuple(root.glob("*.whl"))
+    if len(wheels) != 1 or wheels[0].is_symlink() or not wheels[0].is_file():
+        raise ValueError("release artifacts must contain exactly one wheel")
+    return wheels[0].resolve(strict=True)
+
+
+def _shared_runtime_requirements(root: Path) -> Path:
+    requirements = root / "runtime-requirements.txt"
+    if requirements.is_symlink() or not requirements.is_file():
+        raise ValueError("release artifacts must contain runtime requirements")
+    return requirements.resolve(strict=True)
 
 
 def _wheel_build_command(artifacts: Path) -> tuple[str, ...]:
@@ -772,13 +843,13 @@ def _install_wheel(venv: Path, requirements: Path, wheel: Path, wheelhouse: Path
     _checked((*common, "--no-deps", str(wheel)))
 
 
-def _release_results(cli: Path) -> tuple[BudgetResult, ...]:
-    return _static_results() + _workload_results(cli)
+def _release_results(cli: Path, quality: tuple[BudgetResult, ...]) -> tuple[BudgetResult, ...]:
+    return _static_results(quality) + _workload_results(cli)
 
 
-def _static_results() -> tuple[BudgetResult, ...]:
+def _static_results(quality: tuple[BudgetResult, ...]) -> tuple[BudgetResult, ...]:
     return (
-        *_quality_results(),
+        *quality,
         *_manifest_results(),
         *implementation_limit_results(),
         *_asset_results(),
@@ -799,10 +870,12 @@ def _workload_results(cli: Path) -> tuple[BudgetResult, ...]:
     )
 
 
-def measure_release() -> ReleaseReport:
+def measure_release(quality_proof: Path | None = None) -> ReleaseReport:
     identity = collect_environment()
+    quality = quality_results_from_proof(quality_proof) if quality_proof else _quality_results()
     with tempfile.TemporaryDirectory(prefix="agentic-saga-release-") as directory:
-        return ReleaseReport(identity, _release_results(_wheel_cli(Path(directory))))
+        results = _release_results(_wheel_cli(Path(directory)), quality)
+    return ReleaseReport(identity, results)
 
 
 def _render_result(result: BudgetResult) -> str:

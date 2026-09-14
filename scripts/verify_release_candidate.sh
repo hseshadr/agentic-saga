@@ -1,25 +1,45 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-output_dir="${1:?usage: verify_release_candidate.sh OUTPUT_DIR}"
+output_arg="${1:?usage: verify_release_candidate.sh OUTPUT_DIR}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 repo_root="$(cd -- "$script_dir/.." && pwd -P)"
 working_dir="$(pwd -P)"
-if [[ "$output_dir" != /* ]]; then
-  output_dir="$working_dir/$output_dir"
+if [[ "$output_arg" != /* ]]; then
+  requested="$working_dir/$output_arg"
+else
+  requested="$output_arg"
 fi
-output_dir="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$output_dir")"
+case "/$requested/" in
+  */../*)
+    printf 'refusing unsafe output directory: %s\n' "$output_arg" >&2
+    exit 2
+    ;;
+esac
 dist_root="$repo_root/dist"
 canonical_dist_root="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$dist_root")"
+lexical_output="$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$requested")"
+output_dir="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$requested")"
 case "$output_dir" in
   "$canonical_dist_root"/*) ;;
   *)
-    printf 'refusing unsafe output directory: %s\n' "$output_dir" >&2
+    printf 'refusing unsafe output directory: %s\n' "$output_arg" >&2
+    exit 2
+    ;;
+esac
+case "$lexical_output" in
+  "$canonical_dist_root"/*) ;;
+  *)
+    printf 'refusing unsafe output directory: %s\n' "$output_arg" >&2
     exit 2
     ;;
 esac
 [[ "$output_dir" != "$canonical_dist_root" ]] || {
-  printf 'refusing unsafe output directory: %s\n' "$output_dir" >&2
+  printf 'refusing unsafe output directory: %s\n' "$output_arg" >&2
+  exit 2
+}
+[[ "$lexical_output" == "$output_dir" ]] || {
+  printf 'refusing unsafe output directory: %s\n' "$output_arg" >&2
   exit 2
 }
 intended_commit="$(git -C "$repo_root" rev-parse --verify 'HEAD^{commit}')"
@@ -36,12 +56,17 @@ sdist_count="$(find "$output_dir" -maxdepth 1 -name '*.tar.gz' | wc -l | tr -d '
 }
 source_commit_file="$output_dir/SOURCE_COMMIT"
 manifest="$output_dir/SHA256SUMS"
+runtime_requirements="$output_dir/runtime-requirements.txt"
 [[ -s "$source_commit_file" ]] || {
   printf 'missing committed source marker: %s\n' "$source_commit_file" >&2
   exit 1
 }
 [[ -s "$manifest" ]] || {
   printf 'missing artifact digest manifest: %s\n' "$manifest" >&2
+  exit 1
+}
+[[ -s "$runtime_requirements" ]] || {
+  printf 'missing locked runtime requirements: %s\n' "$runtime_requirements" >&2
   exit 1
 }
 recorded_commit="$(<"$source_commit_file")"
@@ -70,8 +95,10 @@ verify_digest() {
 }
 wheel_name="$(basename "$wheel")"
 sdist_name="$(basename "$sdist")"
+requirements_name="$(basename "$runtime_requirements")"
 wheel_digest=""
 sdist_digest=""
+requirements_digest=""
 manifest_lines=0
 while read -r expected filename extra; do
   [[ -n "$expected" && -n "$filename" && -z "${extra:-}" ]] || {
@@ -91,6 +118,10 @@ while read -r expected filename extra; do
       [[ -z "$sdist_digest" ]] || { printf 'duplicate artifact digest\n' >&2; exit 1; }
       sdist_digest="$expected"
       ;;
+    "$requirements_name")
+      [[ -z "$requirements_digest" ]] || { printf 'duplicate artifact digest\n' >&2; exit 1; }
+      requirements_digest="$expected"
+      ;;
     *)
       printf 'unknown artifact in digest manifest: %s\n' "$filename" >&2
       exit 1
@@ -98,25 +129,29 @@ while read -r expected filename extra; do
   esac
   manifest_lines=$((manifest_lines + 1))
 done < "$manifest"
-[[ "$manifest_lines" == "2" && -n "$wheel_digest" && -n "$sdist_digest" ]] || {
+[[ "$manifest_lines" == "3" && -n "$wheel_digest" && -n "$sdist_digest" && -n "$requirements_digest" ]] || {
   printf 'incomplete artifact digest manifest\n' >&2
   exit 1
 }
 verify_digest "$wheel_digest" "$wheel"
 verify_digest "$sdist_digest" "$sdist"
-runtime_requirements="$output_dir/runtime-requirements.txt"
-[[ -s "$runtime_requirements" ]] || {
-  printf 'missing locked runtime requirements: %s\n' "$runtime_requirements" >&2
-  exit 1
-}
-wheelhouse="$output_dir/wheelhouse"
-[[ -d "$wheelhouse" && -n "$(find "$wheelhouse" -maxdepth 1 -name '*.whl' -print -quit)" ]] || {
-  printf 'missing offline runtime wheelhouse: %s\n' "$wheelhouse" >&2
-  exit 1
-}
+verify_digest "$requirements_digest" "$runtime_requirements"
 release_python="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
 [[ "$release_python" == "3.12" || "$release_python" == "3.13" ]] || {
   printf 'release verification requires Python 3.12 or 3.13\n' >&2
+  exit 1
+}
+wheelhouses="$output_dir/wheelhouses"
+[[ ! -L "$wheelhouses" ]] || {
+  printf 'refusing unsafe runtime wheelhouse directory: %s\n' "$wheelhouses" >&2
+  exit 2
+}
+wheelhouse="$wheelhouses/$release_python"
+if [[ ! -d "$wheelhouse" ]]; then
+  bash "$script_dir/build_runtime_wheelhouse.sh" "$output_dir"
+fi
+[[ ! -L "$wheelhouse" && -d "$wheelhouse" && -n "$(find "$wheelhouse" -maxdepth 1 -name '*.whl' -print -quit)" ]] || {
+  printf 'missing offline runtime wheelhouse: %s\n' "$wheelhouse" >&2
   exit 1
 }
 temp_root="$(mktemp -d)"
