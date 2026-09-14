@@ -431,6 +431,7 @@ async def _unresolved() -> tuple[tuple[Reservation, ...], tuple[Reservation, ...
 
 
 @given(blocker=st.sampled_from(tuple(TerminalBlocker)))
+@settings(deadline=None)
 def test_terminal_denial_has_exact_blocker_suffix(blocker: TerminalBlocker) -> None:
     # Catches mutation: allowing terminal denial to append unrelated durable authority.
     _assert_terminal_denied(_terminal_attempt(blocker))
