@@ -513,7 +513,9 @@ def test_quality_proof_rejects_invalid_repository_identity(
     path = _valid_quality_proof(tmp_path, monkeypatch)
     if change == "abbreviated":
         payload = _proof_payload(path)
-        payload["source_commit"] = cast(str, payload["source_commit"])[:7]
+        source_commit = payload["source_commit"]
+        assert isinstance(source_commit, str)
+        payload["source_commit"] = source_commit[:7]
         path.write_text(json.dumps(payload))
     else:
         (proof_module.ROOT / "pyproject.toml").write_text("dirty\n")
