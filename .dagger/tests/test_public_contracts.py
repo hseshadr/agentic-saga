@@ -54,6 +54,10 @@ NODE_PATHS = (
     "bin/pnpm",
     "lib/node_modules/**",
 )
+FRONTEND_LOCK_INPUTS = (
+    "web/flight-recorder/package.json",
+    "web/flight-recorder/pnpm-lock.yaml",
+)
 VALID_MANIFEST = "\n".join(
     (
         f"{'a' * 64}  agentic_saga-0.1.0-py3-none-any.whl",
@@ -185,6 +189,17 @@ def _assert_runtime_lane_contract(source: str) -> None:
     _assert_ordered(runtime, runtime_steps)
 
 
+def _assert_frontend_runtime_contract(source: str) -> None:
+    body = _function_body(source, "_release")
+    markers = (
+        "_mount_frontend",
+        "_source_layer(base, source, FRONTEND_LOCK_INPUTS)",
+        "playwright', 'install-deps",
+        "_install_project",
+    )
+    _assert_ordered(body, markers)
+
+
 def _assert_public_schema(source: str) -> None:
     actual = tuple(_signature(method) for method in _public_methods(_adapter_class(_tree(source))))
     expected = (
@@ -213,6 +228,7 @@ def _assert_immutable_runtime_contract(source: str) -> None:
         "NODE_IMAGE": NODE_IMAGE,
         "RUNTIME_WHEELHOUSES": WHEELHOUSES,
         "NODE_PATHS": NODE_PATHS,
+        "FRONTEND_LOCK_INPUTS": FRONTEND_LOCK_INPUTS,
     }
     assert constants.items() >= expected.items(), (
         "runtime identities must remain immutable and versioned"
@@ -376,6 +392,36 @@ def test_should_bind_shared_artifacts_and_preserve_runtime_stage_order() -> None
     # When its ordered proof handoffs are inspected.
     # Then measurement follows the verified wheel and every required proof stage.
     _assert_runtime_lane_contract(source)
+
+
+def test_should_install_the_project_offline_without_build_isolation() -> None:
+    # Given the project is overlaid onto a fully provisioned dependency environment.
+    body = _function_body(MODULE.read_text(), "_install_project")
+
+    # When the final project install command is inspected.
+    # Then it reuses the installed build backend without network or dependency resolution.
+    assert "'--offline'" in body
+    assert "'--no-build-isolation'" in body
+    assert "'--no-editable'" in body
+
+
+def test_should_mount_the_locked_frontend_identity_before_corepack() -> None:
+    # Given Node tools and packages are handed from the frontend builder to a Python lane.
+    source = MODULE.read_text()
+
+    # When the cross-image runtime order is checked.
+    # Then Corepack sees the locked pnpm identity before Playwright installs OS dependencies.
+    _assert_frontend_runtime_contract(source)
+
+
+def test_should_reject_frontend_identity_without_package_manifest() -> None:
+    # Given copied production source without the package-manager identity input.
+    source = MODULE.read_text().replace('    "web/flight-recorder/package.json",\n', "", 1)
+
+    # When immutable runtime literals are validated.
+    # Then Corepack cannot silently fall back to an unpinned package-manager version.
+    with pytest.raises(AssertionError, match="runtime identities"):
+        _assert_immutable_runtime_contract(source)
 
 
 @pytest.mark.parametrize(

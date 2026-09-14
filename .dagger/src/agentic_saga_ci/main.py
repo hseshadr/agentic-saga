@@ -140,7 +140,16 @@ def _python_dependencies(source: dagger.Directory, image: str) -> dagger.Contain
 def _install_project(base: dagger.Container, source: dagger.Directory) -> dagger.Container:
     complete = base.with_directory(SOURCE_ROOT, source).with_workdir(SOURCE_ROOT)
     return complete.with_exec(
-        ["uv", "sync", "--frozen", "--all-groups", "--all-extras", "--offline"]
+        [
+            "uv",
+            "sync",
+            "--frozen",
+            "--all-groups",
+            "--all-extras",
+            "--offline",
+            "--no-build-isolation",
+            "--no-editable",
+        ]
     )
 
 
@@ -176,6 +185,7 @@ def _mount_frontend(base: dagger.Container, artifacts: FrontendArtifacts) -> dag
 
 def _release(source: dagger.Directory, image: str, frontend: FrontendArtifacts) -> dagger.Container:
     base = _mount_frontend(_python_dependencies(source, image), frontend)
+    base = _source_layer(base, source, FRONTEND_LOCK_INPUTS)
     base = base.with_exec(["pnpm", "exec", "playwright", "install-deps", "chromium"])
     return _install_project(base, source)
 
