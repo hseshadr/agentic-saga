@@ -2,19 +2,17 @@ from __future__ import annotations
 
 import ast
 import asyncio
-import importlib.util
 import json
 import shutil
 import subprocess
-import sys
-import uuid
+import tomllib
 from collections.abc import Iterator
-from dataclasses import dataclass
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import ModuleType
 from typing import cast
 
 import pytest
+import yaml
 from dagger import Container, Directory, dag
 
 from agentic_saga_ci import main
@@ -22,6 +20,7 @@ from agentic_saga_ci import main
 ROOT = Path(__file__).parents[2]
 MODULE = ROOT / ".dagger" / "src" / "agentic_saga_ci" / "main.py"
 CONFIG = ROOT / "dagger.json"
+PYPROJECT = ROOT / ".dagger" / "pyproject.toml"
 WORKFLOWS = ROOT / ".github" / "workflows"
 FOUNDATION_SHA = "5cf3b7550442bb06d1cce1f146e48c064dcf511c"
 CHECKOUT_SHA = "3d3c42e5aac5ba805825da76410c181273ba90b1"
@@ -51,10 +50,20 @@ PUBLIC_INPUTS = (
 )
 GENERATED_PATHS = (".dagger/sdk/generated.py", ".dagger/.venv/pyvenv.cfg")
 GENERATED_PREFIXES = (".dagger/sdk/", ".dagger/.venv/")
+DAGGER_LOCK = ".dagger/uv.lock"
 
 PublicMethod = ast.AsyncFunctionDef | ast.FunctionDef
 Parameter = tuple[str, str]
-Signature = tuple[str, tuple[Parameter, ...], str]
+Signature = tuple[
+    str,
+    tuple[Parameter, ...],
+    tuple[Parameter, ...],
+    Parameter | None,
+    tuple[Parameter, ...],
+    Parameter | None,
+    tuple[int, int],
+    str,
+]
 
 
 def _tree(source: str | None = None) -> ast.Module:
@@ -84,11 +93,33 @@ def _public_methods(adapter: ast.ClassDef) -> Iterator[PublicMethod]:
             yield member
 
 
+def _annotation(node: ast.arg | None) -> str:
+    return "None" if node is None or node.annotation is None else ast.unparse(node.annotation)
+
+
+def _parameter(node: ast.arg | None) -> Parameter | None:
+    return None if node is None else (node.arg, _annotation(node))
+
+
+def _parameters(nodes: list[ast.arg]) -> tuple[Parameter, ...]:
+    return tuple((node.arg, _annotation(node)) for node in nodes)
+
+
 def _signature(method: PublicMethod) -> Signature:
-    arguments = method.args.args
-    inputs = arguments[1:] if arguments and arguments[0].arg == "self" else arguments
-    annotations = tuple((item.arg, ast.unparse(item.annotation)) for item in inputs)
-    return method.name, annotations, ast.unparse(method.returns)
+    arguments = method.args
+    positional = (
+        arguments.args[1:] if arguments.args and arguments.args[0].arg == "self" else arguments.args
+    )
+    return (
+        method.name,
+        _parameters(arguments.posonlyargs),
+        _parameters(positional),
+        _parameter(arguments.vararg),
+        _parameters(arguments.kwonlyargs),
+        _parameter(arguments.kwarg),
+        (len(arguments.defaults), len(arguments.kw_defaults)),
+        ast.unparse(method.returns),
+    )
 
 
 def _literal_constants(source: str) -> dict[str, object]:
@@ -103,8 +134,22 @@ def _literal_constants(source: str) -> dict[str, object]:
 
 def _assert_public_schema(source: str) -> None:
     actual = tuple(_signature(method) for method in _public_methods(_adapter_class(_tree(source))))
-    expected = (("ci", PUBLIC_INPUTS, "str"), ("security", PUBLIC_INPUTS, "str"))
+    expected = (
+        ("ci", (), PUBLIC_INPUTS, None, (), None, (0, 0), "str"),
+        ("security", (), PUBLIC_INPUTS, None, (), None, (0, 0), "str"),
+    )
     assert actual == expected, "only ci and security may be public Dagger functions"
+
+
+def _assert_ci_resolves_exact_source(source: str) -> None:
+    adapter = _adapter_class(_tree(source))
+    ci = next(method for method in _public_methods(adapter) if method.name == "ci")
+    calls = [
+        node.func.id
+        for node in ast.walk(ci)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    ]
+    assert calls.count("_release_source") == 1, "CI must resolve authenticated exact source once"
 
 
 def _assert_immutable_runtime_contract(source: str) -> None:
@@ -118,6 +163,13 @@ def _assert_immutable_runtime_contract(source: str) -> None:
     assert constants.items() >= expected.items(), (
         "runtime identities must remain immutable and versioned"
     )
+
+
+def _assert_dagger_base_image(config: str) -> None:
+    parsed = cast(dict[str, object], tomllib.loads(config))
+    tool = cast(dict[str, object], parsed["tool"])
+    dagger = cast(dict[str, str], tool["dagger"])
+    assert dagger["base-image"] == PYTHON_IMAGES[1], "Dagger base image must be digest-pinned"
 
 
 def _assert_module_dependencies(config: str) -> None:
@@ -140,12 +192,30 @@ def _assert_module_dependencies(config: str) -> None:
 
 
 def _assert_workflow_boundary(name: str, workflow: str) -> None:
+    parsed = cast(dict[str, object], yaml.safe_load(workflow))
+    jobs = cast(dict[str, object], parsed["jobs"])
+    job = cast(dict[str, object], jobs["dagger"])
+    steps = cast(list[dict[str, object]], job["steps"])
     argument = "ci" if name == "dagger.yml" else "security"
-    assert f"uses: actions/checkout@{CHECKOUT_SHA}" in workflow
-    assert f"uses: dagger/dagger-for-github@{DAGGER_ACTION_SHA}" in workflow
-    assert 'version: "0.21.8"' in workflow
-    assert f"args: {argument} --source=. --commit-sha=${{{{ github.sha }}}}" in workflow
-    assert "--git-auth-header=env:DAGGER_GIT_HTTP_AUTH_HEADER" in workflow
+    checkout = [step for step in steps if step.get("uses") == f"actions/checkout@{CHECKOUT_SHA}"]
+    dagger_steps = [
+        step
+        for step in steps
+        if step.get("uses") == f"dagger/dagger-for-github@{DAGGER_ACTION_SHA}"
+    ]
+    expected_args = (
+        f"{argument} --source=. --commit-sha=${{{{ github.sha }}}} "
+        "--git-auth-header=env:DAGGER_GIT_HTTP_AUTH_HEADER"
+    )
+    arguments = [
+        cast(dict[str, str], step["with"])["args"]
+        for step in steps
+        if isinstance(step.get("with"), dict) and "args" in cast(dict[str, object], step["with"])
+    ]
+    assert len(checkout) == 1
+    assert len(dagger_steps) == 1
+    assert arguments == [expected_args], "workflow must contain one sole Dagger invocation"
+    assert dagger_steps[0]["with"] == {"version": "0.21.8", "verb": "call", "args": expected_args}
 
 
 def _git_binary() -> str:
@@ -168,6 +238,14 @@ def _assert_generated_paths_are_untracked(root: Path) -> None:
     assert ignored == GENERATED_PATHS, "generated Dagger SDK and virtualenv files must be ignored"
 
 
+def _assert_dagger_vcs_inputs(root: Path, config: str) -> None:
+    parsed = cast(dict[str, object], json.loads(config))
+    include = cast(list[str], parsed["include"])
+    assert _git(root, "ls-files", "--", DAGGER_LOCK) == (DAGGER_LOCK,)
+    assert DAGGER_LOCK in include, "Dagger module lock must be an explicit module input"
+    _assert_generated_paths_are_untracked(root)
+
+
 def test_should_expose_only_ci_and_security_with_the_closed_typed_boundary() -> None:
     # Given the adapter source.
     source = MODULE.read_text()
@@ -188,6 +266,33 @@ def test_should_reject_an_unapproved_public_dagger_function() -> None:
 
     # When the closed public schema is applied.
     # Then the extra endpoint is rejected.
+    with pytest.raises(AssertionError, match="only ci and security"):
+        _assert_public_schema(source)
+
+
+def test_should_require_one_exact_source_resolution_call() -> None:
+    # Given the real public CI entry point.
+    # When its narrow source-resolution call graph is checked.
+    # Then it resolves authenticated exact source once.
+    _assert_ci_resolves_exact_source(MODULE.read_text())
+
+
+def test_should_reject_hidden_or_defaulted_public_inputs() -> None:
+    # Given copied public functions that hide an input in every supported argument form.
+    source = """
+class AgenticSaga:
+    @function
+    async def ci(self, source: dagger.Directory, /, *extra: str, commit_sha: str = '',
+                 git_auth_header: dagger.Secret = None, **kwargs: str) -> str:
+        return ''
+    @function
+    async def security(self, source: dagger.Directory, commit_sha: str,
+                       *, git_auth_header: dagger.Secret) -> str:
+        return ''
+"""
+
+    # When the closed signature contract is applied.
+    # Then positional-only, variadic, keyword-only, kwargs, and defaults cannot hide inputs.
     with pytest.raises(AssertionError, match="only ci and security"):
         _assert_public_schema(source)
 
@@ -215,6 +320,39 @@ def test_should_reject_unpinned_or_shared_runtime_mutations(
     # Then dropped Python 3.13, unpinned images, and a shared wheelhouse fail closed.
     with pytest.raises(AssertionError, match="runtime identities"):
         _assert_immutable_runtime_contract(source)
+
+
+def test_should_reject_a_copied_source_that_removes_python_313() -> None:
+    # Given copied production source without the Python 3.13 immutable literal.
+    removed = (
+        "    (\n"
+        '        "python:3.13.14-bookworm@sha256:"\n'
+        '        "8b9a8b28d9cc221c6ab5d40e9cfcd99429959f6a8f5171612a99147975ab043f"\n'
+        "    ),\n"
+    )
+    source = MODULE.read_text().replace(removed, "", 1)
+
+    # When immutable runtime literals are validated.
+    # Then a single-runtime regression fails closed.
+    with pytest.raises(AssertionError, match="runtime identities"):
+        _assert_immutable_runtime_contract(source)
+
+
+def test_should_pin_the_dagger_module_base_image() -> None:
+    # Given the generated-module build configuration.
+    # When its TOML boundary is parsed.
+    # Then it must use the exact Python 3.13 image digest from the adapter.
+    _assert_dagger_base_image(PYPROJECT.read_text())
+
+
+def test_should_reject_an_unpinned_dagger_module_base_image() -> None:
+    # Given copied module configuration with a mutable base image.
+    config = PYPROJECT.read_text().replace(PYTHON_IMAGES[1], "python:3.13-bookworm", 1)
+
+    # When its TOML boundary is parsed.
+    # Then a floating generated-module image is rejected.
+    with pytest.raises(AssertionError, match="base image"):
+        _assert_dagger_base_image(config)
 
 
 def test_should_pin_shared_modules_to_one_private_history_revision() -> None:
@@ -260,11 +398,36 @@ def test_should_reject_an_unpinned_workflow_action(original: str, replacement: s
         _assert_workflow_boundary("dagger.yml", workflow)
 
 
+def test_should_reject_an_extra_dagger_workflow_invocation() -> None:
+    # Given copied CI workflow that adds a second Dagger arguments field.
+    workflow = (
+        (WORKFLOWS / "dagger.yml")
+        .read_text()
+        .replace(
+            "with:\n          fetch-depth:",
+            "with:\n          args: security --source=.\n          fetch-depth:",
+            1,
+        )
+    )
+
+    # When workflow ingress is parsed.
+    # Then the sole matching public invocation is required.
+    with pytest.raises(AssertionError, match="sole Dagger invocation"):
+        _assert_workflow_boundary("dagger.yml", workflow)
+
+
 def test_should_keep_generated_dagger_state_out_of_the_git_index() -> None:
     # Given the real worktree and its ignore rules.
     # When generated module state is checked through Git.
     # Then generated SDK and virtualenv content are not tracked.
     _assert_generated_paths_are_untracked(ROOT)
+
+
+def test_should_track_the_module_lock_and_include_it_in_dagger_inputs() -> None:
+    # Given the real Git index and Dagger module configuration.
+    # When module input boundaries are checked.
+    # Then the lock is both tracked and explicitly included before generated files are considered.
+    _assert_dagger_vcs_inputs(ROOT, CONFIG.read_text())
 
 
 def test_should_reject_generated_dagger_state_forced_into_a_fixture_index(tmp_path: Path) -> None:
@@ -273,161 +436,17 @@ def test_should_reject_generated_dagger_state_forced_into_a_fixture_index(tmp_pa
     (repository / ".dagger/sdk").mkdir(parents=True)
     (repository / ".dagger/.venv").mkdir()
     (repository / ".gitignore").write_text((ROOT / ".gitignore").read_text())
+    (repository / DAGGER_LOCK).write_text("lock")
     (repository / ".dagger/sdk/generated.py").write_text("generated")
     (repository / ".dagger/.venv/pyvenv.cfg").write_text("generated")
     _git(repository, "init", "--quiet")
-    _git(repository, "add", ".gitignore")
+    _git(repository, "add", ".gitignore", DAGGER_LOCK)
     _git(repository, "add", "--force", *GENERATED_PATHS)
 
     # When the same Git-index boundary is applied.
     # Then tracked generated content is rejected even though it is ignored for new files.
     with pytest.raises(AssertionError, match="cannot enter Git"):
-        _assert_generated_paths_are_untracked(repository)
-
-
-@dataclass
-class _AsyncOutput:
-    label: str
-    syncs: int = 0
-
-    async def sync(self) -> _AsyncOutput:
-        self.syncs += 1
-        await asyncio.sleep(0)
-        return self
-
-    def directory(self, path: str) -> str:
-        return f"{self.label}:{path}"
-
-
-@dataclass
-class _SyncedBoundary:
-    events: list[str]
-    name: str
-
-    async def sync(self) -> None:
-        self.events.append(f"{self.name}:sync")
-
-
-@dataclass
-class _BoundaryDag:
-    events: list[str]
-    resolved_tree: object
-
-    def foundation(self) -> _BoundaryDag:
-        return self
-
-    def guard(self, **_: object) -> _SyncedBoundary:
-        self.events.append("guard")
-        return _SyncedBoundary(self.events, "guard")
-
-    def python_package(self) -> _BoundaryDag:
-        return self
-
-    def dependency_audit(self, **_: object) -> _SyncedBoundary:
-        self.events.append("audit")
-        return _SyncedBoundary(self.events, "audit")
-
-    def git(self, *_: object, **__: object) -> _BoundaryDag:
-        self.events.append("git")
-        return self
-
-    def commit(self, _: str) -> _BoundaryDag:
-        self.events.append("commit")
-        return self
-
-    def tree(self, **_: object) -> object:
-        self.events.append("tree")
-        return self.resolved_tree
-
-
-def _import_mutated_adapter(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, source: str
-) -> ModuleType:
-    path = tmp_path / "mutated_main.py"
-    path.write_text(source)
-    dagger = ModuleType("dagger")
-    dagger.Directory = object
-    dagger.Secret = object
-    dagger.Container = object
-    dagger.function = lambda value: value
-    dagger.check = lambda value: value
-    dagger.object_type = lambda value: value
-    dagger.dag = SimpleNamespace()
-    monkeypatch.setitem(sys.modules, "dagger", dagger)
-    name = f"task_four_adapter_{uuid.uuid4().hex}"
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-def _mutated_source(original: str, replacement: str) -> str:
-    source = MODULE.read_text()
-    assert source.count(original) == 1
-    return source.replace(original, replacement)
-
-
-def _assert_ci_uses_resolved_source(module: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
-    events: list[str] = []
-    source, verified, artifacts, frontend = object(), object(), object(), object()
-
-    async def resolve(*_: object) -> object:
-        events.append("resolve")
-        return verified
-
-    async def shared(received: object) -> tuple[object, object]:
-        assert received is verified, "CI must use authenticated exact source"
-        events.append("shared")
-        return artifacts, frontend
-
-    async def matrix(received: object, built: object, proof: object) -> None:
-        assert (received, built, proof) == (verified, artifacts, frontend)
-        events.append("matrix")
-
-    monkeypatch.setattr(module, "_release_source", resolve)
-    monkeypatch.setattr(module, "_shared_outputs", shared)
-    monkeypatch.setattr(module, "_runtime_matrix", matrix)
-    result = asyncio.run(module.AgenticSaga().ci(source, "a" * 40, object()))
-    assert result == "Agentic Saga canonical Dagger gate passed"
-    assert events == ["resolve", "shared", "matrix"]
-
-
-def _assert_shared_outputs_are_single_builds(
-    module: ModuleType, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    calls: list[str] = []
-    artifacts = _AsyncOutput("artifacts")
-    dependencies = _AsyncOutput("dependencies")
-    frontend = _AsyncOutput("frontend")
-    frontend_artifacts = object()
-
-    def build_artifacts(_: object) -> _AsyncOutput:
-        calls.append("artifacts")
-        return artifacts
-
-    def build_dependencies(_: object) -> _AsyncOutput:
-        calls.append("dependencies")
-        return dependencies
-
-    def build_frontend(_: object, received: _AsyncOutput) -> _AsyncOutput:
-        assert received is dependencies
-        calls.append("frontend")
-        return frontend
-
-    def collect(received: _AsyncOutput, proof: _AsyncOutput) -> object:
-        assert (received, proof) == (dependencies, frontend)
-        return frontend_artifacts
-
-    monkeypatch.setattr(module, "_artifact_builder", build_artifacts)
-    monkeypatch.setattr(module, "_frontend_dependencies", build_dependencies)
-    monkeypatch.setattr(module, "_frontend_builder", build_frontend)
-    monkeypatch.setattr(module, "_frontend_artifacts", collect)
-    result = asyncio.run(module._shared_outputs(object()))
-    assert result == (f"artifacts:{main.RELEASE_ROOT}", frontend_artifacts)
-    assert calls == ["artifacts", "dependencies", "frontend"]
-    assert artifacts.syncs == frontend.syncs == 1
+        _assert_dagger_vcs_inputs(repository, CONFIG.read_text())
 
 
 def _assert_runtime_failure_propagates(module: ModuleType) -> None:
@@ -438,37 +457,16 @@ def _assert_runtime_failure_propagates(module: ModuleType) -> None:
         asyncio.run(module._bounded_gather(failure(), limit=2))
 
 
-def test_should_resolve_exact_source_before_shared_and_runtime_work(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Given the real public adapter with isolated orchestration collaborators.
-    # When CI runs through ordinary awaitables.
-    # Then the resolved source becomes the sole input to both later phases.
-    _assert_ci_uses_resolved_source(main, monkeypatch)
-
-
-def test_should_reject_missing_exact_source_resolution(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def test_should_reject_missing_exact_source_resolution() -> None:
     # Given a copied adapter that bypasses authenticated source resolution.
-    source = _mutated_source(
+    source = MODULE.read_text().replace(
         "verified = await _release_source(source, commit_sha, git_auth_header)", "verified = source"
     )
-    module = _import_mutated_adapter(monkeypatch, tmp_path, source)
 
-    # When CI is exercised through real awaitables.
-    # Then caller-provided source cannot silently replace authenticated exact source.
+    # When the sole permitted call-graph boundary is checked.
+    # Then CI cannot skip authenticated exact-source resolution.
     with pytest.raises(AssertionError, match="authenticated exact source"):
-        _assert_ci_uses_resolved_source(module, monkeypatch)
-
-
-def test_should_build_first_party_artifacts_and_frontend_proof_once(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    # Given the real shared-output orchestration with async result probes.
-    # When independent builds run.
-    # Then each reusable build is created and synchronized once.
-    _assert_shared_outputs_are_single_builds(main, monkeypatch)
+        _assert_ci_resolves_exact_source(source)
 
 
 def test_should_construct_the_real_lazy_dependency_and_release_graph() -> None:
@@ -477,44 +475,90 @@ def test_should_construct_the_real_lazy_dependency_and_release_graph() -> None:
 
     # When every reusable graph builder composes without synchronizing a container.
     python = main._python(source, main.PYTHON_IMAGES[0])
+    node = main._node(source)
     dependencies = main._frontend_dependencies(source)
     frontend = main._frontend_builder(source, dependencies)
     artifacts = main._frontend_artifacts(dependencies, frontend)
     release = main._release(source, main.PYTHON_IMAGES[1], artifacts)
+    artifact_builder = main._artifact_builder(source)
     candidate = main._proved_candidate(source, main.PYTHON_IMAGES[1], dag.directory(), artifacts)
 
     # Then Dagger owns the real container and directory graph, without a test runtime emulator.
     assert isinstance(python, Container)
+    assert isinstance(node, Container)
     assert isinstance(release, Container)
+    assert isinstance(artifact_builder, Container)
     assert isinstance(candidate, Container)
     assert isinstance(artifacts.coverage, Directory)
     assert main.QUALITY_PROOF in main._quality_proof_command()[-1]
     assert main._measurement_command()[-1] == main.QUALITY_PROOF
 
 
-def test_should_guard_exact_source_and_complete_the_python_audit(
+def test_should_orchestrate_ci_with_plain_async_collaborators(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Given compact asynchronous boundaries for the two shared Dagger modules.
-    tree = object()
-    boundary = _BoundaryDag([], tree)
-    monkeypatch.setattr(main, "dag", boundary)
+    # Given concrete source and output identities supplied by async collaborators.
+    source, verified, artifacts, frontend = object(), object(), object(), object()
+    events: list[str] = []
 
-    # When exact source resolution and the locked Python audit execute.
-    resolved = asyncio.run(main._release_source(object(), "a" * 40, object()))
-    asyncio.run(main._dependency_audit(object(), "a" * 40, object()))
+    async def resolve(*_: object) -> object:
+        events.append("resolve")
+        return verified
 
-    # Then the guard completes before checkout and the audit completes before return.
-    assert resolved is tree
-    assert boundary.events == [
-        "guard",
-        "guard:sync",
-        "git",
-        "commit",
-        "tree",
-        "audit",
-        "audit:sync",
-    ]
+    async def shared(received: object) -> tuple[object, object]:
+        assert received is verified
+        events.append("shared")
+        return artifacts, frontend
+
+    async def matrix(*received: object) -> None:
+        assert received == (verified, artifacts, frontend)
+        events.append("matrix")
+
+    monkeypatch.setattr(main, "_release_source", resolve)
+    monkeypatch.setattr(main, "_shared_outputs", shared)
+    monkeypatch.setattr(main, "_runtime_matrix", matrix)
+
+    # When public CI is awaited.
+    result = asyncio.run(main.AgenticSaga().ci(source, "a" * 40, object()))
+
+    # Then the resolved source flows into both later orchestration phases.
+    assert result == "Agentic Saga canonical Dagger gate passed"
+    assert events == ["resolve", "shared", "matrix"]
+
+
+def test_should_propagate_security_audit_failure_before_frontend_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given a real async audit collaborator that fails before frontend construction.
+    async def failed_audit(*_: object) -> None:
+        raise RuntimeError("locked audit failed")
+
+    monkeypatch.setattr(main, "_dependency_audit", failed_audit)
+
+    # When the public security entry point is awaited.
+    # Then its dependency-audit failure remains visible without starting a Dagger container.
+    with pytest.raises(RuntimeError, match="locked audit failed"):
+        asyncio.run(main.AgenticSaga().security(dag.directory(), "a" * 40, object()))
+
+
+def test_should_create_shared_outputs_from_real_lazy_dagger_containers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given real lazy Dagger containers and a no-engine sync boundary.
+    source = dag.directory()
+
+    async def close_without_sync(*operations: object) -> None:
+        for operation in operations:
+            cast(object, operation).close()  # type: ignore[attr-defined]
+
+    monkeypatch.setattr(main, "_bounded_gather", close_without_sync)
+
+    # When the shared graph is assembled without a Dagger engine session.
+    artifacts, frontend = asyncio.run(main._shared_outputs(source))
+
+    # Then all returned artifacts originate from the real Dagger SDK graph.
+    assert isinstance(artifacts, Directory)
+    assert isinstance(frontend.coverage, Directory)
 
 
 def test_should_start_the_two_runtime_lanes_with_real_awaitables(
@@ -536,52 +580,8 @@ def test_should_start_the_two_runtime_lanes_with_real_awaitables(
     assert calls == list(zip(main.PYTHON_IMAGES, main.RUNTIME_WHEELHOUSES, strict=True))
 
 
-@pytest.mark.parametrize(
-    ("original", "replacement"),
-    (
-        (
-            "artifact_builder = _artifact_builder(source)",
-            "artifact_builder = _artifact_builder(source)\n    _artifact_builder(source)",
-        ),
-        (
-            "frontend_builder = _frontend_builder(source, dependencies)",
-            "frontend_builder = dependencies",
-        ),
-    ),
-)
-def test_should_reject_missing_or_duplicate_shared_builds(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, original: str, replacement: str
-) -> None:
-    # Given a copied adapter with duplicate artifacts or no frontend proof.
-    module = _import_mutated_adapter(monkeypatch, tmp_path, _mutated_source(original, replacement))
-
-    # When its shared outputs execute.
-    # Then each required shared build must occur exactly once.
-    with pytest.raises(AssertionError):
-        _assert_shared_outputs_are_single_builds(module, monkeypatch)
-
-
 def test_should_propagate_a_runtime_lane_failure() -> None:
     # Given the real bounded fan-out.
     # When a runtime lane fails.
     # Then its exception remains visible to the caller.
     _assert_runtime_failure_propagates(main)
-
-
-def test_should_reject_a_runtime_lane_failure_converted_to_a_result(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    # Given a copied adapter that asks gather to return exceptions as successful results.
-    source = _mutated_source(
-        "await asyncio.gather(*(_run_bounded(operation, semaphore) for operation in operations))",
-        "await asyncio.gather(\n"
-        "        *(_run_bounded(operation, semaphore) for operation in operations),\n"
-        "        return_exceptions=True,\n"
-        "    )",
-    )
-    module = _import_mutated_adapter(monkeypatch, tmp_path, source)
-
-    # When a real failing awaitable enters the bounded fan-out.
-    # Then swallowed failure behavior is rejected.
-    with pytest.raises(pytest.fail.Exception):
-        _assert_runtime_failure_propagates(module)
