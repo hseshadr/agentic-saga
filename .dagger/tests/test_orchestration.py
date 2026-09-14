@@ -60,7 +60,7 @@ def test_bounded_gather_propagates_a_lane_failure() -> None:
     probe = FailureProbe()
 
     # When the bounded fan-out awaits that lane.
-    # Then its failure remains visible and the active sibling is cleaned up.
+    # Then its failure remains visible; event-loop teardown stops the active sibling.
     with pytest.raises(RuntimeError, match=r"python 3\.13 failed"):
         asyncio.run(main._bounded_gather(probe.sibling(), probe.fail(), limit=CONCURRENCY_LIMIT))
     assert probe.events == ["started", "stopped"]
