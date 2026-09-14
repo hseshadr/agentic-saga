@@ -448,11 +448,13 @@ git diff --check
 
 Expected: every command exits 0. The complete Python gate retains at least 90% branch coverage.
 
-Local verification complete on `2e85d5396812d36b117de6f10521b4141627175d`: root gate passed
+Local verification complete on `37b0fd95af23c27965dddca611f6956b543d4b34`: root gate passed
 with 1,705 selected tests and 93% total coverage; release-candidate passed after its generated
 release directory was refreshed for that exact HEAD; the Dagger gate passed 33 tests at 90.48%
 coverage; Dagger audit, actionlint, zizmor, and `git diff --check` passed. This is local evidence
-only and does not establish hosted cold/warm or merged-main proof.
+only and does not establish hosted cold/warm or merged-main proof. After whole-branch remediation,
+the complete gate is rerun on the final push commit; that exact evidence belongs in the pull-request
+record and task ledger so this committed plan does not require a post-verification source change.
 
 - [x] **Step 3: Commit documentation and verification record**
 
@@ -461,11 +463,17 @@ git add README.md docs/architecture.html docs/superpowers/specs/2026-09-13-lean-
 git commit -m "docs: explain lean Dagger release proof"
 ```
 
-Committed as `62dfca64f3db3cc44f090e2110737cdd68692c7b`.
+Committed as `bfc8645dcd373be1a8ad467eee75a6c6b52d38c5`.
 
-- [ ] **Step 4: Run independent whole-branch review**
+- [x] **Step 4: Run independent whole-branch review**
 
 Review the complete branch against the design, including correctness, secret handling, source identity, artifact reuse, concurrency cancellation/failure behavior, proof tamper resistance, test honesty, and documentation claims. Resolve every load-bearing finding and rerun the affected complete gate.
+
+Northstar's initial review found seven load-bearing integration gaps. Commits `1fd5ad3..33489ec`
+closed shared-wheel measurement, pnpm handoff, manifest output, stage-order coverage, explicit sibling
+cancellation, artifact-root aliasing, and documentation drift. A final runtime probe then found and
+fixed interpreter drift in commit `143766e`. Independent re-review reports grade A code with zero
+critical, important, or minor findings. Publish readiness remains gated on Steps 5-8.
 
 - [ ] **Step 5: Open the pull request and collect cold/warm proof**
 
