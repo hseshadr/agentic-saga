@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable
+from dataclasses import dataclass
 from typing import Final
 
 import dagger
@@ -33,6 +34,8 @@ SOURCE_ROOT: Final = "/src"
 WEB_ROOT: Final = "/src/web/flight-recorder"
 RELEASE_ROOT: Final = "/src/dist/release"
 FRONTEND_COVERAGE: Final = "/src/web/flight-recorder/coverage"
+WEB_NODE_MODULES: Final = "/src/web/flight-recorder/node_modules"
+BROWSER_CACHE: Final = "/root/.cache/ms-playwright"
 QUALITY_PROOF: Final = "/src/dist/release/quality-proof.json"
 PYTHON_LOCK_INPUTS: Final = ("pyproject.toml", "uv.lock")
 FRONTEND_LOCK_INPUTS: Final = (
@@ -50,6 +53,14 @@ NODE_PATHS: Final = (
     "bin/npx",
     "lib/node_modules/**",
 )
+
+
+@dataclass(frozen=True)
+class FrontendArtifacts:
+    node: dagger.Directory
+    packages: dagger.Directory
+    browsers: dagger.Directory
+    coverage: dagger.Directory
 
 
 async def _run_bounded(operation: Awaitable[object], semaphore: asyncio.Semaphore) -> None:
@@ -119,11 +130,6 @@ def _python(source: dagger.Directory, image: str) -> dagger.Container:
     return _install_project(_python_dependencies(source, image), source)
 
 
-def _with_node(base: dagger.Container) -> dagger.Container:
-    node = dag.container().from_(NODE_IMAGE).directory("/usr/local")
-    return base.with_directory("/usr/local", node, include=list(NODE_PATHS))
-
-
 def _node_packages(base: dagger.Container, source: dagger.Directory) -> dagger.Container:
     locked = _source_layer(base, source, FRONTEND_LOCK_INPUTS)
     locked = locked.with_workdir(WEB_ROOT).with_env_variable("CI", "1")
@@ -140,14 +146,19 @@ def _node(source: dagger.Directory) -> dagger.Container:
     return base.with_directory(SOURCE_ROOT, source).with_workdir(WEB_ROOT)
 
 
-def _frontend(source: dagger.Directory) -> dagger.Container:
-    base = _with_browsers(_node_packages(dag.container().from_(NODE_IMAGE), source))
-    return base.with_directory(SOURCE_ROOT, source).with_workdir(WEB_ROOT)
+def _frontend_dependencies(source: dagger.Directory) -> dagger.Container:
+    return _with_browsers(_node_packages(dag.container().from_(NODE_IMAGE), source))
 
 
-def _release(source: dagger.Directory, image: str) -> dagger.Container:
-    base = _with_node(_python_dependencies(source, image))
-    base = _with_browsers(_node_packages(base, source))
+def _mount_frontend(base: dagger.Container, artifacts: FrontendArtifacts) -> dagger.Container:
+    base = base.with_directory("/usr/local", artifacts.node, include=list(NODE_PATHS))
+    base = base.with_directory(WEB_NODE_MODULES, artifacts.packages)
+    return base.with_directory(BROWSER_CACHE, artifacts.browsers).with_workdir(WEB_ROOT)
+
+
+def _release(source: dagger.Directory, image: str, frontend: FrontendArtifacts) -> dagger.Container:
+    base = _mount_frontend(_python_dependencies(source, image), frontend)
+    base = base.with_exec(["pnpm", "exec", "playwright", "install-deps", "chromium"])
     return _install_project(base, source)
 
 
@@ -155,8 +166,20 @@ def _artifact_builder(source: dagger.Directory) -> dagger.Container:
     return _python(source, PYTHON_IMAGES[-1]).with_exec(["uv", "run", "poe", "artifacts"])
 
 
-def _frontend_builder(source: dagger.Directory) -> dagger.Container:
-    return _frontend(source).with_exec(["pnpm", "gate"])
+def _frontend_builder(source: dagger.Directory, dependencies: dagger.Container) -> dagger.Container:
+    complete = dependencies.with_directory(SOURCE_ROOT, source).with_workdir(WEB_ROOT)
+    return complete.with_exec(["pnpm", "gate"])
+
+
+def _frontend_artifacts(
+    dependencies: dagger.Container, proof: dagger.Container
+) -> FrontendArtifacts:
+    return FrontendArtifacts(
+        dependencies.directory("/usr/local"),
+        dependencies.directory(WEB_NODE_MODULES),
+        dependencies.directory(BROWSER_CACHE),
+        proof.directory(FRONTEND_COVERAGE),
+    )
 
 
 def _quality_proof_command() -> list[str]:
@@ -182,12 +205,12 @@ def _proved_candidate(
     source: dagger.Directory,
     image: str,
     artifacts: dagger.Directory,
-    frontend_proof: dagger.Directory,
+    frontend: FrontendArtifacts,
 ) -> dagger.Container:
-    gated = _release(source, image).with_exec(["uv", "run", "poe", "gate"])
+    gated = _release(source, image, frontend).with_exec(["uv", "run", "poe", "gate"])
     candidate = gated.with_directory(RELEASE_ROOT, artifacts)
     candidate = candidate.with_exec(["uv", "run", "poe", "release-candidate"])
-    proved = candidate.with_directory(FRONTEND_COVERAGE, frontend_proof)
+    proved = candidate.with_directory(FRONTEND_COVERAGE, frontend.coverage)
     return proved.with_exec(_quality_proof_command())
 
 
@@ -196,27 +219,29 @@ async def _runtime_lane(
     image: str,
     wheelhouse: str,
     artifacts: dagger.Directory,
-    frontend_proof: dagger.Directory,
+    frontend: FrontendArtifacts,
 ) -> None:
-    proved = _proved_candidate(source, image, artifacts, frontend_proof)
+    proved = _proved_candidate(source, image, artifacts, frontend)
     measured = proved.with_env_variable("AGENTIC_SAGA_RELEASE_WHEELHOUSE", wheelhouse)
     await measured.with_exec(_measurement_command()).sync()
 
 
-async def _shared_outputs(source: dagger.Directory) -> tuple[dagger.Directory, dagger.Directory]:
+async def _shared_outputs(
+    source: dagger.Directory,
+) -> tuple[dagger.Directory, FrontendArtifacts]:
     artifact_builder = _artifact_builder(source)
-    frontend_builder = _frontend_builder(source)
+    dependencies = _frontend_dependencies(source)
+    frontend_builder = _frontend_builder(source, dependencies)
     await _bounded_gather(artifact_builder.sync(), frontend_builder.sync())
     artifacts = artifact_builder.directory(RELEASE_ROOT)
-    frontend_proof = frontend_builder.directory(FRONTEND_COVERAGE)
-    return artifacts, frontend_proof
+    return artifacts, _frontend_artifacts(dependencies, frontend_builder)
 
 
 async def _runtime_matrix(
-    source: dagger.Directory, artifacts: dagger.Directory, frontend_proof: dagger.Directory
+    source: dagger.Directory, artifacts: dagger.Directory, frontend: FrontendArtifacts
 ) -> None:
     lanes = zip(PYTHON_IMAGES, RUNTIME_WHEELHOUSES, strict=True)
-    operations = (_runtime_lane(source, *lane, artifacts, frontend_proof) for lane in lanes)
+    operations = (_runtime_lane(source, *lane, artifacts, frontend) for lane in lanes)
     await _bounded_gather(*operations, limit=2)
 
 
@@ -234,8 +259,8 @@ class AgenticSaga:
     ) -> str:
         """Run guarded dual-runtime, frontend, and measured release gates."""
         verified = await _release_source(source, commit_sha, git_auth_header)
-        artifacts, frontend_proof = await _shared_outputs(verified)
-        await _runtime_matrix(verified, artifacts, frontend_proof)
+        artifacts, frontend = await _shared_outputs(verified)
+        await _runtime_matrix(verified, artifacts, frontend)
         return "Agentic Saga canonical Dagger gate passed"
 
     @function

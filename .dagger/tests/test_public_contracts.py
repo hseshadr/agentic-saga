@@ -37,6 +37,11 @@ NODE_IMAGE = (
     "9b741b28148b0195d62fa456ed84dd6c953c1f17a3761f3e6e6797a754d9edff"
 )
 SOURCE_ROOT = "/src"
+WEB_NODE_MODULES = "/src/web/flight-recorder/node_modules"
+FRONTEND_COVERAGE = "/src/web/flight-recorder/coverage"
+BROWSER_CACHE = "/root/.cache/ms-playwright"
+RELEASE_ROOT = "/src/dist/release"
+QUALITY_PROOF = "/src/dist/release/quality-proof.json"
 PYTHON_LOCK_INPUTS = ("pyproject.toml", "uv.lock")
 FRONTEND_LOCK_INPUTS = (
     "web/flight-recorder/package.json",
@@ -48,6 +53,8 @@ RUNTIME_WHEELHOUSES = (
 )
 RUNTIME_COUNT = 2
 BOOTSTRAP_COUNT = 3
+FRONTEND_BOOTSTRAP_COUNT = 1
+FRONTEND_ARTIFACT_COUNT = 3
 PublicMethod = ast.AsyncFunctionDef | ast.FunctionDef
 Parameter = tuple[str, str]
 Signature = tuple[
@@ -130,8 +137,10 @@ def _adapter_tree() -> ast.Module:
 
 
 def _adapter_class(tree: ast.Module) -> ast.ClassDef:
-    classes = [node for node in tree.body if isinstance(node, ast.ClassDef)]
-    assert [node.name for node in classes] == ["AgenticSaga"]
+    classes = [
+        node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "AgenticSaga"
+    ]
+    assert len(classes) == 1
     return classes[0]
 
 
@@ -602,6 +611,20 @@ UV_SYNC = ("uv", "sync", "--frozen", "--all-groups", "--all-extras")
 COREPACK = ("corepack", "enable")
 PNPM_INSTALL = ("pnpm", "install", "--frozen-lockfile")
 PLAYWRIGHT = ("pnpm", "exec", "playwright", "install", "--with-deps", "chromium")
+PLAYWRIGHT_DEPS = ("pnpm", "exec", "playwright", "install-deps", "chromium")
+QUALITY_PROOF_STATEMENT = (
+    "from pathlib import Path; from scripts.quality_proof import write_quality_proof; "
+    f"write_quality_proof(Path('{QUALITY_PROOF}'))"
+)
+MEASUREMENT_EVENT = (
+    "exec",
+    "uv",
+    "run",
+    "python",
+    "scripts/measure_release.py",
+    "--quality-proof",
+    QUALITY_PROOF,
+)
 UV_ORIGIN = _RuntimeView(UV_IMAGE, (), (), None, (), (), (), ("from",))
 NODE_ORIGIN = _RuntimeView(NODE_IMAGE, (), (), None, (), (), (), ("from",))
 UV_FILE = (("/usr/local/bin/uv", _ArtifactView("/uv", UV_ORIGIN)),)
@@ -746,10 +769,15 @@ UV_OVERWRITE = (
     'uv = dag.container().from_(UV_IMAGE).with_file("/uv", '
     'dag.container().from_(image).file("/etc/passwd")).file("/uv")'
 )
-NODE_EXTRACTION = 'node = dag.container().from_(NODE_IMAGE).directory("/usr/local")'
-NODE_OVERLAY = (
-    'node = dag.container().from_(NODE_IMAGE).with_directory("/usr/local", '
-    'base.directory(SOURCE_ROOT)).directory("/usr/local")'
+NODE_ARTIFACT = "dependencies.directory(BROWSER_CACHE),"
+CONTAMINATED_NODE_ARTIFACT = "proof.directory(BROWSER_CACHE),"
+ORDERED_GATE = (
+    'gated = _release(source, image, frontend).with_exec(["uv", "run", "poe", "gate"])\n'
+    "    candidate = gated.with_directory(RELEASE_ROOT, artifacts)"
+)
+REORDERED_GATE = (
+    "gated = _release(source, image, frontend).with_directory(RELEASE_ROOT, artifacts)\n"
+    '    candidate = gated.with_exec(["uv", "run", "poe", "gate"])'
 )
 
 
@@ -763,6 +791,42 @@ def _assert_runtime_lineage(
         product is synchronized
         for product, synchronized in zip(trace.product_snapshots, trace.sync_snapshots, strict=True)
     )
+
+
+def _snapshot_events(snapshot: _Snapshot) -> tuple[tuple[str, ...], ...]:
+    commands = iter(snapshot.commands)
+    directories = iter(snapshot.directories)
+    environment = iter(snapshot.environment)
+    events: list[tuple[str, ...]] = []
+    for operation in snapshot.operations:
+        if operation == "with_exec":
+            events.append(("exec", *next(commands)))
+        elif operation == "with_directory":
+            events.append(("mount", next(directories).path))
+        elif operation == "with_env_variable":
+            events.append(("env", *next(environment)))
+    return tuple(events)
+
+
+def _artifact_origin(view: _RuntimeView, path: str) -> _RuntimeView:
+    matches = [source for target, source, _ in view.directories if target == path]
+    assert len(matches) == 1
+    artifact = matches[0]
+    assert isinstance(artifact, _ArtifactView)
+    return artifact.origin
+
+
+def _frontend_origins(trace: _Trace) -> tuple[_RuntimeView, ...]:
+    paths = ("/usr/local", WEB_NODE_MODULES, BROWSER_CACHE)
+    return tuple(_artifact_origin(view, path) for view in _measured_views(trace) for path in paths)
+
+
+def _assert_node_only_origin(origin: _RuntimeView) -> None:
+    expected_mount = ((SOURCE_ROOT, "source", FRONTEND_LOCK_INPUTS),)
+    assert origin.image == NODE_IMAGE
+    assert origin.directories == expected_mount
+    assert PNPM_INSTALL in origin.commands
+    assert PLAYWRIGHT in origin.commands
 
 
 def test_should_restore_each_supported_runtime_release_matrix(
@@ -790,11 +854,106 @@ def test_should_install_only_chromium_for_every_browser_gate(
     # When the complete public CI lane builds its browser runtimes.
     asyncio.run(module.AgenticSaga().ci(object(), "a" * 40, object()))
 
-    # Then each install targets Chromium exactly, preventing unused browser downloads.
+    # Then Chromium downloads once and each runtime installs only its OS dependencies.
     installs = tuple(
-        command for command in _runtime_commands(trace) if command[:4] == PLAYWRIGHT[:4]
+        command for command in _runtime_commands(trace) if command[:3] == PLAYWRIGHT[:3]
     )
-    assert installs == (PLAYWRIGHT, PLAYWRIGHT, PLAYWRIGHT)
+    assert installs.count(PLAYWRIGHT) == 1
+    assert installs.count(PLAYWRIGHT_DEPS) == RUNTIME_COUNT
+
+
+def test_should_mount_only_node_origin_frontend_artifacts_into_runtime_lanes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given the complete dual-runtime graph.
+    module, trace = _adapter_module(monkeypatch)
+    asyncio.run(module.AgenticSaga().ci(object(), "a" * 40, object()))
+
+    # When immutable frontend artifact ancestry is inspected.
+    origins = _frontend_origins(trace)
+
+    # Then every artifact originates from Node plus frontend locks, never Python or full source.
+    assert len(origins) == RUNTIME_COUNT * FRONTEND_ARTIFACT_COUNT
+    for origin in origins:
+        _assert_node_only_origin(origin)
+
+
+def _measured_views(trace: _Trace) -> tuple[_RuntimeView, ...]:
+    assert trace.git_tree is not None
+    snapshots = _measured_snapshots(trace)
+    return tuple(_runtime_view(snapshot, trace.git_tree) for snapshot in snapshots)
+
+
+def _measured_snapshots(trace: _Trace) -> tuple[_Snapshot, ...]:
+    return tuple(
+        snapshot
+        for snapshot in trace.product_snapshots
+        if "scripts/measure_release.py" in snapshot.commands[-1]
+    )
+
+
+def _lane_handoff_events(wheelhouse: str) -> tuple[tuple[str, ...], ...]:
+    return (
+        ("exec", "uv", "run", "poe", "gate"),
+        ("mount", RELEASE_ROOT),
+        ("exec", "uv", "run", "poe", "release-candidate"),
+        ("mount", FRONTEND_COVERAGE),
+        ("exec", "uv", "run", "python", "-c", QUALITY_PROOF_STATEMENT),
+        ("env", "AGENTIC_SAGA_RELEASE_WHEELHOUSE", wheelhouse),
+        MEASUREMENT_EVENT,
+    )
+
+
+def _selected_lane_events(
+    trace: _Trace, expected: tuple[tuple[tuple[str, ...], ...], ...]
+) -> tuple[tuple[tuple[str, ...], ...], ...]:
+    snapshots = _measured_snapshots(trace)
+    actual = tuple(_snapshot_events(snapshot) for snapshot in snapshots)
+    pairs = zip(actual, expected, strict=True)
+    return tuple(tuple(event for event in events if event in wanted) for events, wanted in pairs)
+
+
+def test_should_order_every_runtime_artifact_and_proof_handoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Given both completed measured runtime snapshots.
+    module, trace = _adapter_module(monkeypatch)
+    asyncio.run(module.AgenticSaga().ci(object(), "a" * 40, object()))
+
+    # When each lane's operations are decoded in execution order.
+    expected = tuple(_lane_handoff_events(path) for path in RUNTIME_WHEELHOUSES)
+    actual = _selected_lane_events(trace, expected)
+
+    # Then both lanes preserve quality -> artifacts -> wheelhouse -> evidence -> proof -> measure.
+    assert actual == expected
+
+
+def test_should_reject_frontend_artifacts_extracted_after_source_overlay(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Given one browser artifact extracted from the source-overlaid proof container.
+    module, trace = _mutated_adapter(
+        monkeypatch, tmp_path, NODE_ARTIFACT, CONTAMINATED_NODE_ARTIFACT
+    )
+    asyncio.run(module.AgenticSaga().ci(object(), "a" * 40, object()))
+
+    # When its runtime ancestry is checked, the contamination must be observable.
+    with pytest.raises(AssertionError):
+        for origin in _frontend_origins(trace):
+            _assert_node_only_origin(origin)
+
+
+def test_should_reject_artifact_mount_before_python_quality(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Given a runtime lane that mounts artifacts before completing Python quality.
+    module, trace = _mutated_adapter(monkeypatch, tmp_path, ORDERED_GATE, REORDERED_GATE)
+    asyncio.run(module.AgenticSaga().ci(object(), "a" * 40, object()))
+    expected = tuple(_lane_handoff_events(path) for path in RUNTIME_WHEELHOUSES)
+
+    # When ordered lane events are compared, the reordering must be rejected.
+    with pytest.raises(AssertionError):
+        assert _selected_lane_events(trace, expected) == expected
 
 
 def test_should_resolve_offline_measurement_from_verified_wheelhouse(
@@ -1019,7 +1178,7 @@ def test_should_bootstrap_pinned_runtimes_before_each_product_command(
     assert set(trace.images) == {UV_IMAGE, PYTHON_312_IMAGE, PYTHON_IMAGE, NODE_IMAGE}
     commands = _runtime_commands(trace)
     assert sum("--no-install-project" in command for command in commands) == BOOTSTRAP_COUNT
-    assert commands.count(PNPM_INSTALL) == BOOTSTRAP_COUNT
+    assert commands.count(PNPM_INSTALL) == FRONTEND_BOOTSTRAP_COUNT
 
 
 def test_should_capture_complete_immutable_product_snapshot_lineage(
@@ -1061,7 +1220,7 @@ def test_should_capture_complete_security_boundary_and_lineage(
 
 @pytest.mark.parametrize(
     ("original", "replacement"),
-    ((UV_EXTRACTION, UV_OVERWRITE), (NODE_EXTRACTION, NODE_OVERLAY)),
+    ((UV_EXTRACTION, UV_OVERWRITE),),
 )
 def test_should_reject_tainted_runtime_artifact_ancestry(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, original: str, replacement: str
