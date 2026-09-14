@@ -708,16 +708,57 @@ def _wheel_cli(workspace: Path) -> Path:
     configured = os.environ.get("AGENTIC_SAGA_CLI")
     if configured:
         return Path(configured).resolve(strict=True)
+    shared = _shared_release_inputs()
+    wheel, requirements = shared or _built_release_inputs(workspace)
+    venv = workspace / "venv"
+    _checked(("uv", "venv", "--offline", "--no-python-downloads", str(venv)))
+    _install_wheel(venv, requirements, wheel, _release_wheelhouse())
+    return venv / "bin" / "agentic-saga"
+
+
+def _built_release_inputs(workspace: Path) -> tuple[Path, Path]:
     artifacts = workspace / "wheel"
     artifacts.mkdir()
     _checked(_wheel_build_command(artifacts))
     wheel = next(artifacts.glob("*.whl"))
     requirements = artifacts / "runtime-requirements.txt"
     _checked(_requirements_command(requirements))
-    venv = workspace / "venv"
-    _checked(("uv", "venv", "--offline", "--no-python-downloads", str(venv)))
-    _install_wheel(venv, requirements, wheel, _release_wheelhouse())
-    return venv / "bin" / "agentic-saga"
+    return wheel, requirements
+
+
+def _shared_release_inputs() -> tuple[Path, Path] | None:
+    configured = os.environ.get("AGENTIC_SAGA_RELEASE_ARTIFACTS")
+    if configured is None:
+        return None
+    root = _shared_release_root(configured)
+    return _shared_release_wheel(root), _shared_runtime_requirements(root)
+
+
+def _shared_release_root(configured: str) -> Path:
+    requested = Path(configured)
+    if not configured or requested.is_symlink():
+        raise ValueError("release artifacts must be a real directory")
+    try:
+        root = requested.resolve(strict=True)
+    except OSError as error:
+        raise ValueError("release artifacts must be a real directory") from error
+    if not root.is_dir():
+        raise ValueError("release artifacts must be a real directory")
+    return root
+
+
+def _shared_release_wheel(root: Path) -> Path:
+    wheels = tuple(root.glob("*.whl"))
+    if len(wheels) != 1 or wheels[0].is_symlink() or not wheels[0].is_file():
+        raise ValueError("release artifacts must contain exactly one wheel")
+    return wheels[0].resolve(strict=True)
+
+
+def _shared_runtime_requirements(root: Path) -> Path:
+    requirements = root / "runtime-requirements.txt"
+    if requirements.is_symlink() or not requirements.is_file():
+        raise ValueError("release artifacts must contain runtime requirements")
+    return requirements.resolve(strict=True)
 
 
 def _wheel_build_command(artifacts: Path) -> tuple[str, ...]:

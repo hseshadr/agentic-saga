@@ -1056,8 +1056,106 @@ def test_wheel_cli_uses_explicit_installed_executable(
     cli = tmp_path / "agentic-saga"
     cli.write_text("executable")
     monkeypatch.setenv("AGENTIC_SAGA_CLI", str(cli))
+    monkeypatch.setenv("AGENTIC_SAGA_RELEASE_ARTIFACTS", str(tmp_path / "missing"))
 
     assert runner._wheel_cli(tmp_path / "workspace") == cli.resolve()
+
+
+def _shared_release_artifacts(root: Path, wheel_count: int = 1) -> Path:
+    root.mkdir()
+    (root / "runtime-requirements.txt").write_text("locked")
+    for index in range(wheel_count):
+        (root / f"agentic_saga-{index}-py3-none-any.whl").touch()
+    return root
+
+
+def _configure_shared_artifacts(
+    monkeypatch: pytest.MonkeyPatch, artifacts: Path, wheelhouse: Path
+) -> None:
+    monkeypatch.delenv("AGENTIC_SAGA_CLI", raising=False)
+    monkeypatch.setenv("AGENTIC_SAGA_RELEASE_ARTIFACTS", str(artifacts))
+    monkeypatch.setenv("AGENTIC_SAGA_RELEASE_WHEELHOUSE", str(wheelhouse))
+
+
+def _command_recorder(commands: list[tuple[str, ...]]) -> Callable[[tuple[str, ...], Path], str]:
+    def checked(command: tuple[str, ...], cwd: Path = runner.ROOT) -> str:
+        del cwd
+        commands.append(command)
+        return ""
+
+    return checked
+
+
+def test_wheel_cli_installs_the_shared_release_wheel_without_building(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifacts = _shared_release_artifacts(tmp_path / "release")
+    wheelhouse = tmp_path / "wheelhouse"
+    wheelhouse.mkdir()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    commands: list[tuple[str, ...]] = []
+    _configure_shared_artifacts(monkeypatch, artifacts, wheelhouse)
+    monkeypatch.setattr(runner, "_checked", _command_recorder(commands))
+
+    runner._wheel_cli(workspace)
+
+    assert not any(command[:2] in {("uv", "build"), ("uv", "export")} for command in commands)
+    assert any(str(next(artifacts.glob("*.whl")).resolve()) in command for command in commands)
+
+
+@pytest.mark.parametrize("wheel_count", [0, 2])
+def test_wheel_cli_rejects_nonexact_shared_wheel_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wheel_count: int
+) -> None:
+    artifacts = _shared_release_artifacts(tmp_path / "release", wheel_count)
+    monkeypatch.setenv("AGENTIC_SAGA_RELEASE_ARTIFACTS", str(artifacts))
+
+    with pytest.raises(ValueError, match="exactly one wheel"):
+        runner._wheel_cli(tmp_path / "workspace")
+
+
+def test_wheel_cli_rejects_shared_artifacts_without_requirements(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifacts = _shared_release_artifacts(tmp_path / "release")
+    (artifacts / "runtime-requirements.txt").unlink()
+    monkeypatch.setenv("AGENTIC_SAGA_RELEASE_ARTIFACTS", str(artifacts))
+
+    with pytest.raises(ValueError, match="runtime requirements"):
+        runner._wheel_cli(tmp_path / "workspace")
+
+
+def test_wheel_cli_rejects_missing_shared_artifact_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENTIC_SAGA_RELEASE_ARTIFACTS", str(tmp_path / "missing"))
+
+    with pytest.raises(ValueError, match="release artifacts"):
+        runner._wheel_cli(tmp_path / "workspace")
+
+
+def test_wheel_cli_rejects_nondirectory_shared_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifact_file = tmp_path / "release"
+    artifact_file.touch()
+    monkeypatch.setenv("AGENTIC_SAGA_RELEASE_ARTIFACTS", str(artifact_file))
+
+    with pytest.raises(ValueError, match="release artifacts"):
+        runner._wheel_cli(tmp_path / "workspace")
+
+
+def test_wheel_cli_rejects_symlinked_shared_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = _shared_release_artifacts(tmp_path / "target")
+    link = tmp_path / "release"
+    link.symlink_to(target, target_is_directory=True)
+    monkeypatch.setenv("AGENTIC_SAGA_RELEASE_ARTIFACTS", str(link))
+
+    with pytest.raises(ValueError, match="release artifacts"):
+        runner._wheel_cli(tmp_path / "workspace")
 
 
 def test_wheel_cli_installs_only_from_explicit_release_wheelhouse(
