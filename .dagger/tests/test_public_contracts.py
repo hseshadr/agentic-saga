@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import importlib.util
 import json
 import shutil
 import subprocess
+import sys
 import tomllib
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
@@ -457,6 +460,51 @@ def _assert_runtime_failure_propagates(module: ModuleType) -> None:
         asyncio.run(module._bounded_gather(failure(), limit=2))
 
 
+def _copied_module(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, source: str) -> ModuleType:
+    path = tmp_path / "mutated_main.py"
+    path.write_text(source)
+    name = f"task_four_mutation_{uuid.uuid4().hex}"
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, name, module)
+    spec.loader.exec_module(module)
+    return module
+
+
+async def _close_real_awaitables(*operations: object) -> None:
+    for operation in operations:
+        cast(object, operation).close()  # type: ignore[attr-defined]
+
+
+def _assert_shared_build_contract(module: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    artifact_builds = 0
+    frontend_proofs = 0
+
+    def artifact_builder(_: object) -> Container:
+        nonlocal artifact_builds
+        artifact_builds += 1
+        return dag.container()
+
+    def dependencies(_: object) -> Container:
+        return dag.container()
+
+    def frontend_builder(_: object, __: object) -> Container:
+        nonlocal frontend_proofs
+        frontend_proofs += 1
+        return dag.container()
+
+    monkeypatch.setattr(module, "_artifact_builder", artifact_builder)
+    monkeypatch.setattr(module, "_frontend_dependencies", dependencies)
+    monkeypatch.setattr(module, "_frontend_builder", frontend_builder)
+    monkeypatch.setattr(module, "_bounded_gather", _close_real_awaitables)
+    artifacts, frontend = asyncio.run(module._shared_outputs(dag.directory()))
+    assert isinstance(artifacts, Directory)
+    assert isinstance(frontend.coverage, Directory)
+    assert artifact_builds == 1, "shared output contract permits one artifact builder"
+    assert frontend_proofs == 1, "shared output contract requires one frontend proof"
+
+
 def test_should_reject_missing_exact_source_resolution() -> None:
     # Given a copied adapter that bypasses authenticated source resolution.
     source = MODULE.read_text().replace(
@@ -585,3 +633,59 @@ def test_should_propagate_a_runtime_lane_failure() -> None:
     # When a runtime lane fails.
     # Then its exception remains visible to the caller.
     _assert_runtime_failure_propagates(main)
+
+
+def test_should_reject_an_unused_duplicate_artifact_builder_call(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Given copied production module code with an unused second artifact builder.
+    source = MODULE.read_text().replace(
+        "artifact_builder = _artifact_builder(source)",
+        "artifact_builder = _artifact_builder(source)\n    _artifact_builder(source)",
+        1,
+    )
+    module = _copied_module(monkeypatch, tmp_path, source)
+
+    # When its shared output behavior is executed.
+    # Then the duplicate artifact construction is observed and rejected.
+    with pytest.raises(AssertionError, match="artifact builder"):
+        _assert_shared_build_contract(module, monkeypatch)
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    ("frontend_builder = dependencies", "frontend_builder = _frontend_dependencies(source)"),
+)
+def test_should_reject_omitted_or_replaced_frontend_proof_builder(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, replacement: str
+) -> None:
+    # Given copied production module code that omits or replaces the frontend proof builder.
+    source = MODULE.read_text().replace(
+        "frontend_builder = _frontend_builder(source, dependencies)", replacement, 1
+    )
+    module = _copied_module(monkeypatch, tmp_path, source)
+
+    # When its shared output behavior is executed.
+    # Then exactly one frontend proof builder invocation is required.
+    with pytest.raises(AssertionError, match="frontend proof"):
+        _assert_shared_build_contract(module, monkeypatch)
+
+
+def test_should_reject_a_copied_bounded_gather_that_returns_exceptions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Given copied production module code that turns lane failures into results.
+    source = MODULE.read_text().replace(
+        "await asyncio.gather(*(_run_bounded(operation, semaphore) for operation in operations))",
+        "await asyncio.gather(\n"
+        "        *(_run_bounded(operation, semaphore) for operation in operations),\n"
+        "        return_exceptions=True,\n"
+        "    )",
+        1,
+    )
+    module = _copied_module(monkeypatch, tmp_path, source)
+
+    # When a real awaitable fails in the copied fan-out.
+    # Then converting that exception to a gather result is rejected.
+    with pytest.raises(pytest.fail.Exception):
+        _assert_runtime_failure_propagates(module)
