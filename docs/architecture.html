@@ -111,13 +111,26 @@
       .limits h3 { margin: 0; font: 700 1rem/1.2 var(--sans); }
       .limits ul { margin: .75rem 0 0; padding-left: 1.2rem; font-size: .9rem; }
       .operating-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+      .ci-proof-board { border: 1px solid var(--ink); background: var(--panel); }
+      .ci-proof-board > header { display: flex; justify-content: space-between; gap: 1rem; border-bottom: 1px solid var(--line); padding: .8rem 1rem; font: 700 .73rem/1.3 var(--mono); }
+      .ci-proof-board > header span:last-child { color: var(--quiet); text-align: right; }
+      .ci-flow { padding: clamp(1rem, 3vw, 2rem); }
+      .ci-node { border: 1px solid var(--line); padding: 1rem; background: color-mix(in srgb, var(--paper) 32%, var(--panel)); }
+      .ci-node h3 { margin: 0; color: var(--blue); font: 700 .85rem/1.25 var(--mono); }
+      .ci-node p { margin: .5rem 0 0; color: var(--quiet); font-size: .88rem; }
+      .ci-source, .ci-result { max-width: 38rem; margin-inline: auto; border-color: var(--blue); }
+      .ci-result { border-color: var(--teal); }
+      .ci-arrow { margin: .55rem 0; color: var(--blue); text-align: center; font: 700 1.35rem/1 var(--serif); }
+      .ci-shared, .ci-runtimes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
+      .ci-runtimes .ci-node { border-color: var(--teal); }
+      .ci-bridge { margin: 1rem 0; border-block: 1px solid var(--line); padding: .7rem 1rem; color: var(--quiet); text-align: center; font: .82rem/1.4 var(--mono); }
       footer { padding: 1.4rem 0 2.7rem; color: var(--quiet); font-size: .82rem; }
       @media (max-width: 760px) {
         .shell { width: min(100% - 1.25rem, 1160px); }
         .topline .shell, .hero-grid, section > header, .detail-grid, .proof-grid, .source-grid { display: block; }
         .topline span:last-child { display: block; margin-top: .25rem; text-align: left; }
         .hero-note { margin-top: 2.4rem; } section > header { margin-bottom: 1.35rem; } .section-id { margin-bottom: .55rem; }
-        .manifest-grid, .boundary, .quota-grid, .operating-grid { grid-template-columns: 1fr; }
+        .manifest-grid, .boundary, .quota-grid, .operating-grid, .ci-shared, .ci-runtimes { grid-template-columns: 1fr; }
         .boundary > div, .quota-grid > div { border-right: 0; border-bottom: 1px solid var(--line); } .boundary > div:last-child, .quota-grid > div:last-child { border-bottom: 0; }
         .detail-grid > * + *, .proof-card + .proof-card { margin-top: 1rem; } .source-row { grid-template-columns: 1fr; gap: .25rem; }
       }
@@ -234,6 +247,28 @@ escalation:
           <article class="limits"><h3>Local Flight Recorder</h3><ul><li>Materialization requires POSIX descriptor support and a fresh, empty destination; packaged assets are limited to at most 200 static files and 32 MiB total.</li><li>The read-only server binds <code>127.0.0.1:&lt;actual port&gt;</code> and requires that literal authority in its exact <code>Host</code> header.</li><li><code>Origin</code> and <code>Sec-Fetch-Site</code> are independently optional. When present, Origin must be the exact loopback origin and fetch site must be <code>same-origin</code> or <code>none</code>.</li><li>It serves GET and HEAD only, with a 240-character request path and an 8 MiB served-file limit.</li><li>A 1-second header deadline, 40-header and 16 KiB header bounds, 8 concurrent handlers, and an 8-request listen backlog limit local resource use.</li></ul></article>
         </div>
         <div class="limits" style="margin-top: 1rem"><ul><li>No universal exactly-once side effects or atomic cross-service commit.</li><li>No high availability, multi-host writer support, or serializable cross-Saga isolation from the SQLite reference backend.</li><li>No automatic resolution when safe reconciliation cannot establish an opaque provider outcome; <code>HUMAN_REQUIRED</code> is durable and quiescent.</li><li>No containment for hostile native or Python plugins inside the core library.</li></ul></div>
+      </section>
+      <section aria-labelledby="ci-proof-title">
+        <header><div class="section-id">06 / release proof</div><div><h2 id="ci-proof-title">One source. One build. One front end. Two runtimes.</h2><p class="section-intro">The protected Dagger check makes the same complete release claim for a pull request and, separately, for the exact commit merged to <code>main</code>. Shared work is produced once; Python 3.12 and 3.13 independently validate the immutable handoff.</p></div></header>
+        <div class="ci-proof-board">
+          <header><span>LEAN DAGGER RELEASE GRAPH</span><span>complete proof on PR + exact merged main</span></header>
+          <div class="ci-flow">
+            <article class="ci-node ci-source"><h3>01 / exact source — once</h3><p>Authenticate and bind the full source commit before any release work begins.</p></article>
+            <div class="ci-arrow" aria-hidden="true">↓</div>
+            <div class="ci-shared">
+              <article class="ci-node"><h3>02a / release artifacts — once</h3><p>Build one wheel and sdist; publish immutable manifests and runtime requirements.</p></article>
+              <article class="ci-node"><h3>02b / frontend proof — once</h3><p>Install from lock inputs, then run frontend quality and packaged-browser evidence once.</p></article>
+            </div>
+            <p class="ci-bridge">The exact artifact bytes and frontend coverage evidence become shared, identity-bound inputs.</p>
+            <div class="ci-runtimes">
+              <article class="ci-node"><h3>03a / Python 3.12</h3><p>Quality, a 3.12 wheelhouse, offline artifact install, and release measurement.</p></article>
+              <article class="ci-node"><h3>03b / Python 3.13</h3><p>Quality, a 3.13 wheelhouse, offline artifact install, and release measurement.</p></article>
+            </div>
+            <div class="ci-arrow" aria-hidden="true">↓</div>
+            <article class="ci-node ci-result"><h3>04 / Dagger — one protected result</h3><p>Both runtime lanes must complete. The separate Dagger security audit remains an additional required workflow.</p></article>
+          </div>
+        </div>
+        <aside class="limits" style="margin-top: 1rem"><h3>Performance status: targets, not evidence</h3><p>The cold target is at most 20 minutes and the warm target is at most 12 minutes. Neither is a speed claim until hosted runs of the same pull-request SHA establish cold and warm measurements, followed by a separate complete run for the exact merged <code>main</code> SHA.</p></aside>
       </section>
     </main>
     <footer><div class="shell">Agentic Saga architecture signal board · source-grounded reference · use the linked contracts for operational requirements.</div></footer>

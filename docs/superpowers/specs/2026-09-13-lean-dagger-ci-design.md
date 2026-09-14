@@ -181,6 +181,15 @@ hosted warm run on an identical commit.
   do not weaken tests to hit the target.
 - The old 44.5-minute exact-main run remains the baseline.
 
+## Hosted-evidence status
+
+The 20-minute cold and 12-minute warm figures above are acceptance targets, not measured
+performance claims. Local graph and contract checks establish only local behavior. Hosted evidence
+must record the pull-request run URLs, the full immutable commit SHA, wall and stage timings,
+Python versions, artifact digests, test counts, and coverage. A separate full Dagger run and
+security audit on the exact merged `main` SHA are required; pull-request evidence never substitutes
+for merged-main evidence.
+
 ## Rollout and recovery
 
 Land the work through a non-Dependabot pull request. Require the complete PR proof, independent code

@@ -424,11 +424,15 @@ git commit -m "test: replace fake Dagger runtime with contracts"
 - Consumes: the verified graph, artifact digests, local test evidence, and hosted run timings.
 - Produces: honest OSS documentation, reviewed pull request, exact merged-main evidence, and clean branch/worktree state.
 
-- [ ] **Step 1: Update human documentation**
+- [x] **Step 1: Update human documentation**
 
 Add a TL;DR architecture section showing source-once, build-once, frontend-once, and dual-runtime validation. State that both pull requests and merged `main` receive complete proof. Explain that cold/warm targets are targets until hosted evidence exists; do not call the pipeline faster based only on local expectations.
 
-- [ ] **Step 2: Run the complete local quality gate**
+Documentation status: the public README and architecture signal board now show the graph and
+separate PR/exact-main proof boundary. The design explicitly labels the cold/warm figures as
+unmeasured targets pending hosted evidence; no documentation makes a local-speed claim.
+
+- [x] **Step 2: Run the complete local quality gate**
 
 Run:
 
@@ -443,6 +447,12 @@ git diff --check
 ```
 
 Expected: every command exits 0. The complete Python gate retains at least 90% branch coverage.
+
+Local verification complete on `2e85d5396812d36b117de6f10521b4141627175d`: root gate passed
+with 1,705 selected tests and 93% total coverage; release-candidate passed after its generated
+release directory was refreshed for that exact HEAD; the Dagger gate passed 33 tests at 90.48%
+coverage; Dagger audit, actionlint, zizmor, and `git diff --check` passed. This is local evidence
+only and does not establish hosted cold/warm or merged-main proof.
 
 - [ ] **Step 3: Commit documentation and verification record**
 
