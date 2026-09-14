@@ -83,8 +83,9 @@ Python 3.12 validation  Python 3.13 validation
 Each Python lane runs its quality proof, uses its own runtime-specific dependency wheelhouse, and
 installs the already-built first-party wheel offline. The quality handoff is identity-bound: it
 rejects changed source, lockfiles, coverage evidence, runtime, or results rather than treating a
-previous green run as a shortcut. The separate Dagger security audit remains required on its own
-schedule.
+previous green run as a shortcut. After both lanes pass, the check emits the wheel, sdist, and
+runtime-requirements SHA-256 manifest as hosted evidence. The separate Dagger security audit
+remains required on its own schedule.
 
 Hosted performance evidence is still pending. A cold Dagger job of at most 20 minutes and a warm
 job of at most 12 minutes are targets, not measurements or a claim that this pipeline is faster.

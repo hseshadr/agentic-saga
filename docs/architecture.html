@@ -265,7 +265,7 @@ escalation:
               <article class="ci-node"><h3>03b / Python 3.13</h3><p>Quality, a 3.13 wheelhouse, offline artifact install, and release measurement.</p></article>
             </div>
             <div class="ci-arrow" aria-hidden="true">↓</div>
-            <article class="ci-node ci-result"><h3>04 / Dagger — one protected result</h3><p>Both runtime lanes must complete. The separate Dagger security audit remains an additional required workflow.</p></article>
+            <article class="ci-node ci-result"><h3>04 / Dagger — one protected result</h3><p>Both runtime lanes must complete before Dagger emits the shared wheel, sdist, and requirements digests. The separate Dagger security audit remains an additional required workflow.</p></article>
           </div>
         </div>
         <aside class="limits" style="margin-top: 1rem"><h3>Performance status: targets, not evidence</h3><p>The cold target is at most 20 minutes and the warm target is at most 12 minutes. Neither is a speed claim until hosted runs of the same pull-request SHA establish cold and warm measurements, followed by a separate complete run for the exact merged <code>main</code> SHA.</p></aside>

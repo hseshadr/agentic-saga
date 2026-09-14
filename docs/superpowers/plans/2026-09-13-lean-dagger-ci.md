@@ -454,12 +454,14 @@ release directory was refreshed for that exact HEAD; the Dagger gate passed 33 t
 coverage; Dagger audit, actionlint, zizmor, and `git diff --check` passed. This is local evidence
 only and does not establish hosted cold/warm or merged-main proof.
 
-- [ ] **Step 3: Commit documentation and verification record**
+- [x] **Step 3: Commit documentation and verification record**
 
 ```bash
 git add README.md docs/architecture.html docs/superpowers/specs/2026-09-13-lean-dagger-ci-design.md docs/superpowers/plans/2026-09-13-lean-dagger-ci.md
 git commit -m "docs: explain lean Dagger release proof"
 ```
+
+Committed as `62dfca64f3db3cc44f090e2110737cdd68692c7b`.
 
 - [ ] **Step 4: Run independent whole-branch review**
 

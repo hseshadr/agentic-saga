@@ -121,7 +121,7 @@ volume is attached.
 - one sdist;
 - `runtime-requirements.txt`;
 - `SOURCE_COMMIT`;
-- `SHA256SUMS` for the wheel and sdist.
+- `SHA256SUMS` for the wheel, sdist, and `runtime-requirements.txt`.
 
 Runtime dependency wheels move to
 `OUTPUT_DIR/wheelhouses/<python-major>.<python-minor>/`. The verification script creates or accepts
@@ -129,7 +129,8 @@ that runtime-specific wheelhouse and installs the already-built first-party whee
 the wheel or sdist when valid artifacts are supplied.
 
 Both runtime lanes must report the same wheel and sdist digests. A missing, extra, modified, or
-wrong-commit artifact fails closed.
+wrong-commit artifact fails closed. After both lanes succeed, the public Dagger result emits that
+validated three-entry manifest as the hosted evidence channel.
 
 ## Identity-bound quality proof
 
