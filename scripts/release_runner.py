@@ -711,9 +711,21 @@ def _wheel_cli(workspace: Path) -> Path:
     shared = _shared_release_inputs()
     wheel, requirements = shared or _built_release_inputs(workspace)
     venv = workspace / "venv"
-    _checked(("uv", "venv", "--offline", "--no-python-downloads", str(venv)))
+    _checked(_venv_command(venv))
     _install_wheel(venv, requirements, wheel, _release_wheelhouse())
     return venv / "bin" / "agentic-saga"
+
+
+def _venv_command(venv: Path) -> tuple[str, ...]:
+    return (
+        "uv",
+        "venv",
+        "--offline",
+        "--no-python-downloads",
+        "--python",
+        sys.executable,
+        str(venv),
+    )
 
 
 def _built_release_inputs(workspace: Path) -> tuple[Path, Path]:

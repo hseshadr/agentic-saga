@@ -1116,6 +1116,31 @@ def test_wheel_cli_installs_the_shared_release_wheel_without_building(
     _assert_shared_installs(commands, artifacts, wheelhouse)
 
 
+def test_wheel_cli_creates_venv_with_the_executing_interpreter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    artifacts = _shared_release_artifacts(tmp_path / "release")
+    wheelhouse = tmp_path / "wheelhouse"
+    wheelhouse.mkdir()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    commands: list[tuple[str, ...]] = []
+    _configure_shared_artifacts(monkeypatch, artifacts, wheelhouse)
+    monkeypatch.setattr(runner, "_checked", _command_recorder(commands))
+
+    runner._wheel_cli(workspace)
+
+    assert commands[0] == (
+        "uv",
+        "venv",
+        "--offline",
+        "--no-python-downloads",
+        "--python",
+        sys.executable,
+        str(workspace / "venv"),
+    )
+
+
 @pytest.mark.parametrize("wheel_count", [0, 2])
 def test_wheel_cli_rejects_nonexact_shared_wheel_count(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wheel_count: int
