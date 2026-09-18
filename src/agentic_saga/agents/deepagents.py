@@ -94,6 +94,11 @@ _AUTHORITY = "\n".join(
             "effects remain. The kernel derives rollback order."
         ),
         (
+            "- If last_action.event_type=terminal_denied, its failed forward invariant proves "
+            "the goal cannot complete, confirmed effects remain, and begin_compensation is "
+            "advertised, call begin_compensation immediately."
+        ),
+        (
             "- During compensation, call only the currently advertised compensation tool; "
             "the kernel-owned frontier determines eligibility."
         ),

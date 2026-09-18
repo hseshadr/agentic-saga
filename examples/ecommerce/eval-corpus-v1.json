@@ -146,7 +146,7 @@
       "forbidden_effects": [{"tool_name": "refund_payment", "minimum_occurrence": 2}],
       "escalation_required": false,
       "kernel_rejection_required": false,
-      "max_agent_turns": 13
+      "max_agent_turns": 15
     },
     {
       "case_id": "r06-partial-reservation-repair",

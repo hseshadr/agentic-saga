@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from pydantic import TypeAdapter
 
+from agentic_saga.agents.deepagents import AgentFailureCategory, AgentPlanningError
 from agentic_saga.contracts.actions import (
     AgentProposal,
     BeginCompensation,
@@ -158,6 +159,47 @@ class BudgetCaptureDriver:
         )
 
 
+class InvalidOnceAfterTerminalDenialDriver(ScriptedProposalDriver):
+    def __init__(self) -> None:
+        super().__init__()
+        self.forced_finish = False
+        self.failed = False
+
+    async def next_action(
+        self, observation: SagaObservation, tools: Sequence[ToolDescriptor]
+    ) -> AgentProposal:
+        if self._should_fail(observation):
+            raise AgentPlanningError(AgentFailureCategory.INVALID_RESPONSE)
+        proposal = await super().next_action(observation, tools)
+        if self._should_force_finish(proposal):
+            return self._finish(observation)
+        return proposal
+
+    def _should_fail(self, observation: SagaObservation) -> bool:
+        last = observation.last_action
+        if last is None or last.get("event_type") != "terminal_denied" or self.failed:
+            return False
+        self.failed = True
+        return True
+
+    def _finish(self, observation: SagaObservation) -> Finish:
+        self.forced_finish = True
+        return Finish(
+            proposal_id=f"proposal_{observation.saga_seq:020d}",
+            based_on_saga_seq=observation.saga_seq,
+            rationale="Exercise recovery after deterministic terminal denial.",
+            target_status="succeeded_verified",
+        )
+
+    def _should_force_finish(self, proposal: AgentProposal) -> bool:
+        return (
+            not self.forced_finish
+            and isinstance(proposal, ToolCall)
+            and proposal.tool_name == "inspect_order"
+            and "schedule_fulfillment" in self.proposals
+        )
+
+
 class ReserveThenCompensateDriver:
     async def next_action(
         self, observation: SagaObservation, tools: Sequence[ToolDescriptor]
@@ -254,7 +296,7 @@ def test_every_case_fixture_builds_the_same_provider_and_catalog_twice(tmp_path:
         ("e05-budget-exhausted", 3),
         ("s01-basic-order", 10),
         ("r04-transient-inventory-read", 12),
-        ("r05-refund-and-cancel", 13),
+        ("r05-refund-and-cancel", 15),
     ],
 )
 async def test_eval_case_budget_is_the_real_model_budget_and_survives_reopen(
@@ -653,6 +695,20 @@ async def test_real_compensation_cases_finish_only_with_resolved_obligations(
             and event.rationale.get("status") == "compensated_verified"
             for event in evidence.trace.events
         )
+
+
+@pytest.mark.asyncio
+async def test_r05_recovers_from_one_invalid_turn_after_terminal_denial(tmp_path: Path) -> None:
+    case = next(item for item in load_corpus(CORPUS) if item.case_id == "r05-refund-and-cancel")
+    prepared = prepare_eval_case(case, tmp_path, FakeClock(NOW))
+    driver = InvalidOnceAfterTerminalDenialDriver()
+
+    evidence = await run_with_agent(prepared, case, driver)
+
+    assert driver.failed
+    assert driver.forced_finish
+    assert evidence.result.state is SagaStatus.COMPENSATED_VERIFIED
+    assert any(event.event_type == "agent_turn_failed" for event in evidence.trace.events)
 
 
 @pytest.mark.asyncio
