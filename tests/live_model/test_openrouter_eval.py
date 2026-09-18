@@ -498,6 +498,42 @@ def test_cli_help_is_clear_about_live_cost_and_consent(
     assert "OPENROUTER_API_KEY" in help_text
 
 
+def test_live_cli_loads_local_dotenv_without_echoing_secret(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    secret = "local-dotenv-openrouter-secret"  # noqa: S105 - deliberately fake sentinel
+    (tmp_path / ".env").write_text(f"OPENROUTER_API_KEY={secret}\nRUN_LIVE_MODEL_EVALS=1\n")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("RUN_LIVE_MODEL_EVALS", raising=False)
+
+    try:
+        assert eval_main(["--live"], runner=_runner(_REPORT, [])) == 0
+        output = capsys.readouterr().out
+        assert secret not in output
+        assert os.environ["OPENROUTER_API_KEY"] == secret
+    finally:
+        os.environ.pop("OPENROUTER_API_KEY", None)
+        os.environ.pop("RUN_LIVE_MODEL_EVALS", None)
+
+
+def test_offline_cli_does_not_load_local_dotenv(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / ".env").write_text(
+        "OPENROUTER_API_KEY=unused-offline-secret\nRUN_LIVE_MODEL_EVALS=1\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("RUN_LIVE_MODEL_EVALS", raising=False)
+
+    assert eval_main([]) == 0
+    assert "OPENROUTER_API_KEY" not in os.environ
+    assert "RUN_LIVE_MODEL_EVALS" not in os.environ
+
+
 @pytest.mark.live_model
 @pytest.mark.network
 @pytest.mark.enable_socket

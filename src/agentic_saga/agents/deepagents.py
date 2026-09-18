@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from enum import StrEnum
 from importlib import import_module
@@ -83,6 +84,10 @@ class _ProfileFactory(Protocol):
 
 class _RegisterProfile(Protocol):
     def __call__(self, key: str, profile: object) -> None: ...
+
+
+class _TracingContext(Protocol):
+    def __call__(self, *, enabled: Literal[False]) -> AbstractContextManager[None]: ...
 
 
 @dataclass(frozen=True)
@@ -199,8 +204,15 @@ class _GraphProposalCall:
             "metadata": _metadata(self.provider_id, self.model_route),
             "recursion_limit": _RECURSION_LIMIT,
         }
-        raw = await self.graph.ainvoke(value, config=config)
+        with _tracing_disabled():
+            raw = await self.graph.ainvoke(value, config=config)
         return _structured_response(raw)
+
+
+def _tracing_disabled() -> AbstractContextManager[None]:
+    module = import_module("langsmith")
+    context = cast(_TracingContext, module.tracing_context)
+    return context(enabled=False)
 
 
 def _structured_response(raw: object) -> object:

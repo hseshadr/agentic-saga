@@ -4,7 +4,7 @@
 
 **Goal:** Move private `hseshadr/agentic-saga` onto the portfolio's established Dagger CI pattern, add it to the central fleet, and register Agentic Saga plus the current Dagger control-plane truth in the canonical portfolio.
 
-**Architecture:** GitHub Actions remains a two-action event and permission boundary. A small Agentic Saga Python Dagger adapter composes immutable shared `portfolio-foundation` and `python-package` modules, verifies exact private history using a typed secret, and delegates product proof to existing repository commands. The central fleet validates the protected merged commit. `project-ideas/portfolio.json` remains the source of portfolio truth.
+**Architecture:** GitHub Actions remains a two-action event and permission boundary. A small Agentic Saga Python Dagger adapter composes immutable shared `portfolio-foundation` and `python-package` modules, verifies exact history using optional typed authentication, and delegates product proof to existing repository commands. Trusted runs keep authenticated history access; public-fork pull requests use anonymous public history without receiving repository secrets. The central fleet validates the protected merged commit. `project-ideas/portfolio.json` remains the source of portfolio truth.
 
 **Tech Stack:** Dagger 0.21.8, Python 3.12/3.13, uv, Poe, pytest, Ruff, mypy, Xenon, Node 24, pnpm 11.5.0, Playwright, GitHub Actions, GitHub CLI.
 
@@ -221,10 +221,12 @@ feat: add lean Dagger execution adapter
 
 **Step 1: Add the two-step CI workflow**
 
-Use only pinned checkout and pinned Dagger action. Pass exact `${{ github.sha }}` and the masked
-repository Actions secret `DAGGER_GIT_HTTP_AUTH_HEADER` as a typed Dagger secret. Its value is the
-value-only `Basic <base64(x-access-token:TOKEN)>` Git header; do not add the `Authorization:` name
-or derive credentials in the workflow. Name the required job/check exactly `Dagger`.
+Use only pinned checkout and pinned Dagger action. Pass exact `${{ github.sha }}`. On pushes,
+manual runs, and same-repository pull requests, pass the masked repository Actions secret
+`DAGGER_GIT_HTTP_AUTH_HEADER` as a typed Dagger secret. Its value is the value-only
+`Basic <base64(x-access-token:TOKEN)>` Git header; do not add the `Authorization:` name or derive
+credentials in the workflow. On public-fork pull requests omit the optional argument completely.
+Name the required job/check exactly `Dagger`.
 
 **Step 2: Add the two-step scheduled/manual security workflow**
 
@@ -267,7 +269,9 @@ uv run poe release-candidate
 
 **Step 2: Run the Dagger functions against the exact candidate**
 
-Run `dagger call ci` and `dagger call security` with the exact commit SHA and a typed secret sourced from the authenticated GitHub CLI. Do not print or persist the secret.
+Run `dagger call ci` and `dagger call security` with the exact commit SHA and, for trusted/private
+history, a typed secret sourced from the authenticated GitHub CLI. Also prove `ci` without the
+optional secret, matching a public-fork pull request. Do not print or persist the secret.
 
 **Step 3: Apply the Python quality contract**
 

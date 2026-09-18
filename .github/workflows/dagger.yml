@@ -20,4 +20,5 @@ jobs:
         with:
           version: "0.21.8"
           verb: call
-          args: ci --source=. --commit-sha=${{ github.sha }} --git-auth-header=env:DAGGER_GIT_HTTP_AUTH_HEADER
+          args: >-
+            ci --source=. --commit-sha=${{ github.sha }} ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && '--git-auth-header=env:DAGGER_GIT_HTTP_AUTH_HEADER' || '' }}

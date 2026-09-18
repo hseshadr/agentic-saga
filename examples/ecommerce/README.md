@@ -88,10 +88,15 @@ uv run python -m examples.ecommerce.eval
 Live use costs money. It requires both an OpenRouter key and explicit consent:
 
 ```bash
-export OPENROUTER_API_KEY=your_key
+cp .env.example .env
+chmod 600 .env
+# Edit .env and set OPENROUTER_API_KEY to your own key.
 RUN_LIVE_MODEL_EVALS=1 uv run python -m examples.ecommerce.eval --live \
   --samples 3 --output .artifacts/eval
 ```
+
+The evaluator loads `.env` only for an explicit `--live` run. The file is ignored by Git, and
+process environment values take precedence.
 
 Rerun the same command and output directory to resume verified samples. Each sample is committed
 before aggregation and carries a self-digest verified before reuse. Inspect

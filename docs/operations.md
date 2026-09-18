@@ -5,7 +5,7 @@ Recorder. The deterministic kernel makes local intent and evidence durable befor
 application adapters contact external systems. It cannot make a remote provider transactional,
 contain hostile Python code, or resolve an outcome that remains unknown after safe reconciliation.
 
-This document is the required-before-release operational contract for private v0.1. The limits and
+This document is the required-before-release operational contract for v0.1. The limits and
 evidence commands below are acceptance criteria, not proof that the current source checkout passes
 them. The
 [kernel safety contract](kernel-safety-contract.md) maps kernel claims to executable tests; this
@@ -238,5 +238,5 @@ provider-account spend controls. Package publication requires separate, fresh au
 The source distribution must include `CHANGELOG.md`, `docs/flight-recorder.md`,
 `docs/architecture.html`, and this operations contract. The package contract test verifies those
 files, all resolvable relative documentation links, safe archive paths and member types, and exact
-wheel static/reference bytes. The final exact-commit archive result remains part of the pending
-release evidence.
+wheel static/reference bytes and third-party notices. The final exact-commit archive result is
+required release evidence.

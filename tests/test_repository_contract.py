@@ -26,6 +26,13 @@ from agentic_saga.storage import __all__ as storage_all
 
 ROOT = Path(__file__).parents[1]
 
+_DAGGER_AUTH_ARGUMENT = "--git-auth-header=env:DAGGER_GIT_HTTP_AUTH_HEADER"
+_FORK_SAFE_AUTH_EXPRESSION = (
+    "${{ (github.event_name != 'pull_request' || "
+    "github.event.pull_request.head.repo.full_name == github.repository) && "
+    f"'{_DAGGER_AUTH_ARGUMENT}' || '' }}}}"
+)
+
 _ROOT_FACADE = (
     "SagaContext",
     "SagaDefinition",
@@ -126,6 +133,7 @@ def test_required_oss_files_exist() -> None:
         "CONTRIBUTING.md",
         "SECURITY.md",
         "PROVENANCE.md",
+        "THIRD_PARTY_NOTICES.md",
         "CHANGELOG.md",
         "CITATION.cff",
         "QUICKSTART.md",
@@ -233,11 +241,16 @@ def test_gate_enforces_the_core_branch_coverage_floor() -> None:
 
 
 def test_agent_dependencies_are_optional_and_bdd_is_development_only() -> None:
-    config = (ROOT / "pyproject.toml").read_text()
-    expected = 'agent = ["deepagents>=0.7.13,<0.8", "langchain-openrouter>=0.2.8,<0.3"]'
-    assert expected in config
-    parsed = tomllib.loads(config)
+    parsed = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    agent = set(parsed["project"]["optional-dependencies"]["agent"])
+
     assert set(parsed["project"]["optional-dependencies"]) == {"agent"}
+    assert agent == {
+        "deepagents>=0.7.13,<0.8",
+        "langchain-openrouter>=0.2.8,<0.3",
+        "langsmith>=0.12,<1",
+        "python-dotenv>=1.1,<2",
+    }
     assert "pytest-bdd>=8.1,<9" in parsed["dependency-groups"]["dev"]
     assert "pytest-bdd" not in parsed["project"]["dependencies"]
 
@@ -258,16 +271,18 @@ def test_oss_metadata_and_contributor_routes_are_complete() -> None:
         assert value in contributing
 
 
-def test_readme_scopes_historical_dagger_proof() -> None:
+def test_readme_names_current_dagger_baseline_without_artifact_overclaim() -> None:
     readme = (ROOT / "README.md").read_text()
-    current = ("635974d51f87aa802886914be6a46bfd28518c66", "34727077866", "34727111885")
+    current = ("3fcf10ea6a6dbd2799f242758cecbbd6321ff639", "34807057405", "34859242334")
     stale = (
-        "matching hosted CI evidence still must be recorded",
-        "matching hosted CI run have not yet been recorded",
-        "verified the clean exact main commit, including both supported",
+        "635974d51f87aa802886914be6a46bfd28518c66",
+        "34727077866",
+        "34727111885",
+        "manifest as hosted evidence",
     )
     assert all(value in readme for value in current)
-    assert "not full release-matrix evidence" in readme
+    assert "prints the validated SHA-256" in readme
+    assert "manifest in the run log" in readme
     assert all(value not in readme for value in stale)
 
 
@@ -308,8 +323,8 @@ def test_docs_name_shipped_ecommerce_and_source_recorder() -> None:
     quickstart = (ROOT / "QUICKSTART.md").read_text()
     agent_guide = (ROOT / "docs" / "agent-adapter.md").read_text()
 
-    # When the private-development status is inspected.
-    assert "Under private development" in readme
+    # When the public-release status is inspected.
+    assert "OSS release candidate" in readme
     assert "uv run --no-dev python -m examples.ecommerce.run" in quickstart
     assert "providers and agent-driven workflows remain planned" not in quickstart
     assert "Flight Recorder" in quickstart
@@ -482,15 +497,15 @@ def test_provenance_names_current_hosted_controls_and_evidence() -> None:
         "Current evidence",
         "local `uv run poe gate`",
         "No registry artifacts",
-        "635974d51f87aa802886914be6a46bfd28518c66",
+        "3fcf10ea6a6dbd2799f242758cecbbd6321ff639",
     )
     controls = (
         "Repository controls",
         "`.github/workflows/dagger.yml`",
         "`.github/workflows/dagger-security.yml`",
-        "34727077866",
-        "34727111885",
-        "not full release-matrix evidence",
+        "34807057405",
+        "34859242334",
+        "prints\nits validated SHA-256 manifest in the run log",
     )
 
     # Then local and hosted evidence are bound to the immutable commit and controls.
@@ -594,11 +609,8 @@ def _assert_dagger(step: dict[str, object], operation: str) -> None:
     assert _mapping(step["env"]) == {
         "DAGGER_GIT_HTTP_AUTH_HEADER": "${{ secrets.DAGGER_GIT_HTTP_AUTH_HEADER }}"
     }
-    expected = (
-        f"{operation} --source=. --commit-sha="
-        "${{ github.sha }} "
-        "--git-auth-header=env:DAGGER_GIT_HTTP_AUTH_HEADER"
-    )
+    auth_argument = _FORK_SAFE_AUTH_EXPRESSION if operation == "ci" else _DAGGER_AUTH_ARGUMENT
+    expected = f"{operation} --source=. --commit-sha=${{{{ github.sha }}}} {auth_argument}"
     assert _mapping(step["with"]) == {"version": "0.21.8", "verb": "call", "args": expected}
 
 
@@ -659,7 +671,7 @@ def _ingress_fixture(operation: str = "ci") -> dict[str, object]:
                             "args": (
                                 f"{operation} --source=. --commit-sha="
                                 "${{ github.sha }} "
-                                "--git-auth-header=env:DAGGER_GIT_HTTP_AUTH_HEADER"
+                                f"{_FORK_SAFE_AUTH_EXPRESSION}"
                             ),
                         },
                     },
@@ -975,6 +987,43 @@ def test_frontend_generated_outputs_are_ignored() -> None:
 
     assert "web/flight-recorder/coverage/" in ignored
     assert "*.tsbuildinfo" in ignored
+
+
+def test_bundled_flight_recorder_declares_third_party_licenses() -> None:
+    notice = (ROOT / "THIRD_PARTY_NOTICES.md").read_text()
+    required = (
+        "@noble/hashes 2.4.0",
+        "lossless-json 4.3.1",
+        "react 19.2.8",
+        "react-dom 19.2.8",
+        "scheduler 0.27.0",
+        "zod 4.5.4",
+        "Copyright (c) Meta Platforms, Inc. and affiliates.",
+        "Copyright (c) 2016-2026 Jos de Jong",
+        "Copyright (c) 2022 Paul Miller",
+        "Copyright (c) 2025 Colin McDonnell",
+        "Permission is hereby granted, free of charge",
+    )
+
+    assert all(value in notice for value in required)
+
+
+def test_local_openrouter_env_is_ignored_copyable_and_secret_free() -> None:
+    ignored = (ROOT / ".gitignore").read_text().splitlines()
+    example = (ROOT / ".env.example").read_text().splitlines()
+    quickstart = (ROOT / "QUICKSTART.md").read_text()
+
+    assert ".env" in ignored
+    assert ".env.*" in ignored
+    assert "!.env.example" in ignored
+    assert "OPENROUTER_API_KEY=" in example
+    assert "RUN_LIVE_MODEL_EVALS=0" in example
+    assert all(
+        not line.startswith("OPENROUTER_API_KEY=") or line == "OPENROUTER_API_KEY="
+        for line in example
+    )
+    assert "cp .env.example .env" in quickstart
+    assert "chmod 600 .env" in quickstart
 
 
 def test_dependabot_configures_weekly_ecosystem_updates() -> None:

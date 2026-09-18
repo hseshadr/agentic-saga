@@ -10,6 +10,7 @@ import pytest
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
+from langsmith import get_tracing_context, tracing_context
 
 from agentic_saga import SagaContext, SagaManifest
 from agentic_saga.agents import DeepAgentsDriver
@@ -670,10 +671,12 @@ async def test_should_cooperate_with_kernel_timeout_cancellation() -> None:
 class _RecordingGraph:
     def __init__(self) -> None:
         self.config: dict[str, object] = {}
+        self.tracing_enabled: bool | str | None = None
 
     async def ainvoke(self, value: dict[str, object], config: dict[str, object]) -> object:
         del value
         self.config = config
+        self.tracing_enabled = get_tracing_context()["enabled"]
         return {"structured_response": _tool_call()}
 
 
@@ -759,10 +762,12 @@ async def test_should_pass_no_business_tools_to_deep_agents(
         provider_id="structuredfakechatmodel",
         model_route=("fake/structured",),
     )
-    await driver.next_action(_observation(), (_descriptor("inspect"),))
+    with tracing_context(enabled=True):
+        await driver.next_action(_observation(), (_descriptor("inspect"),))
     assert captured_tools == ()
     assert profile_keys == ["structuredfakechatmodel:fake/structured"]
     assert graph.config["recursion_limit"] == 8
+    assert graph.tracing_enabled is False
 
 
 def test_should_fail_safely_when_deep_agents_extra_is_absent(

@@ -113,17 +113,22 @@ metadata records the configured provider and ordered route. The evaluation harne
 configured values and measured latency. Actual responding model/provider identity, token usage,
 and cost remain `null` because the adapter does not expose trustworthy response telemetry.
 
+The maintained adapter disables ambient LangSmith tracing around every model invocation. Setting
+LangChain/LangSmith tracing variables in the surrounding process therefore does not create a
+second telemetry destination for Saga context. Applications that build a different adapter own
+and must document its observability egress.
+
 The library does not estimate or enforce provider spend. Configure OpenRouter account budgets and
 rate limits independently before an explicitly authorized live evaluation.
 
 ## Current versus planned
 
-Private v0.1 ships generic context rendering, all four strict proposal types, the maintained Deep
+V0.1 ships generic context rendering, all four strict proposal types, the maintained Deep
 Agents graph, bounded OpenRouter construction, safe typed failures, deterministic offline tests,
 the executable ecommerce reference, its opt-in resumable live-model evaluator, and the read-only
 Flight Recorder with distribution-bound resources and Story, Ledger, and Proof views. The
-implemented release harness exercises a wheel-installed recorder; its final clean-current-commit
-report and matching hosted CI evidence have not yet been recorded.
+implemented release harness exercises a wheel-installed recorder; each release candidate must
+produce its own clean exact-commit report and matching hosted CI evidence.
 
 Trustworthy model-provider usage receipts remain planned: the current adapter deliberately reports
 unknown returned identity, token use, and cost as `null` instead of guessing. No live paid call

@@ -1,12 +1,12 @@
 # Security policy
 
-TL;DR: private v0.1 protects typed Saga authority and local evidence under a cooperative-host,
+TL;DR: v0.1 protects typed Saga authority and local evidence under a cooperative-host,
 single-host contract. Treat model/provider/persisted input as untrusted data, isolate hostile code
 outside the process, and report suspected vulnerabilities privately.
 
 ## Supported version
 
-While the project is private, security support covers the `0.1.x` line.
+Security support covers the `0.1.x` line.
 
 ## Reporting a vulnerability
 

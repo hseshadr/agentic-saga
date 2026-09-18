@@ -1,4 +1,7 @@
 .worktrees/
+.env
+.env.*
+!.env.example
 .dagger/.venv/
 .dagger/sdk/
 .venv/

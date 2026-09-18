@@ -7,7 +7,9 @@ import os
 import sys
 from collections import Counter
 from collections.abc import Callable, Coroutine, Sequence
+from importlib import import_module
 from pathlib import Path
+from typing import Protocol, cast
 
 from examples.ecommerce.evaluation import CorpusValidationError, load_corpus
 from examples.ecommerce.live_eval import (
@@ -17,6 +19,12 @@ from examples.ecommerce.live_eval import (
 )
 
 type Runner = Callable[[Path, int, Path], Coroutine[None, None, LiveEvalReportArtifact]]
+
+
+class _LoadDotenv(Protocol):
+    def __call__(self, dotenv_path: Path, *, override: bool) -> bool: ...
+
+
 _CORPUS = Path(__file__).with_name("eval-corpus-v1.json")
 _OUTPUT = Path(".artifacts/eval")
 _METRICS = (
@@ -47,11 +55,28 @@ def main(argv: Sequence[str] | None = None, *, runner: Runner = run_live_corpus)
     arguments = _parser().parse_args(argv)
     if not arguments.live:
         return _validate(arguments.corpus, arguments.json)
+    environment_error = _load_local_environment()
+    if environment_error is not None:
+        print(environment_error, file=sys.stderr)
+        return 2
     error = _live_error()
     if error is not None:
         print(error, file=sys.stderr)
         return 2
     return _run(arguments, runner)
+
+
+def _load_local_environment() -> str | None:
+    path = Path.cwd() / ".env"
+    if not path.is_file():
+        return None
+    try:
+        module = import_module("dotenv")
+    except ModuleNotFoundError:
+        return "Install the agent extra to load .env for live evaluation."
+    load_dotenv = cast(_LoadDotenv, module.load_dotenv)
+    load_dotenv(path, override=False)
+    return None
 
 
 def _validate(path: Path, json_output: bool) -> int:

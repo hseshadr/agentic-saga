@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-18
+
 ### Added
 
 - Generic durable Saga kernel with typed actions, intent-before-effect dispatch, reconciliation,
@@ -38,8 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Frozen browser quality gate covering all four traces, keyboard and reduced-motion behavior,
   required responsive widths, 200% zoom, accessibility, console errors, and external requests.
 - Fail-closed offline release measurement, exact wheel/source-archive contracts, and a hosted
-  Python 3.12/3.13 packaged-browser matrix. Final clean-current-commit and hosted evidence remain
-  required before release.
+  Python 3.12/3.13 packaged-browser matrix.
+- Secret-free `.env.example` loading for explicitly authorized OpenRouter evaluation, with local
+  `.env` exclusion, output redaction, and no ambient LangSmith tracing.
+- Third-party license notices packaged with the bundled Flight Recorder dependencies.
 
 ### Changed
 
