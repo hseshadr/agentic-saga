@@ -463,9 +463,13 @@ def _advertised_terminal_targets(snapshot: SagaSnapshot) -> tuple[SagaStatus, ..
     targets = _TERMINAL_TARGETS.get(snapshot.status, ())
     if snapshot.last_invariant_passed is not False:
         return targets
-    if snapshot.last_invariant_seq != snapshot.seq - 1:
-        return targets
-    return tuple(target for target in targets if target is not snapshot.last_invariant_target)
+    if snapshot.last_substantive_progress_seq is None:
+        return ()
+    if snapshot.last_invariant_seq is None:
+        return ()
+    if snapshot.last_substantive_progress_seq <= snapshot.last_invariant_seq:
+        return ()
+    return targets
 
 
 def _callback_denied() -> PolicyDecision:

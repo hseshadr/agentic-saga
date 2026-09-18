@@ -380,17 +380,56 @@ def test_should_advertise_only_controls_the_kernel_can_accept() -> None:
     assert compensating.begin_compensation is False
 
 
-def test_should_hide_just_denied_terminal_target_until_new_evidence() -> None:
-    immediate = engine().advertised_controls(_failed_terminal_snapshot(8), context())
-    refreshed = engine().advertised_controls(_failed_terminal_snapshot(9), context())
+def test_should_hide_all_terminal_targets_until_substantive_progress() -> None:
+    immediate = engine().advertised_controls(_failed_terminal_snapshot(8, 6), context())
+    bookkeeping = engine().advertised_controls(_failed_terminal_snapshot(9, 6), context())
+    progressed = engine().advertised_controls(_failed_terminal_snapshot(10, 9), context())
 
-    assert immediate.finish_targets == ("aborted_clean",)
-    assert refreshed.finish_targets == ("succeeded_verified", "aborted_clean")
+    assert immediate.finish_targets == ()
+    assert bookkeeping.finish_targets == ()
+    assert progressed.finish_targets == ("succeeded_verified", "aborted_clean")
 
 
-def _failed_terminal_snapshot(seq: int) -> SagaSnapshot:
+def test_should_preserve_terminal_targets_after_passing_invariant_proof() -> None:
+    proven = _failed_terminal_snapshot(8, 6).model_copy(update={"last_invariant_passed": True})
+
+    controls = engine().advertised_controls(proven, context())
+
+    assert controls.finish_targets == ("succeeded_verified", "aborted_clean")
+
+
+def test_should_fail_closed_for_legacy_failed_proof_without_progress_marker() -> None:
+    legacy = _failed_terminal_snapshot(8, 6).model_copy(
+        update={"last_substantive_progress_seq": None}
+    )
+
+    controls = engine().advertised_controls(legacy, context())
+
+    assert controls.finish_targets == ()
+
+
+@pytest.mark.parametrize("target", ["succeeded_verified", "aborted_clean"])
+def test_should_deny_every_terminal_target_after_invariant_failure(
+    target: Literal["succeeded_verified", "aborted_clean"],
+) -> None:
+    blocked = _failed_terminal_snapshot(8, 6)
+    finish = Finish(
+        proposal_id="proposal_blocked_1",
+        based_on_saga_seq=blocked.seq,
+        rationale="Wait for substantive progress.",
+        target_status=target,
+    )
+
+    decision = engine().authorize(finish, blocked, context())
+
+    assert decision.allowed is False
+    assert decision.code == "saga_phase_denied"
+
+
+def _failed_terminal_snapshot(seq: int, progress_seq: int) -> SagaSnapshot:
     return snapshot(
         seq=seq,
+        last_substantive_progress_seq=progress_seq,
         last_invariant_seq=7,
         last_invariant_passed=False,
         last_invariant_target=SagaStatus.SUCCEEDED_VERIFIED,

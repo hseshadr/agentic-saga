@@ -95,6 +95,7 @@ class SagaSnapshot(BaseModel):
     definition_version: _BoundedName
     operations: Mapping[OperationId, OperationRecord]
     obligations: Mapping[OperationId, CompensationObligation]
+    last_substantive_progress_seq: int | None = Field(default=None, strict=True, ge=1)
     last_invariant_seq: int | None = Field(default=None, strict=True, ge=1)
     last_invariant_passed: bool | None = None
     last_invariant_target: _SagaStatus | None = None

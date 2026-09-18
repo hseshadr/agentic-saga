@@ -94,6 +94,23 @@ _TERMINAL_TRANSITIONS: Mapping[SagaStatus, frozenset[SagaStatus]] = {
     SagaStatus.COMPENSATING: frozenset({SagaStatus.COMPENSATED_VERIFIED}),
     SagaStatus.HUMAN_REQUIRED: frozenset({SagaStatus.RESOLVED_WITH_EXCEPTION}),
 }
+_SUBSTANTIVE_PROGRESS_EVENTS: frozenset[type[BaseModel]] = frozenset(
+    {
+        SagaStarted,
+        ReadObserved,
+        DispatchAbortedBeforeEntry,
+        EffectOutcomeRecorded,
+        ReconciliationRecorded,
+        RecoveryPlanRequired,
+        RecoveryPlanAccepted,
+        RecoveryPlanRejected,
+        ApprovalConsumed,
+        CompensationStarted,
+        HumanRequired,
+        HumanResolutionRecorded,
+        TerminalAssigned,
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -200,6 +217,7 @@ def _materialize_core(context: _SnapshotContext) -> SagaSnapshot:
         definition_version=prior.definition_version,
         operations=_current_or(prior.operations, delta.operations),
         obligations=_current_or(prior.obligations, delta.obligations),
+        last_substantive_progress_seq=prior.last_substantive_progress_seq,
         pending_approval=_current_or(prior.pending_approval, delta.pending_approval),
         resume_status=_current_or(prior.resume_status, delta.resume_status),
         consumed_approval_ids=_current_or(prior.consumed_approval_ids, delta.consumed_approval_ids),
@@ -981,6 +999,7 @@ def _create_snapshot(raw_event: LedgerEvent) -> SagaSnapshot:
         definition_version=event.definition_version,
         operations={},
         obligations={},
+        last_substantive_progress_seq=event.saga_seq,
     )
 
 
@@ -1004,7 +1023,10 @@ def reduce_event(snapshot: SagaSnapshot | None, event: LedgerEvent) -> SagaSnaps
     if handler is None:
         raise InvalidTransition(f"unknown event type: {type(event).__name__}")
     _validate_common_transition(snapshot, event)
-    return handler(snapshot, event)
+    projected = handler(snapshot, event)
+    if type(event) not in _SUBSTANTIVE_PROGRESS_EVENTS:
+        return projected
+    return projected.model_copy(update={"last_substantive_progress_seq": event.saga_seq})
 
 
 def rebuild_projection(events: Iterable[LedgerEvent]) -> SagaSnapshot:
