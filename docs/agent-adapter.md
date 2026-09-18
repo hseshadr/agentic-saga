@@ -106,10 +106,10 @@ proposal, durably record intent, derive stable operation identity, and dispatch 
 adapter.
 
 Every proposal schema is strict. A Pydantic AI capability supplies `tool_choice="required"`, so the
-provider must return a native tool call instead of free-form text. The adapter then validates the
-returned `DeferredToolRequests`: zero or multiple deferred calls are rejected before execution.
-The model remains useful—it chooses the next business action—but it is not the transaction
-coordinator or source of truth.
+provider must return a native tool call instead of free-form text. If a provider returns text or an
+invalid native result, Pydantic may make one corrective model request with validation feedback.
+Only an exact `DeferredToolRequests` result can leave the adapter; zero or multiple deferred calls are rejected before execution. The model remains useful—it chooses the next business action—but it
+is not the transaction coordinator or source of truth.
 
 ## Native trajectories
 
@@ -272,20 +272,25 @@ one exact eligible action from current evidence. Safety does not become weaker w
 poor choices are rejected by policy or fail the evaluation corpus. Moving the maintained default to
 a smaller model still requires fresh evidence on that fixed corpus.
 
-SDK retries are zero, temperature is zero, reasoning effort is low, and provider support is
-required for every parameter actually sent. `parallel_tool_calls` and `seed` are not sent: the
-current `openai/gpt-oss-20b` OpenRouter route has endpoints for the base native-tools request but no
-eligible endpoint when `parallel_tool_calls=false` is combined with required-parameter routing.
-Safety therefore does not depend on that unsupported provider hint. The local adapter requires one
-call and rejects zero or multiple calls before any proposal reaches the kernel. OpenRouter may fail
-over among providers serving the same model, but it cannot silently switch to a different model.
-Moving aliases and OpenRouter variant suffixes are rejected.
+SDK retries are zero. Pydantic result correction is exactly one, so one durable agent turn can make
+at most two model requests. The correction handles structural output failure; it never executes a
+business effect because every exposed proposal tool is external and deferred. Temperature is zero,
+reasoning effort is low, and provider support is required for every parameter actually sent.
+`parallel_tool_calls` and `seed` are not sent: the current `openai/gpt-oss-20b` OpenRouter route has
+endpoints for the base native-tools request but no eligible endpoint when
+`parallel_tool_calls=false` is combined with required-parameter routing. Safety therefore does not
+depend on that unsupported provider hint. The adapter requires one deferred proposal call and
+rejects zero or multiple calls before any proposal reaches the kernel. OpenRouter may fail over
+among providers serving the same model, but it cannot silently switch to a different model. Moving
+aliases and OpenRouter variant suffixes are rejected.
 
-The kernel durably reserves whole-unit planning allocations before each call. A turn receives
-`token_limit // turn_limit` maximum output tokens and `elapsed_ms_limit // turn_limit` milliseconds,
-further capped by adapter settings. These are not input-token accounting, actual provider usage,
-end-to-end Saga time, or a monetary meter. Configure provider-side spending limits before any live
-evaluation.
+The kernel durably reserves whole-unit planning allocations before each turn. The adapter divides
+that turn allocation across the two possible model requests: each request receives at most
+`(token_limit // turn_limit) // 2` output tokens and
+`(elapsed_ms_limit // turn_limit) // 2` milliseconds, further capped by adapter settings. A zero
+per-request allocation is rejected before a model call. These are not input-token accounting,
+actual provider usage, end-to-end Saga time, or a monetary meter. Configure provider-side spending
+limits before any live evaluation.
 
 Set `OPENROUTER_API_KEY` only in the process environment or inject `OpenRouterSettings`. The masked
 secret is not added to prompts, metadata, driver representations, or safe exceptions. Live

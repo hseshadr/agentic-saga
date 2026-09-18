@@ -31,7 +31,10 @@ PLANNING_CAPACITY_CLAUSE = "token and elapsed limits are each at least the turn 
 NO_METERING_CLAUSE = (
     "Token/time limits are not input-token, actual-usage, end-to-end-time, or monetary meters"
 )
-OPTIONAL_MODEL_CLAUSE = "One model call, eight graph steps, zero SDK retries"
+OPTIONAL_MODEL_CLAUSE = (
+    "At most two model requests (one bounded Pydantic correction), eight graph steps, "
+    "zero SDK retries"
+)
 PYDANTIC_DEEP_PIN = "pydantic-deep==0.3.43"
 
 

@@ -14,7 +14,7 @@ from pydantic import (
     field_validator,
 )
 
-from agentic_saga.agents.deepagents import DeepAgentsDriver
+from agentic_saga.agents.deepagents import DeepAgentsDriver, native_model_request_limit
 from agentic_saga.manifest import SagaContext
 
 type _ModelId = Annotated[
@@ -99,8 +99,8 @@ def build_openrouter_driver(
 
 def _build_model(context: SagaContext, settings: OpenRouterSettings) -> object:
     dependencies = _load_model_dependencies()
-    output_tokens, timeout_ms = _model_caps(context)
-    timeout = min(settings.timeout_ms, timeout_ms) / _MILLISECONDS_PER_SECOND
+    output_tokens, timeout_ms = effective_model_request_caps(context, settings)
+    timeout = timeout_ms / _MILLISECONDS_PER_SECOND
     provider = dependencies.provider_factory(api_key=settings.api_key.get_secret_value())
     provider.client.max_retries = settings.sdk_retries
     model_settings = _model_settings(settings, output_tokens, timeout)
@@ -127,15 +127,32 @@ def _model_settings(
 
 def _model_caps(context: SagaContext) -> tuple[int, int]:
     turns = context.budget.turn_limit
-    return _turn_cap(context.budget.token_limit, turns), _turn_cap(
+    return _request_cap(context.budget.token_limit, turns), _request_cap(
         context.budget.elapsed_ms_limit, turns
     )
+
+
+def effective_model_request_caps(
+    context: SagaContext, settings: OpenRouterSettings
+) -> tuple[int, int]:
+    output_tokens, timeout_ms = _model_caps(context)
+    return min(settings.max_output_tokens, output_tokens), min(settings.timeout_ms, timeout_ms)
+
+
+def _request_cap(limit: int, turns: int) -> int:
+    cap = _turn_cap(limit, turns) // native_model_request_limit()
+    if cap <= 0:
+        raise ValueError("Saga budget does not permit an agent model call")
+    return cap
 
 
 def _turn_cap(limit: int, turns: int) -> int:
     if limit <= 0 or turns <= 0:
         raise ValueError("Saga budget does not permit an agent model call")
-    return limit // turns
+    cap = limit // turns
+    if cap <= 0:
+        raise ValueError("Saga budget does not permit an agent model call")
+    return cap
 
 
 def _load_model_dependencies() -> _OpenRouterDependencies:
@@ -150,4 +167,4 @@ def _load_model_dependencies() -> _OpenRouterDependencies:
     )
 
 
-__all__ = ["OpenRouterSettings", "build_openrouter_driver"]
+__all__ = ["OpenRouterSettings", "build_openrouter_driver", "effective_model_request_caps"]

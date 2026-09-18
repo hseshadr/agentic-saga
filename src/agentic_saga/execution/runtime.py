@@ -21,6 +21,7 @@ from agentic_saga.contracts.events import (
     EffectIntentRecorded,
     EffectOutcomeRecorded,
     HumanRequired,
+    InvariantEvaluated,
     LedgerEvent,
     ProposalRejected,
     ReadObserved,
@@ -1214,10 +1215,54 @@ def _has_pending_intent(snapshot: SagaSnapshot) -> bool:
 
 
 def _last_observation(events: Sequence[LedgerEvent], policy: RedactionPolicy) -> JsonObject | None:
-    for event in reversed(events):
-        if isinstance(event, _OBSERVATION_EVENTS):
-            return _public_json(event.model_dump(mode="json"), policy)
+    for index in range(len(events) - 1, -1, -1):
+        event = events[index]
+        if not isinstance(event, _OBSERVATION_EVENTS):
+            continue
+        public = _public_json(event.model_dump(mode="json"), policy)
+        if not isinstance(event, TerminalDenied):
+            return public
+        return _with_invariant_evidence(events, index, event, public, policy)
     return None
+
+
+def _with_invariant_evidence(
+    events: Sequence[LedgerEvent],
+    index: int,
+    denied: TerminalDenied,
+    public: JsonObject,
+    policy: RedactionPolicy,
+) -> JsonObject:
+    proof = _matching_invariant(events, index, denied)
+    if proof is None:
+        return public
+    payload = thaw_json_object(public)
+    payload["invariant_evidence"] = thaw_json_object(_invariant_summary(proof, policy))
+    return _public_json(payload, policy)
+
+
+def _matching_invariant(
+    events: Sequence[LedgerEvent], index: int, denied: TerminalDenied
+) -> InvariantEvaluated | None:
+    if index == 0:
+        return None
+    proof = events[index - 1]
+    if not isinstance(proof, InvariantEvaluated):
+        return None
+    if proof.saga_seq + 1 != denied.saga_seq or proof.target_status != denied.target_status:
+        return None
+    return proof
+
+
+def _invariant_summary(proof: InvariantEvaluated, policy: RedactionPolicy) -> JsonObject:
+    values = {
+        "target_status": proof.target_status,
+        "evaluated_at_seq": proof.evaluated_at_seq,
+        "invariant_version": proof.invariant_version,
+        "results": thaw_json_object(proof.results),
+        "all_passed": proof.all_passed,
+    }
+    return _public_json(values, policy)
 
 
 def _read_evidence(

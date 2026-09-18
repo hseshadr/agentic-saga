@@ -53,6 +53,7 @@ _CONTROL_DESCRIPTIONS = {
     _ESCALATE_TOOL: "Ask the kernel to park for a proven human decision.",
 }
 _NATIVE_DEFERRED_CALL_LIMIT = 1
+_MODEL_RESULT_RETRIES = 1
 _AGENT_PROPOSAL: TypeAdapter[AgentProposal] = TypeAdapter(AgentProposal)
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 _AUTHORITY = "\n".join(
@@ -148,7 +149,7 @@ _AGENT_RUN_OPTIONS: Mapping[str, object] = MappingProxyType(
             "openrouter_cache_tool_definitions": False,
             "openrouter_cache_messages": False,
         },
-        "retries": 0,
+        "retries": _MODEL_RESULT_RETRIES,
     }
 )
 
@@ -258,7 +259,10 @@ class _PydanticAgent(Protocol):
         *,
         deps: object,
         toolsets: Sequence[object],
+        usage_limits: object,
     ) -> _RunResult: ...
+
+    def output_validator(self, func: Callable[[object], object]) -> object: ...
 
 
 class _CreateAgent(Protocol):
@@ -273,6 +277,10 @@ class _ToolDefinitionFactory(Protocol):
     def __call__(self, **values: object) -> object: ...
 
 
+class _UsageLimitsFactory(Protocol):
+    def __call__(self, *, request_limit: int) -> object: ...
+
+
 @dataclass(frozen=True)
 class _PydanticDependencies:
     create_agent: _CreateAgent
@@ -280,6 +288,8 @@ class _PydanticDependencies:
     external_toolset: _ExternalToolsetFactory
     tool_definition: _ToolDefinitionFactory
     deferred_requests_type: type[object]
+    model_retry: Callable[[str], Exception]
+    usage_limits: _UsageLimitsFactory
     required_tool_capability: object
 
 
@@ -300,6 +310,7 @@ class _NativeProposalCall:
                 _turn_context(observation, available_tools),
                 deps=self.dependencies.deps_factory(),
                 toolsets=(toolset,),
+                usage_limits=_usage_limits(self.dependencies),
             )
         return _proposal_from_output(result.output, observation, available_tools, self.dependencies)
 
@@ -491,12 +502,40 @@ def _create_agent(
     values["output_type"] = [str, dependencies.deferred_requests_type]
     values["capabilities"] = (dependencies.required_tool_capability,)
     agent = dependencies.create_agent(**values)
+    agent.output_validator(_deferred_output_validator(dependencies))
     agent.instrument = False
     return agent
 
 
 def _native_deferred_call_limit() -> int:
     return _NATIVE_DEFERRED_CALL_LIMIT
+
+
+def native_model_request_limit() -> Literal[2]:
+    """Return the hard maximum provider requests within one durable agent turn."""
+
+    return 2
+
+
+def native_result_retry_limit() -> Literal[1]:
+    """Return the bounded Pydantic result-correction count."""
+
+    return 1
+
+
+def _usage_limits(dependencies: _PydanticDependencies) -> object:
+    return dependencies.usage_limits(request_limit=native_model_request_limit())
+
+
+def _deferred_output_validator(
+    dependencies: _PydanticDependencies,
+) -> Callable[[object], object]:
+    def validate(output: object) -> object:
+        if isinstance(output, dependencies.deferred_requests_type):
+            return output
+        raise dependencies.model_retry("Call exactly one advertised native proposal tool.")
+
+    return validate
 
 
 def _builtin_agent_capabilities() -> int:
@@ -618,6 +657,8 @@ def _load_pydantic_dependencies() -> _PydanticDependencies:
         external_toolset=cast(_ExternalToolsetFactory, toolsets.ExternalToolset),
         tool_definition=cast(_ToolDefinitionFactory, tools.ToolDefinition),
         deferred_requests_type=cast(type[object], ai.DeferredToolRequests),
+        model_retry=cast(Callable[[str], Exception], ai.ModelRetry),
+        usage_limits=cast(_UsageLimitsFactory, ai.UsageLimits),
         required_tool_capability=_required_tool_capability(),
     )
 

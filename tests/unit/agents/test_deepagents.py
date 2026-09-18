@@ -10,7 +10,7 @@ import pydantic_deep as pydantic_deep_package  # type: ignore[import-untyped]
 import pytest
 from pydantic_ai import Agent as PydanticAgent
 from pydantic_ai.exceptions import UnexpectedModelBehavior
-from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
@@ -52,6 +52,39 @@ class _TextUnlessToolRequiredModel(TestModel):
             self.call_tools = ["inspect"]
             self.custom_output_text = None
         return await super().request(messages, model_settings, model_request_parameters)
+
+
+class _TextThenNativeToolModel(TestModel):
+    requests: int = 0
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        self.requests += 1
+        if self.requests == 1:
+            return ModelResponse(parts=[TextPart(content="I would inspect first.")])
+        return ModelResponse(parts=[ToolCallPart("inspect", {}, "corrected-inspect")])
+
+
+class _InvalidToolThenTextThenToolModel(TestModel):
+    requests: int = 0
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        del messages, model_settings, model_request_parameters
+        self.requests += 1
+        if self.requests == 1:
+            return ModelResponse(parts=[ToolCallPart("unknown", {}, "unknown")])
+        if self.requests == 2:
+            return ModelResponse(parts=[TextPart(content="I would inspect first.")])
+        return ModelResponse(parts=[ToolCallPart("inspect", {}, "too-late")])
 
 
 class _ContextTrackingModel(TestModel):
@@ -926,6 +959,35 @@ async def test_pydantic_deep_should_require_a_native_tool_call_instead_of_text()
     assert model.observed_settings["tool_choice"] == "required"
 
 
+@pytest.mark.asyncio
+async def test_should_correct_free_text_once_into_a_native_deferred_tool() -> None:
+    model = _TextThenNativeToolModel(call_tools=[])
+    driver = DeepAgentsDriver._from_model(
+        _context("inspect"),
+        model,
+        provider_id="test",
+        model_route=("test/native-tools",),
+    )
+
+    proposal = await driver.next_action(_observation(), (_descriptor("inspect"),))
+
+    _assert_tool_proposal(proposal)
+    assert model.requests == 2
+
+
+@pytest.mark.asyncio
+async def test_should_never_exceed_two_model_requests_across_retry_categories() -> None:
+    model = _InvalidToolThenTextThenToolModel()
+    driver = DeepAgentsDriver._from_model(
+        _context("inspect"), model, provider_id="test", model_route=("test/native-tools",)
+    )
+
+    with pytest.raises(AgentPlanningError):
+        await driver.next_action(_observation(), (_descriptor("inspect"),))
+
+    assert model.requests == 2
+
+
 def test_should_keep_arbitrary_prebuilt_model_construction_internal() -> None:
     assert not hasattr(DeepAgentsDriver, "from_model")
 
@@ -1150,6 +1212,10 @@ def test_should_strip_every_unneeded_pydantic_deep_capability(
     class CreatedAgent:
         instrument: object = True
 
+        def output_validator(self, func: Callable[[object], object]) -> object:
+            captured["output_validator"] = func
+            return func
+
     created = CreatedAgent()
 
     def create_agent(**kwargs: object) -> object:
@@ -1202,6 +1268,8 @@ def test_should_strip_every_unneeded_pydantic_deep_capability(
     assert model_settings["openrouter_cache_instructions"] is False
     assert model_settings["openrouter_cache_tool_definitions"] is False
     assert model_settings["openrouter_cache_messages"] is False
+    assert captured["retries"] == 1
+    assert callable(captured["output_validator"])
     assert "instrument" not in captured
     assert created.instrument is False
 

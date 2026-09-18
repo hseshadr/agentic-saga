@@ -48,7 +48,11 @@ _IDENTITY = EvalIdentity(
     tool_catalog_sha256="d" * 64,
     configured_model="openai/gpt-oss-20b",
     suite=EvalSuite.RELEASE,
-    request_policy=RequestPolicyIdentity(model="openai/gpt-oss-20b"),
+    request_policy=RequestPolicyIdentity(
+        model="openai/gpt-oss-20b",
+        per_call_max_output_tokens=256,
+        per_call_timeout_ms=15_000,
+    ),
     dependency_versions=_JSON.validate_python({"agentic-saga": "0.1.0"}),
 )
 _SCORE = EvalReport(
@@ -423,7 +427,7 @@ async def test_request_policy_identity_is_explicit_complete_and_secret_free(
     await run_live_corpus(CORPUS, 1, tmp_path, _options())
 
     policy = _first_sample(tmp_path).identity.request_policy
-    assert policy.schema_version == "openrouter-native-tools-v1"
+    assert policy.schema_version == "openrouter-native-tools-v2"
     assert policy.proposal_identity_contract == "host-owned:saga_id+saga_seq"
     assert policy.model_proposal_contract == "action-only:no-identity-or-freshness"
     assert policy.provider_parameters_required is True
@@ -431,11 +435,14 @@ async def test_request_policy_identity_is_explicit_complete_and_secret_free(
     assert policy.business_tool_authority == "eligible-proposals:kernel-executed"
     assert policy.tool_allowlist_contract == "recorded-exactly-per-turn"
     assert policy.control_tool_authority == "kernel-validated-proposals"
-    assert policy.model_calls_per_agent_turn == 1
+    assert policy.adapter_retries == 1
+    assert policy.model_calls_per_agent_turn == 2
     assert policy.multiple_call_policy == "reject-before-execution"
     assert policy.routing_strategy == "pinned-model:openrouter-provider-routing"
     assert policy.model == _settings().primary_model
     assert policy.timeout_ms == 30_000
+    assert policy.per_call_max_output_tokens == 500
+    assert policy.per_call_timeout_ms == 15_000
     assert SECRET not in policy.model_dump_json()
 
 

@@ -154,8 +154,8 @@ def test_should_apply_only_supported_parameters_to_one_pinned_model(
     assert captured["model"]["provider"] is provider
     assert captured["model"]["model_name"] == _PRIMARY
     assert captured["model"]["settings"] == {
-        "max_tokens": 500,
-        "timeout": 5.0,
+        "max_tokens": 250,
+        "timeout": 2.5,
         "temperature": 0,
         "openrouter_reasoning": {"effort": "low"},
         "openrouter_provider": {"require_parameters": True},
@@ -193,8 +193,8 @@ def test_should_cap_non_divisible_model_budget_at_fixed_durable_reservation(
     # Then
     settings = captured["model"]["settings"]
     assert isinstance(settings, dict)
-    assert settings["max_tokens"] == 3
-    assert settings["timeout"] == 0.003
+    assert settings["max_tokens"] == 1
+    assert settings["timeout"] == 0.001
     assert provider.client.max_retries == 0
 
 
@@ -238,3 +238,11 @@ def test_should_fail_safely_when_openrouter_extra_is_absent(
 def test_should_reject_a_budget_without_model_capacity() -> None:
     with pytest.raises(ValueError, match="budget does not permit"):
         adapter_module._turn_cap(0, 1)
+
+
+def test_should_reject_a_per_turn_budget_too_small_for_bounded_correction() -> None:
+    context = _context("inspect")
+    budget = context.budget.model_copy(update={"turn_limit": 4, "token_limit": 4})
+
+    with pytest.raises(ValueError, match="budget does not permit"):
+        adapter_module._model_caps(context.model_copy(update={"budget": budget}))

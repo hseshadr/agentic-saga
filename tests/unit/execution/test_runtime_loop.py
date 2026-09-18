@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -22,6 +22,7 @@ from agentic_saga.contracts.events import (
     EffectIntentRecorded,
     EffectOutcomeRecorded,
     HumanRequired,
+    InvariantEvaluated,
     ProposalRejected,
     ReadObserved,
     ReadStarted,
@@ -57,6 +58,7 @@ from agentic_saga.execution.runtime import (
     DefinitionRuntimeMismatch,
     SagaRuntime,
     _await_with_authority,
+    _last_observation,
     _LeaseAuthority,
     _read_evidence,
     _saga_id,
@@ -80,6 +82,20 @@ from tests.support.durable_tool import DurableFakeTool
 
 NOW = datetime(2026, 9, 7, 12, tzinfo=UTC)
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
+
+
+def _observation_event_metadata(seq: int) -> dict[str, object]:
+    return {
+        "event_id": f"evt_{seq:016d}",
+        "saga_id": "saga_0000000000000001",
+        "saga_seq": seq,
+        "schema_version": "1.0",
+        "definition_version": "runtime-v1",
+        "fence_token": 1,
+        "actor": "kernel",
+        "trace_id": "trace_0000000000000001",
+        "recorded_at": NOW,
+    }
 
 
 def _false(command: BaseModel, snapshot: SagaSnapshot, context: PolicyContext) -> bool:
@@ -1020,6 +1036,52 @@ async def test_false_finish_is_durable_then_agent_gets_new_observation(tmp_path:
     assert [item.saga_seq for item in agent.observations] == [3, 5]
     events = harness.store.read_events(result.saga_id)
     assert any(isinstance(item, TerminalDenied) for item in events)
+
+
+def test_terminal_denial_observation_keeps_public_failed_invariant_after_retry() -> None:
+    proof = InvariantEvaluated.model_validate(
+        _observation_event_metadata(28)
+        | {
+            "evaluated_at_seq": 27,
+            "target_status": "succeeded_verified",
+            "invariant_version": "runtime-v1",
+            "evidence_digest": "a" * 64,
+            "results": {"order_fulfilled": False, "private_result": "raw-secret"},
+            "all_passed": False,
+        }
+    )
+    denied = TerminalDenied.model_validate(
+        _observation_event_metadata(29)
+        | {
+            "proposal_id": "proposal_terminal_denied",
+            "proposal_hash": "b" * 64,
+            "target_status": "succeeded_verified",
+            "reason_code": "terminal_gate_denied",
+        }
+    )
+    failed = AgentTurnFailed.model_validate(
+        _observation_event_metadata(31)
+        | {"turn_id": "turn_retry_01", "reason_code": "agent_invalid_response"}
+    )
+    policy = RedactionPolicy(sensitive_keys=("private_result",))
+
+    immediate = _last_observation((proof, denied), policy)
+    after_retry = _last_observation((proof, denied, failed), policy)
+
+    assert immediate == after_retry
+    assert immediate is not None
+    assert immediate["event_type"] == "terminal_denied"
+    invariant_evidence = immediate["invariant_evidence"]
+    assert isinstance(invariant_evidence, Mapping)
+    assert invariant_evidence == {
+        "target_status": "succeeded_verified",
+        "evaluated_at_seq": 27,
+        "invariant_version": "runtime-v1",
+        "results": {"order_fulfilled": False, "private_result": "[REDACTED]"},
+        "all_passed": False,
+    }
+    assert "raw-secret" not in str(immediate)
+    assert "evidence_digest" not in invariant_evidence
 
 
 @pytest.mark.asyncio

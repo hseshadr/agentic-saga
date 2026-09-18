@@ -194,7 +194,7 @@ The packaged-demo release objective is a ready URL within the measured budget be
 | Python complexity | Xenon grade A; functions no longer than 15 lines unless independently justified |
 | Core JSON | Depth 16, 4,096 nodes, 256 items per container, 16 KiB per UTF-8 string, and 64 KiB encoded |
 | Manifest | At most 64 KiB, 16 levels, and 4,096 nodes; `turn_limit`, `tool_call_limit`, `token_limit`, and `elapsed_ms_limit` are positive; token and elapsed limits are each at least the turn limit. Programmatic budgets may use zero for no configured or remaining capacity |
-| Optional model turn | One model call, eight graph steps, zero SDK retries; fixed `token_limit // turn_limit` maximum-output allocation and `elapsed_ms_limit // turn_limit` agent-call deadline, further capped by adapter settings |
+| Optional model turn | At most two model requests (one bounded Pydantic correction), eight graph steps, zero SDK retries; the fixed per-turn output and time allocations are divided across both possible requests, then capped by adapter settings |
 | Provider spend | Not metered or capped by this library; operator-owned provider account controls are required for live calls |
 | Recorder bundle | JavaScript at most 110 KiB gzip; CSS at most 5 KiB gzip |
 | Reference catalog | Exactly four traces; at most 1 MiB total |

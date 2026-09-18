@@ -21,7 +21,13 @@ from agentic_saga.agents import (
     build_openrouter_driver,
     native_proposal_tool_names,
 )
-from agentic_saga.agents.deepagents import AgentFailureCategory, AgentPlanningError
+from agentic_saga.agents.deepagents import (
+    AgentFailureCategory,
+    AgentPlanningError,
+    native_model_request_limit,
+    native_result_retry_limit,
+)
+from agentic_saga.agents.openrouter import effective_model_request_caps
 from agentic_saga.contracts.actions import (
     AgentProposal,
     BeginCompensation,
@@ -66,7 +72,7 @@ class LiveEvalConfigurationError(RuntimeError):
 class RequestPolicyIdentity(StrictModel):
     """Versioned, non-secret identity for the live model request contract."""
 
-    schema_version: Literal["openrouter-native-tools-v1"] = "openrouter-native-tools-v1"
+    schema_version: Literal["openrouter-native-tools-v2"] = "openrouter-native-tools-v2"
     proposal_identity_contract: Literal["host-owned:saga_id+saga_seq"] = (
         "host-owned:saga_id+saga_seq"
     )
@@ -80,7 +86,8 @@ class RequestPolicyIdentity(StrictModel):
     )
     tool_allowlist_contract: Literal["recorded-exactly-per-turn"] = "recorded-exactly-per-turn"
     control_tool_authority: Literal["kernel-validated-proposals"] = "kernel-validated-proposals"
-    model_calls_per_agent_turn: Literal[1] = 1
+    adapter_retries: Literal[1] = 1
+    model_calls_per_agent_turn: Literal[2] = 2
     multiple_call_policy: Literal["reject-before-execution"] = "reject-before-execution"
     routing_strategy: Literal["pinned-model:openrouter-provider-routing"] = (
         "pinned-model:openrouter-provider-routing"
@@ -90,6 +97,8 @@ class RequestPolicyIdentity(StrictModel):
     reasoning_effort: Literal["low"] = "low"
     max_output_tokens: int = Field(default=512, strict=True, ge=1, le=4_096)
     timeout_ms: int = Field(default=30_000, strict=True, ge=100, le=60_000)
+    per_call_max_output_tokens: int = Field(strict=True, ge=1, le=4_096)
+    per_call_timeout_ms: int = Field(strict=True, ge=1, le=60_000)
     sdk_retries: Literal[0] = 0
 
 
@@ -381,7 +390,7 @@ def _identity(saga: SagaContext, context: _RunContext) -> EvalIdentity:
         tool_catalog_sha256=saga.manifest.tools.catalog_sha256,
         configured_model=context.settings.primary_model,
         suite=context.suite,
-        request_policy=_request_policy(context.settings),
+        request_policy=_request_policy(saga, context.settings),
         dependency_versions=context.versions,
         source_revision=context.source_revision,
         source_dirty=context.source_dirty,
@@ -433,13 +442,18 @@ def _git_environment() -> dict[str, str]:
     return environment | {"LC_ALL": "C"}
 
 
-def _request_policy(settings: OpenRouterSettings) -> RequestPolicyIdentity:
+def _request_policy(saga: SagaContext, settings: OpenRouterSettings) -> RequestPolicyIdentity:
+    output_tokens, timeout_ms = effective_model_request_caps(saga, settings)
     return RequestPolicyIdentity(
+        adapter_retries=native_result_retry_limit(),
+        model_calls_per_agent_turn=native_model_request_limit(),
         model=settings.primary_model,
         temperature=settings.temperature,
         reasoning_effort=settings.reasoning_effort,
         max_output_tokens=settings.max_output_tokens,
         timeout_ms=settings.timeout_ms,
+        per_call_max_output_tokens=output_tokens,
+        per_call_timeout_ms=timeout_ms,
         sdk_retries=settings.sdk_retries,
     )
 
