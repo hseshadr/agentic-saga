@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from importlib import import_module
-from types import MappingProxyType
+from types import MappingProxyType, ModuleType
 from typing import Annotated, Literal, Protocol, cast
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, TypeAdapter, ValidationError
@@ -644,13 +644,7 @@ def _finish_schema(observation: SagaObservation) -> dict[str, object]:
 
 
 def _load_pydantic_dependencies() -> _PydanticDependencies:
-    try:
-        deep = import_module("pydantic_deep")
-        ai = import_module("pydantic_ai")
-        toolsets = import_module("pydantic_ai.toolsets")
-        tools = import_module("pydantic_ai.tools")
-    except ModuleNotFoundError:
-        raise RuntimeError("install agentic-saga[agent] to use the agent adapter") from None
+    deep, ai, toolsets, tools = _import_pydantic_modules()
     return _PydanticDependencies(
         create_agent=cast(_CreateAgent, deep.create_deep_agent),
         deps_factory=cast(Callable[[], object], deep.DeepAgentDeps),
@@ -661,6 +655,17 @@ def _load_pydantic_dependencies() -> _PydanticDependencies:
         usage_limits=cast(_UsageLimitsFactory, ai.UsageLimits),
         required_tool_capability=_required_tool_capability(),
     )
+
+
+def _import_pydantic_modules() -> tuple[ModuleType, ModuleType, ModuleType, ModuleType]:
+    try:
+        deep = import_module("pydantic_deep")
+        ai = import_module("pydantic_ai")
+        toolsets = import_module("pydantic_ai.toolsets")
+        tools = import_module("pydantic_ai.tools")
+    except ModuleNotFoundError:
+        raise RuntimeError("install agentic-saga[agent] to use the agent adapter") from None
+    return deep, ai, toolsets, tools
 
 
 def _required_tool_capability() -> object:

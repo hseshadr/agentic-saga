@@ -135,6 +135,8 @@ def _model_caps(context: SagaContext) -> tuple[int, int]:
 def effective_model_request_caps(
     context: SagaContext, settings: OpenRouterSettings
 ) -> tuple[int, int]:
+    """Return per-request output-token and timeout caps within one reserved turn."""
+
     output_tokens, timeout_ms = _model_caps(context)
     return min(settings.max_output_tokens, output_tokens), min(settings.timeout_ms, timeout_ms)
 
