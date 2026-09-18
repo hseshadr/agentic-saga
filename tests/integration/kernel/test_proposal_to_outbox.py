@@ -68,6 +68,7 @@ from agentic_saga.kernel.ports import (
     Lease,
     LeaseLost,
     OutboxState,
+    ProposalIdentityConflict,
     StoreConflict,
     TransitionBatch,
     TransitionReceipt,
@@ -889,7 +890,7 @@ def test_exact_retry_uses_durable_receipt_but_changed_content_conflicts(tmp_path
 
     assert retried == first
     assert len(store.read_events(SAGA_ID)) == 3
-    with pytest.raises(StoreConflict, match="proposal identity"):
+    with pytest.raises(ProposalIdentityConflict, match="proposal identity"):
         runtime.submit_proposal(SAGA_ID, proposal(rationale="Changed request."), lease)
 
 

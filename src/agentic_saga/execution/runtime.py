@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from secrets import token_hex
-from typing import cast
+from typing import Protocol, cast, runtime_checkable
 
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
@@ -34,7 +34,9 @@ from agentic_saga.contracts.events import (
 from agentic_saga.contracts.redaction import RedactionPolicy, contains_sensitive_json, redact_json
 from agentic_saga.contracts.runtime import (
     AgentDriver,
+    ControlProposalCapabilities,
     ExecutionBudget,
+    ReadEvidence,
     SagaGoal,
     SagaObservation,
     SagaResult,
@@ -60,6 +62,7 @@ from agentic_saga.kernel.ports import (
     Lease,
     LeaseLost,
     LeaseUnavailable,
+    ProposalIdentityConflict,
     StoreConflict,
     TransitionBatch,
 )
@@ -91,10 +94,30 @@ _OBSERVATION_EVENTS = (
     ReadObserved,
     ReadUnavailable,
 )
+_EVIDENCE_INVALIDATING_EVENTS = (
+    EffectIntentRecorded,
+    EffectOutcomeRecorded,
+    CompensationIntentRecorded,
+    ReconciliationRecorded,
+)
+_AGENT_FAILURE_REASONS = {
+    "invalid_response": "agent_invalid_response",
+    "request_rejected": "agent_request_rejected",
+    "rate_limit_exhausted": "agent_rate_limit_exhausted",
+    "server_error_exhausted": "agent_server_error_exhausted",
+    "transport_exhausted": "agent_transport_exhausted",
+    "internal": "agent_internal",
+}
 
 
 class DefinitionRuntimeMismatch(ValueError):
     """Raised when pinned definition dependencies differ from the active kernel."""
+
+
+@runtime_checkable
+class _CategorizedAgentFailure(Protocol):
+    @property
+    def category(self) -> object: ...
 
 
 @dataclass(frozen=True)
@@ -102,6 +125,12 @@ class _BudgetState:
     remaining: ExecutionBudget
     turn_count: int
     invalid_count: int
+
+
+@dataclass(frozen=True)
+class _AgentAnswer:
+    proposal: AgentProposal | None = None
+    failure_reason: str | None = None
 
 
 @dataclass
@@ -225,6 +254,31 @@ def _safe_now(clock: Clock) -> datetime:
     if value.utcoffset() != UTC.utcoffset(value):
         raise ValueError("runtime clock must return UTC")
     return value
+
+
+def _validated_agent_answer(raw: object) -> _AgentAnswer:
+    try:
+        proposal = _AGENT_PROPOSAL.validate_python(raw, strict=True)
+    except ValidationError:
+        return _AgentAnswer(failure_reason="agent_invalid_response")
+    return _AgentAnswer(proposal=proposal)
+
+
+def _agent_failure_reason(error: Exception) -> str:
+    category = _agent_failure_category(error)
+    if category is None:
+        return "agent_internal"
+    return _AGENT_FAILURE_REASONS.get(category, "agent_internal")
+
+
+def _agent_failure_category(error: Exception) -> str | None:
+    if not isinstance(error, _CategorizedAgentFailure):
+        return None
+    try:
+        category = error.category
+    except Exception:
+        return None
+    return category if isinstance(category, str) else None
 
 
 def _unique_worker_id(worker_id: str | None) -> str:
@@ -575,24 +629,47 @@ class SagaRuntime:
     async def _reserved_cycle(
         self, snapshot: SagaSnapshot, context: _LoopContext, accounting: _BudgetState
     ) -> SagaResult | None:
+        controls = self._kernel.advertised_controls(snapshot, context.lease)
         current, reservation = self._reserve(snapshot, context, accounting)
-        observation = self._observation(current, context.goal, context.definition)
-        proposal = await _await_with_authority(
+        observation = self._observation(current, context.goal, context.definition, controls)
+        answer = await _await_with_authority(
             context.authority,
             lambda: self._ask(context.agent, observation, context.definition, reservation),
         )
-        if proposal is None:
-            return await self._agent_unavailable(current, context, reservation.turn_id)
-        await self._apply(current, context, proposal, reservation.turn_id)
+        if answer.proposal is None:
+            return await self._agent_failed(current, context, reservation.turn_id, answer)
+        return await self._apply_untrusted(current, context, answer.proposal, reservation.turn_id)
+
+    async def _apply_untrusted(
+        self,
+        snapshot: SagaSnapshot,
+        context: _LoopContext,
+        proposal: AgentProposal,
+        turn_id: str,
+    ) -> SagaResult | None:
+        try:
+            await self._apply(snapshot, context, proposal, turn_id)
+        except ProposalIdentityConflict:
+            return await self._fail_and_unwind(
+                snapshot, context, "proposal_identity_reused", turn_id
+            )
         return None
 
-    async def _agent_unavailable(
-        self, snapshot: SagaSnapshot, context: _LoopContext, turn_id: str
-    ) -> SagaResult:
+    async def _agent_failed(
+        self,
+        snapshot: SagaSnapshot,
+        context: _LoopContext,
+        turn_id: str,
+        answer: _AgentAnswer,
+    ) -> SagaResult | None:
+        reason = answer.failure_reason or "agent_internal"
+        if reason == "agent_invalid_response":
+            self._record_failure(snapshot, context.lease, turn_id, reason)
+            return None
         return await self._fail_and_unwind(
             snapshot,
             context,
-            "agent_unavailable",
+            reason,
             turn_id,
         )
 
@@ -602,15 +679,17 @@ class SagaRuntime:
         observation: SagaObservation,
         definition: SagaDefinition,
         reservation: AgentTurnReserved,
-    ) -> AgentProposal | None:
+    ) -> _AgentAnswer:
         snapshot = self._store.load_snapshot(observation.saga_id)
         descriptors = _eligible_descriptors(definition, snapshot)
         try:
             async with asyncio.timeout(reservation.reserved_elapsed_ms / 1_000):
                 raw = await agent.next_action(observation, descriptors)
-            return _AGENT_PROPOSAL.validate_python(raw, strict=True)
-        except Exception:
-            return None
+        except TimeoutError:
+            return _AgentAnswer(failure_reason="agent_deadline_exceeded")
+        except Exception as error:
+            return _AgentAnswer(failure_reason=_agent_failure_reason(error))
+        return _validated_agent_answer(raw)
 
     async def _apply(
         self,
@@ -791,10 +870,16 @@ class SagaRuntime:
         return self._commit(snapshot, context.lease, event, f"reserve:{turn_id}"), event
 
     def _observation(
-        self, snapshot: SagaSnapshot, goal: SagaGoal, definition: SagaDefinition
+        self,
+        snapshot: SagaSnapshot,
+        goal: SagaGoal,
+        definition: SagaDefinition,
+        controls: ControlProposalCapabilities,
     ) -> SagaObservation:
         events = self._store.read_events(snapshot.saga_id)
-        accounting = _accounting(events, definition)
+        evidence = _read_evidence(
+            events, definition.redaction_policy, definition.budget.tool_call_limit
+        )
         return SagaObservation(
             saga_id=snapshot.saga_id,
             saga_seq=snapshot.seq,
@@ -802,7 +887,9 @@ class SagaRuntime:
             goal=goal,
             last_action=_last_observation(events, definition.redaction_policy),
             projection=_public_json(snapshot.model_dump(mode="json"), definition.redaction_policy),
-            remaining_budget=accounting.remaining,
+            remaining_budget=_accounting(events, definition).remaining,
+            read_evidence=evidence,
+            proposal_controls=controls,
         )
 
     async def _fail_and_unwind(
@@ -1131,6 +1218,52 @@ def _last_observation(events: Sequence[LedgerEvent], policy: RedactionPolicy) ->
         if isinstance(event, _OBSERVATION_EVENTS):
             return _public_json(event.model_dump(mode="json"), policy)
     return None
+
+
+def _read_evidence(
+    events: Sequence[LedgerEvent], policy: RedactionPolicy, limit: int
+) -> tuple[ReadEvidence, ...]:
+    starts: dict[tuple[str, str, str], ReadStarted] = {}
+    completed: list[ReadEvidence] = []
+    latest_change_seq = _latest_external_change_seq(events)
+    for event in events:
+        if isinstance(event, ReadStarted):
+            starts[_read_key(event)] = event
+        elif isinstance(event, (ReadObserved, ReadUnavailable)):
+            completed.append(
+                _completed_read_evidence(starts[_read_key(event)], event, policy, latest_change_seq)
+            )
+    return tuple(completed[-limit:]) if limit > 0 else ()
+
+
+def _latest_external_change_seq(events: Sequence[LedgerEvent]) -> int:
+    return max(
+        (event.saga_seq for event in events if isinstance(event, _EVIDENCE_INVALIDATING_EVENTS)),
+        default=0,
+    )
+
+
+def _completed_read_evidence(
+    started: ReadStarted,
+    outcome: ReadObserved | ReadUnavailable,
+    policy: RedactionPolicy,
+    latest_change_seq: int,
+) -> ReadEvidence:
+    values: dict[str, object] = {
+        "tool_name": outcome.tool_name,
+        "command": _public_json(started.redacted_command, policy),
+        "observed_at_saga_seq": outcome.saga_seq,
+        "freshness": "stale" if latest_change_seq > outcome.saga_seq else "fresh",
+    }
+    if isinstance(outcome, ReadObserved):
+        values["result"] = _public_json(outcome.redacted_result, policy)
+    else:
+        values["unavailable_reason"] = outcome.reason_code
+    return ReadEvidence.model_validate(values, strict=True)
+
+
+def _read_key(event: ReadStarted | ReadObserved | ReadUnavailable) -> tuple[str, str, str]:
+    return event.turn_id, event.proposal_id, event.tool_name
 
 
 def _human_reason(events: Sequence[LedgerEvent]) -> str | None:

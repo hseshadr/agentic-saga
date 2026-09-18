@@ -18,8 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Domain-neutral Saga Context Manifest loading with bounded safe YAML, deterministic agent context,
   authoritative tool-catalog resolution, named check references, and ecommerce/ticket-booking
   examples.
-- Optional planning-only Deep Agents/OpenRouter adapter with strict proposals, ordered model
-  fallback, deterministic offline injection, and no business-tool execution authority.
+- Optional planning-only Pydantic Deep/Pydantic AI/OpenRouter adapter with one deferred native tool
+  call, pinned-model provider failover, deterministic offline injection, and no tool-execution
+  authority.
 - Executable offline ecommerce reference with a separate durable provider, proposal-only agent,
   exact payment policy, four pytest-bdd Saga paths, restart recovery, and redacted evidence.
 - Typed `BeginCompensation` proposals that let an agent request the kernel-owned compensation phase
@@ -42,10 +43,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fail-closed offline release measurement, exact wheel/source-archive contracts, and a hosted
   Python 3.12/3.13 packaged-browser matrix.
 - Secret-free `.env.example` loading for explicitly authorized OpenRouter evaluation, with local
-  `.env` exclusion, output redaction, and no ambient LangSmith tracing.
+  `.env` exclusion and output redaction.
 - Third-party license notices packaged with the bundled Flight Recorder dependencies.
+- Host-owned proposal identity and Saga freshness binding, so models choose business intent while
+  the deterministic adapter owns protocol fields and fails closed on identity reuse.
+- Bounded cumulative read evidence with ledger sequence and conservative freshness labels, plus
+  application-owned semantic tool descriptions and model-facing decision trajectories for success,
+  kernel-ordered compensation, clean abort, and runtime-owned reconciliation.
+- Versioned live-request policy evidence and a strict straightforward-path success gate that prevent
+  stale or cleanly aborted model runs from qualifying as release evidence.
+- Native happy-path, failure-after-charge compensation, unknown-outcome reconciliation, and human
+  escalation examples that make the model/kernel authority split explicit.
 
 ### Changed
+
+- Replaced the pre-release custom structured-response agent path with exactly pinned
+  `pydantic-deep==0.3.43` and `pydantic-ai-slim[openrouter]==2.45.0`. The model now selects one
+  eligible native proposal tool while the kernel retains every execution decision.
+- Disabled Pydantic Deep's general-purpose filesystem, execution, web, planning, memory, skill,
+  subagent, team, checkpoint, forking, context-discovery, and cost-tracking capabilities for this
+  bounded transactional adapter.
 
 - Removed pre-release domain-specific policy slots. Application policies, strict schemas, and
   adapters enforce domain constraints; manifests reference application-registered checks by name.
@@ -58,3 +75,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   previously generated identifiers and deliberately distinct identity domains.
 - Added one supported `compose_runtime` assembly path with eight explicit inputs, while keeping each
   `SagaGoal` as separate transaction input to `runtime.start(...)`.
+- Classified rejected provider requests separately from invalid model output, and converted proposal
+  identity conflicts into durable, redacted agent-turn failures followed by deterministic unwind.
+- Returned the maintained OpenRouter route to `openai/gpt-oss-20b` for the native deferred-tool
+  evaluation. The adapter requires one tool call locally and makes no release-quality claim until
+  the fixed live-model corpus passes.
+- Removed unsupported OpenRouter `seed` and `parallel_tool_calls` request parameters after endpoint
+  probing showed the 20B route accepts the base native-tools request but not that parameter
+  combination. Zero or multiple calls still fail closed before execution.
+- Raised the bounded per-turn OpenRouter deadline to 30 seconds after live evidence showed the
+  pinned model could exceed the earlier deadline without a provider or schema failure.

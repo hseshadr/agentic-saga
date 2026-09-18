@@ -22,6 +22,9 @@ from agentic_saga.contracts.outcomes import (
 
 type _Correlation = Annotated[str, StringConstraints(strict=True, min_length=1, max_length=500)]
 _MAX_VERSION_LENGTH: Final[int] = 200
+_MAX_DESCRIPTION_LENGTH: Final[int] = 2_000
+_DEFAULT_READ_DESCRIPTION: Final[str] = "Read current authoritative state."
+_DEFAULT_EFFECT_DESCRIPTION: Final[str] = "Request one durable external effect."
 
 
 class EffectContext(BaseModel):
@@ -94,6 +97,11 @@ def _require_version(value: str, role: str) -> None:
         raise ValueError(f"{role} must contain between 1 and 200 characters")
 
 
+def _require_description(value: str, role: str) -> None:
+    if type(value) is not str or not value.strip() or len(value) > _MAX_DESCRIPTION_LENGTH:
+        raise ValueError(f"{role} description must contain between 1 and 2000 characters")
+
+
 def _missing_schema_requirement(model: type[BaseModel]) -> str | None:
     if model.model_config.get("strict") is not True:
         return "strict=True"
@@ -124,8 +132,10 @@ class ReadToolDefinition[CommandT: BaseModel, ResultT: BaseModel]:
     input_model: type[CommandT]
     result_model: type[ResultT]
     adapter: ReadAdapter[CommandT, ResultT]
+    description: str = _DEFAULT_READ_DESCRIPTION
 
     def __post_init__(self) -> None:
+        _require_description(self.description, "read")
         _require_safe_schema(self.name, "read input", self.input_model)
         _require_safe_schema(self.name, "read result", self.result_model)
 
@@ -142,8 +152,10 @@ class EffectToolDefinition[CommandT: BaseModel]:
     compensation_dependencies: tuple[str, ...] = ()
     compensation_independent_with: tuple[str, ...] = ()
     compensation_resource_selector: tuple[str, ...] = ()
+    description: str = _DEFAULT_EFFECT_DESCRIPTION
 
     def __post_init__(self) -> None:
+        _require_description(self.description, "effect")
         _require_version(self.definition_version, "effect definition version")
         _require_version(self.command_schema_version, "effect command schema version")
         _require_safe_schema(self.name, "effect input", self.input_model)

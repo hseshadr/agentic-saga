@@ -44,7 +44,7 @@ from agentic_saga.contracts.redaction import (
     _is_versioned_secret_reference,
     redact_json,
 )
-from agentic_saga.contracts.runtime import SagaStatus
+from agentic_saga.contracts.runtime import ControlProposalCapabilities, SagaStatus
 from agentic_saga.contracts.tools import EffectToolDefinition, ToolRegistry
 from agentic_saga.kernel.failpoints import (
     DurabilityFailpoint,
@@ -72,6 +72,7 @@ from agentic_saga.kernel.ports import (
     Lease,
     LeaseLost,
     OutboxCommand,
+    ProposalIdentityConflict,
     StoreConflict,
     TransitionBatch,
     TransitionReceipt,
@@ -89,6 +90,15 @@ _TERMINAL_STATUSES = frozenset(
         SagaStatus.RESOLVED_WITH_EXCEPTION,
     }
 )
+
+
+def _compensation_preview(snapshot: SagaSnapshot) -> BeginCompensation:
+    return BeginCompensation(
+        proposal_id="proposal_control_preview",
+        based_on_saga_seq=snapshot.seq,
+        reason_code="forward_goal_unreachable",
+        rationale="Evaluate the deterministic compensation gate.",
+    )
 
 
 class ProposalResult(BaseModel):
@@ -463,6 +473,17 @@ class SagaKernel:
             return self._reject(request, "unsafe_command")
         return self._authorize_read(request, proposal)
 
+    def advertised_controls(
+        self, snapshot: SagaSnapshot, lease: Lease
+    ) -> ControlProposalCapabilities:
+        """Evaluate current control proposals without exposing trusted policy context."""
+        proposal = _compensation_preview(snapshot)
+        try:
+            context = self._build_context(snapshot, proposal, lease)
+        except Exception:
+            context = None
+        return self._policy.advertised_controls(snapshot, context)
+
     def _authorize_read(self, request: _Request, proposal: ToolCall) -> ProposalResult:
         try:
             context = self._context(request)
@@ -506,7 +527,7 @@ class SagaKernel:
         if receipt is None:
             return None
         if receipt.request_digest != digest:
-            raise StoreConflict("proposal identity was reused with changed content")
+            raise ProposalIdentityConflict("proposal identity was reused with changed content")
         return _result_from_receipt(receipt)
 
     def _submit_new(self, request: _Request) -> ProposalResult:
@@ -564,10 +585,15 @@ class SagaKernel:
             raise LeaseLost("proposal lease has expired")
 
     def _context(self, request: _Request) -> PolicyContext:
-        context = self._contexts.build(request.snapshot, request.proposal, request.lease)
+        return self._build_context(request.snapshot, request.proposal, request.lease)
+
+    def _build_context(
+        self, snapshot: SagaSnapshot, proposal: AgentProposal, lease: Lease
+    ) -> PolicyContext:
+        context = self._contexts.build(snapshot, proposal, lease)
         values = context.model_dump() | {
-            "fence_token": request.lease.fence_token,
-            "used_approval_ids": request.snapshot.consumed_approval_ids,
+            "fence_token": lease.fence_token,
+            "used_approval_ids": snapshot.consumed_approval_ids,
         }
         return PolicyContext.model_validate(values)
 

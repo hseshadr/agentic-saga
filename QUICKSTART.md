@@ -115,18 +115,25 @@ dirty-tree result is diagnostic only. Every release candidate requires a clean e
 and matching hosted CI run. The
 [operations and release contract](docs/operations.md) lists every threshold and required artifact.
 
-## Optional planning adapter
+## Optional Pydantic Deep planning adapter
 
-Install and construct the Deep Agents/OpenRouter integration without making a model call:
+Install the exactly pinned optional integration and construct it without making a model call:
 
 ```bash
 uv sync --extra agent --group dev
 uv run pytest tests/unit/agents -q
 ```
 
-The adapter receives public resolved context and returns one strict proposal. It receives no
-business-tool callable, receipt, credential, or kernel authority. See the
-[agent adapter guide](docs/agent-adapter.md).
+The `agent` extra pins `pydantic-deep==0.3.43` and
+`pydantic-ai-slim[openrouter]==2.45.0`. Pydantic Deep owns the model/tool protocol: it receives one
+strict native toolset containing only the actions currently eligible. The deterministic Saga
+kernel owns execution, durable state, unknown-outcome reconciliation, compensation order, and
+terminal proof. No business-tool callable, receipt, credential, idempotency key, or kernel
+authority reaches the model harness.
+
+See the [agent adapter guide](docs/agent-adapter.md) for the complete native happy path,
+failure-after-charge compensation path, disabled Pydantic Deep capabilities, and human-escalation
+boundary.
 
 Validate the fixed 24-case evaluation corpus without a model:
 

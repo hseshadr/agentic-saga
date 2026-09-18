@@ -9,6 +9,7 @@ import pytest
 from examples.ecommerce.evaluation import (
     CorpusValidationError,
     EvalCategory,
+    ReleaseProof,
     load_corpus,
 )
 
@@ -69,7 +70,10 @@ def _document(cases: list[dict[str, object]]) -> dict[str, object]:
 
 
 def _full_cases() -> list[dict[str, object]]:
-    return [_case(f"case-{index:02d}") for index in range(24)]
+    cases = [_case(f"case-{index:02d}") for index in range(24)]
+    for case, proof in zip(cases, ReleaseProof, strict=False):
+        case["release_proof"] = proof.value
+    return cases
 
 
 def _write(path: Path, value: dict[str, object]) -> Path:
@@ -96,6 +100,18 @@ def test_should_keep_six_cases_in_each_evaluation_category() -> None:
     assert counts == {category: 6 for category in EvalCategory}
 
 
+def test_should_define_exactly_four_canonical_release_proofs() -> None:
+    cases = load_corpus(CORPUS_PATH)
+    release = {case.release_proof: case.case_id for case in cases if case.release_proof}
+
+    assert release == {
+        ReleaseProof.HAPPY_PATH: "s01-basic-order",
+        ReleaseProof.COMPENSATION: "r05-refund-and-cancel",
+        ReleaseProof.UNKNOWN_RECONCILIATION: "r06-partial-reservation-repair",
+        ReleaseProof.HUMAN_ESCALATION: "e01-irreversible-action",
+    }
+
+
 def test_should_require_a_deterministic_oracle_for_every_case() -> None:
     # Given every versioned evaluation case.
     cases = load_corpus(CORPUS_PATH)
@@ -104,6 +120,26 @@ def test_should_require_a_deterministic_oracle_for_every_case() -> None:
     # Then it has an allowed outcome or requires a safe human pause.
     assert all(case.allowed_states or case.escalation_required for case in cases)
     assert all(case.required_semantic_events for case in cases)
+
+
+def test_unknown_refund_goal_should_not_steer_the_model_to_the_fixture_outcome() -> None:
+    cases = {case.case_id: case for case in load_corpus(CORPUS_PATH)}
+    recovery_goal = cases["r05-refund-and-cancel"].goal
+    unknown_goal = cases["e03-unknown-refund"].goal
+
+    assert unknown_goal == recovery_goal
+    assert "unresolved" not in unknown_goal.lower()
+    assert "human" not in unknown_goal.lower()
+
+
+def test_already_reserved_goal_should_require_current_inventory_evidence() -> None:
+    cases = {case.case_id: case for case in load_corpus(CORPUS_PATH)}
+    goal = cases["s05-reservation-already-satisfied"].goal.lower()
+
+    assert "authoritative" not in goal
+    assert "evidence" not in goal
+    assert "already confirms" not in goal
+    assert "inspect" in goal
 
 
 @pytest.mark.parametrize("schema_version", ["0.9", "2.0"])

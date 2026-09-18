@@ -31,6 +31,8 @@ EXPECTED_TRACES = {
 REQUIRED_SDIST_DOCUMENTS = {
     "CHANGELOG.md",
     "docs/architecture.html",
+    "docs/architecture/agentic-saga.architecture.json",
+    "docs/architecture/index.html",
     "docs/flight-recorder.md",
     "docs/operations.md",
 }
@@ -330,6 +332,7 @@ def test_build_configuration_includes_trust_files() -> None:
     assert '"/CHANGELOG.md"' in pyproject
     assert '"/docs/operations.md"' in pyproject
     assert '"/docs/architecture.html"' in pyproject
+    assert '"/docs/architecture"' in pyproject
     assert '"/docs/flight-recorder.md"' in pyproject
 
 

@@ -30,9 +30,8 @@ Issues = "https://github.com/hseshadr/agentic-saga/issues"
 
 [project.optional-dependencies]
 agent = [
-  "deepagents>=0.7.13,<0.8",
-  "langchain-openrouter>=0.2.8,<0.3",
-  "langsmith>=0.12,<1",
+  "pydantic-ai-slim[openrouter]==2.45.0",
+  "pydantic-deep==0.3.43",
   "python-dotenv>=1.1,<2",
 ]
 
@@ -41,11 +40,10 @@ agentic-saga = "agentic_saga.cli.main:entrypoint"
 
 [dependency-groups]
 dev = [
-  "deepagents>=0.7.13,<0.8",
+  "pydantic-ai-slim[openrouter]==2.45.0",
+  "pydantic-deep==0.3.43",
   "hatchling==1.27.0",
   "hypothesis>=6.130,<7",
-  "langchain-openrouter>=0.2.8,<0.3",
-  "langsmith>=0.12,<1",
   "mutmut>=3.6,<4",
   "mypy>=1.17,<2",
   "pip>=25,<27",
@@ -81,6 +79,7 @@ include = [
   "/THIRD_PARTY_NOTICES.md",
   "/PROVENANCE.md",
   "/docs/agent-adapter.md",
+  "/docs/architecture",
   "/docs/architecture.html",
   "/docs/context-manifest.md",
   "/docs/flight-recorder.md",

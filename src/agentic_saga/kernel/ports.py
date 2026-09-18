@@ -50,6 +50,10 @@ class StoreConflict(StoreError):
     """Raised when an identity, claim, or compare-and-swap conflicts."""
 
 
+class ProposalIdentityConflict(StoreConflict):
+    """Raised when one proposal identity is reused for different content."""
+
+
 class StaleFence(StoreConflict):
     """Raised when a writer presents an obsolete Saga fence token."""
 

@@ -33,15 +33,15 @@ quiescent in `HUMAN_REQUIRED`.
 
 ## Architecture
 
-[Open the architecture signal board](docs/architecture.html) for the visual lifecycle and exact
-source/test map.
+[Explore the interactive architecture](docs/architecture/index.html) to see how the agent chooses
+proposals while the deterministic kernel owns effects, evidence, compensation, and escalation.
 
 | Surface | One responsibility |
 | --- | --- |
 | `src/agentic_saga/manifest.py` | Validate domain-neutral `saga.yaml` context and registered names. |
 | `src/agentic_saga/contracts/` | Define strict, serializable values at every public boundary. |
 | `src/agentic_saga/cli/` | Expose the packaged demo command and no kernel authority. |
-| `src/agentic_saga/agents/` | Return one strict proposal; never receive business-tool authority. |
+| `src/agentic_saga/agents/` | Translate one deferred native tool call into a proposal; never receive business-tool authority. |
 | `src/agentic_saga/kernel/` | Own policy, identity, budgets, compensation frontier, and terminal proof. |
 | `src/agentic_saga/execution/` | Dispatch, reconcile, recover, and coordinate leases. |
 | `src/agentic_saga/storage/` | Provide append-only SQLite evidence, replay, backup, and restore. |
@@ -123,9 +123,9 @@ composition setting. See the complete working assembly in
   restore, and redacted evidence export.
 - Strict, bounded, deliberately public `saga.yaml` loading with authoritative registered
   descriptors and named checks.
-- Optional Deep Agents + OpenRouter planning adapter that returns one strict proposal while the
-  kernel retains every side-effect decision. Ambient LangSmith tracing is disabled so this
-  maintained adapter has no unrequested tracing destination.
+- Optional Pydantic Deep + Pydantic AI/OpenRouter adapter that exposes only currently eligible
+  native proposal tools. Pydantic Deep owns the model/tool protocol; the deterministic kernel owns
+  execution, state, compensation order, and terminal proof.
 - Four executable `pytest-bdd` ecommerce paths: verified success, reverse compensation, lost-response
   restart reconciliation, and unverifiable compensation requiring a human.
 - A versioned 24-case deterministic evaluation corpus plus a separately opt-in, credential-gated
@@ -184,5 +184,6 @@ Start with the [Quickstart](QUICKSTART.md). Before integrating a real provider, 
 [Kernel safety contract](docs/kernel-safety-contract.md),
 [operations and release contract](docs/operations.md),
 [Saga Context Manifest guide](docs/context-manifest.md), and
-[agent adapter guide](docs/agent-adapter.md). The packaged Flight Recorder's bundled dependencies
+[agent adapter guide](docs/agent-adapter.md), which includes native happy-path and compensation
+trajectories. The packaged Flight Recorder's bundled dependencies
 and complete licenses are listed in [third-party notices](THIRD_PARTY_NOTICES.md).

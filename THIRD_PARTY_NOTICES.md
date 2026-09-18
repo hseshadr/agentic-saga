@@ -4,6 +4,12 @@ Agentic Saga's packaged Flight Recorder includes minified copies of the runtime 
 They are distributed under the MIT License. Development-only dependencies are not bundled in the
 Flight Recorder and are not listed here.
 
+The optional Python agent integration installs, but does not bundle, exactly pinned
+`pydantic-deep==0.3.43` and `pydantic-ai-slim[openrouter]==2.45.0`. Both are MIT-licensed upstream
+projects. Agentic Saga disables Pydantic Deep's general-purpose filesystem, execution, web,
+planning, memory, skills, subagent, team, checkpoint, forking, context-discovery, and cost-tracking
+capabilities; it uses the typed model/tool protocol for deferred proposals only.
+
 ## React family
 
 Components: `react 19.2.8`, `react-dom 19.2.8`, and `scheduler 0.27.0`

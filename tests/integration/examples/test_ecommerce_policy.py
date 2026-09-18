@@ -9,10 +9,10 @@ from pathlib import Path
 
 import pytest
 
-from agentic_saga.contracts.actions import AgentProposal, ToolCall
+from agentic_saga.contracts.actions import AgentProposal, BeginCompensation, Escalate, ToolCall
 from agentic_saga.contracts.clock import FakeClock
 from agentic_saga.contracts.common import thaw_json_object
-from agentic_saga.contracts.events import CompensationStarted, HumanRequired
+from agentic_saga.contracts.events import CompensationStarted, HumanRequired, ProposalRejected
 from agentic_saga.contracts.runtime import SagaGoal, SagaObservation, SagaStatus, ToolDescriptor
 from examples.ecommerce import provider as provider_module
 from examples.ecommerce.demo import (
@@ -40,6 +40,49 @@ class TamperedPaymentDriver:
             return proposal
         arguments = thaw_json_object(proposal.arguments) | dict(self.changes)
         return ToolCall.model_validate(proposal.model_dump() | {"arguments": arguments})
+
+
+@dataclass
+class PrematureCompensationDriver:
+    delegate: ScriptedProposalDriver = field(default_factory=ScriptedProposalDriver)
+
+    async def next_action(
+        self, observation: SagaObservation, tools: Sequence[ToolDescriptor]
+    ) -> AgentProposal:
+        proposal_id = f"proposal_{observation.saga_seq:020d}"
+        if _last_action_was_rejected(observation):
+            return Escalate(
+                proposal_id=proposal_id,
+                based_on_saga_seq=observation.saga_seq,
+                reason_code="premature_compensation_rejected",
+                rationale="A human should inspect the rejected compensation request.",
+            )
+        if _confirmed_reservation(observation):
+            return BeginCompensation(
+                proposal_id=proposal_id,
+                based_on_saga_seq=observation.saga_seq,
+                reason_code="speculative_failure",
+                rationale="Hostile attempt to unwind a healthy forward path.",
+            )
+        return await self.delegate.next_action(observation, tools)
+
+
+def _last_action_was_rejected(observation: SagaObservation) -> bool:
+    return observation.last_action is not None and (
+        observation.last_action.get("event_type") == "proposal_rejected"
+    )
+
+
+def _confirmed_reservation(observation: SagaObservation) -> bool:
+    operations = observation.projection.get("operations")
+    if not isinstance(operations, Mapping):
+        return False
+    return any(
+        isinstance(item, Mapping)
+        and item.get("tool_name") == "reserve_inventory"
+        and item.get("status") == "effect_confirmed"
+        for item in operations.values()
+    )
 
 
 def test_provider_closes_every_sqlite_connection(tmp_path: Path) -> None:
@@ -103,6 +146,27 @@ async def test_tampered_payment_never_reaches_provider(
     assert (count.executes, count.effects, count.reconciliations) == (0, 0, 0)
     if tool == "refund_payment":
         await _assert_stalled_compensation_is_durable(assembly, result.saga_id, clock)
+
+
+@pytest.mark.asyncio
+async def test_healthy_forward_path_rejects_premature_compensation(tmp_path: Path) -> None:
+    clock = FakeClock(datetime(2026, 1, 1, tzinfo=UTC))
+    assembly = _initialize(tmp_path, ScenarioName.HAPPY_PATH, clock)
+    goal = SagaGoal(
+        goal_id="goal_compensation_guard", text=assembly.context.manifest.objective, context={}
+    )
+
+    result = await assembly.runtime.start(
+        definition=assembly.definition,
+        goal=goal,
+        agent=PrematureCompensationDriver(),
+    )
+
+    events = assembly.store.read_events(result.saga_id)
+    assert result.state is SagaStatus.HUMAN_REQUIRED
+    assert not any(isinstance(item, CompensationStarted) for item in events)
+    rejection = next(item for item in events if isinstance(item, ProposalRejected))
+    assert rejection.reason_code == "compensation_not_justified"
 
 
 async def _assert_stalled_compensation_is_durable(

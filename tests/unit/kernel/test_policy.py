@@ -155,6 +155,33 @@ def failing_approval_required(
     raise RuntimeError(policy_context.approval.auth_proof)
 
 
+def deny_compensation_entry(
+    proposal: BeginCompensation,
+    snapshot: SagaSnapshot,
+    policy_context: PolicyContext,
+) -> bool:
+    del proposal, snapshot, policy_context
+    return False
+
+
+def allow_compensation_entry(
+    proposal: BeginCompensation,
+    snapshot: SagaSnapshot,
+    policy_context: PolicyContext,
+) -> bool:
+    del proposal, snapshot, policy_context
+    return True
+
+
+def failing_compensation_entry(
+    proposal: BeginCompensation,
+    snapshot: SagaSnapshot,
+    policy_context: PolicyContext,
+) -> bool:
+    del proposal, snapshot, policy_context
+    raise RuntimeError("compensation-callback-secret")
+
+
 def verify_approval(
     decision: HumanDecision,
     proposal: ToolCall,
@@ -246,6 +273,7 @@ def test_should_keep_human_resolution_authentication_store_owned() -> None:
         "is_duplicate_effect",
         "approval_required",
         "approval_verifier",
+        "compensation_allowed",
         "tool_advertisement",
     )
     assert not hasattr(policy, "authenticate_human_resolution")
@@ -312,16 +340,78 @@ def snapshot(
     operations: dict[str, OperationRecord] | None = None,
     obligations: dict[str, CompensationObligation] | None = None,
     pending_approval: bool = False,
+    **changes: object,
 ) -> SagaSnapshot:
-    return SagaSnapshot(
-        saga_id=SAGA_ID,
-        seq=seq,
-        status=status,
-        definition_version="generic-v1",
-        operations=operations or {},
-        obligations=obligations or {},
-        pending_approval=pending_approval,
+    values = {
+        "saga_id": SAGA_ID,
+        "seq": seq,
+        "status": status,
+        "definition_version": "generic-v1",
+        "operations": operations or {},
+        "obligations": obligations or {},
+        "pending_approval": pending_approval,
+    }
+    return SagaSnapshot.model_validate(
+        values | changes,
+        strict=True,
     )
+
+
+def test_should_advertise_only_controls_the_kernel_can_accept() -> None:
+    eligible = CompensationObligation(
+        forward_operation_id=OPERATION_ID,
+        compensation_tool_name="generic_repair",
+        status=ObligationStatus.ELIGIBLE,
+    )
+
+    fresh = engine().advertised_controls(snapshot(), context())
+    compensable = engine().advertised_controls(
+        snapshot(obligations={OPERATION_ID: eligible}), context()
+    )
+    compensating = engine().advertised_controls(snapshot(status=SagaStatus.COMPENSATING), context())
+
+    assert fresh.model_dump() == {
+        "finish_targets": ("succeeded_verified", "aborted_clean"),
+        "begin_compensation": False,
+        "escalate_to_human": True,
+    }
+    assert compensable.begin_compensation is True
+    assert compensating.finish_targets == ("compensated_verified",)
+    assert compensating.begin_compensation is False
+
+
+def test_should_hide_just_denied_terminal_target_until_new_evidence() -> None:
+    immediate = engine().advertised_controls(_failed_terminal_snapshot(8), context())
+    refreshed = engine().advertised_controls(_failed_terminal_snapshot(9), context())
+
+    assert immediate.finish_targets == ("aborted_clean",)
+    assert refreshed.finish_targets == ("succeeded_verified", "aborted_clean")
+
+
+def _failed_terminal_snapshot(seq: int) -> SagaSnapshot:
+    return snapshot(
+        seq=seq,
+        last_invariant_seq=7,
+        last_invariant_passed=False,
+        last_invariant_target=SagaStatus.SUCCEEDED_VERIFIED,
+        last_invariant_version="generic-v1",
+        last_invariant_evidence_digest="a" * 64,
+    )
+
+
+def test_should_not_advertise_compensation_rejected_by_application_policy() -> None:
+    eligible = CompensationObligation(
+        forward_operation_id=OPERATION_ID,
+        compensation_tool_name="generic_repair",
+        status=ObligationStatus.ELIGIBLE,
+    )
+    configured = replace(rules(), compensation_allowed=deny_compensation_entry)
+
+    controls = engine(policy_rules=configured).advertised_controls(
+        snapshot(obligations={OPERATION_ID: eligible}), context()
+    )
+
+    assert controls.begin_compensation is False
 
 
 def proposal(
@@ -1369,6 +1459,61 @@ def test_should_allow_begin_compensation_only_with_settled_eligible_work() -> No
     # Then
     assert decision.allowed is True
     assert decision.code == "control_proposal"
+
+
+def test_should_preserve_default_allow_for_begin_compensation() -> None:
+    confirmed, obligation = _eligible_obligation()
+    current = snapshot(
+        operations={confirmed.operation_id: confirmed},
+        obligations={confirmed.operation_id: obligation},
+    )
+
+    decision = engine().authorize(_begin_compensation(), current, context())
+
+    assert decision.allowed is True
+
+
+def test_should_deny_unjustified_compensation_despite_eligible_obligation() -> None:
+    confirmed, obligation = _eligible_obligation()
+    current = snapshot(
+        operations={confirmed.operation_id: confirmed},
+        obligations={confirmed.operation_id: obligation},
+    )
+    configured = replace(rules(), compensation_allowed=deny_compensation_entry)
+
+    decision = engine(policy_rules=configured).authorize(_begin_compensation(), current, context())
+
+    assert decision.allowed is False
+    assert decision.code == "compensation_not_justified"
+
+
+def test_should_allow_justified_compensation_with_application_guard() -> None:
+    confirmed, obligation = _eligible_obligation()
+    current = snapshot(
+        operations={confirmed.operation_id: confirmed},
+        obligations={confirmed.operation_id: obligation},
+    )
+    configured = replace(rules(), compensation_allowed=allow_compensation_entry)
+
+    decision = engine(policy_rules=configured).authorize(_begin_compensation(), current, context())
+
+    assert decision.allowed is True
+    assert decision.code == "control_proposal"
+
+
+def test_should_fail_closed_when_compensation_guard_raises() -> None:
+    confirmed, obligation = _eligible_obligation()
+    current = snapshot(
+        operations={confirmed.operation_id: confirmed},
+        obligations={confirmed.operation_id: obligation},
+    )
+    configured = replace(rules(), compensation_allowed=failing_compensation_entry)
+
+    decision = engine(policy_rules=configured).authorize(_begin_compensation(), current, context())
+
+    assert decision.allowed is False
+    assert decision.code == "policy_callback_error"
+    assert "compensation-callback-secret" not in decision.model_dump_json()
 
 
 @pytest.mark.parametrize("status", [SagaStatus.CREATED, SagaStatus.COMPENSATING])

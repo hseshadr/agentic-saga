@@ -154,6 +154,10 @@ def test_branch_coverage_rejects_impossible_counts(covered: int) -> None:
 
 
 def test_budget_table_is_immutable_and_uses_published_limits() -> None:
+    assert BUDGETS["native_deferred_calls"].limit == 1
+    assert BUDGETS["builtin_agent_capabilities"].limit == 0
+    assert "optional_model_calls" not in BUDGETS
+    assert "agent_graph_steps" not in BUDGETS
     assert BUDGETS["manifest_parser_max_bytes"].limit == 64 * 1024
     assert BUDGETS["manifest_parser_max_depth"].limit == 16
     assert BUDGETS["manifest_parser_max_nodes"].limit == 4_096
@@ -251,7 +255,7 @@ def test_complete_report_recomputes_effective_timeout_result() -> None:
     index = next(
         index for index, item in enumerate(results) if item.name == "effective_model_timeout_ms"
     )
-    tampered = replace(results[index], actual=10_000, passed=True)
+    tampered = replace(results[index], actual=20_000, passed=True)
     changed = (*results[:index], tampered, *results[index + 1 :])
     environment = EnvironmentIdentity(
         "a" * 40, "clean", "test", "test", "Python 3.12.9", "v24.1.0", "11.5.0"

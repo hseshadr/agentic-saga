@@ -14,7 +14,9 @@ from agentic_saga.contracts.outcomes import EffectConfirmed, ReconcileEffectConf
 from agentic_saga.contracts.redaction import RedactionPolicy
 from agentic_saga.contracts.runtime import (
     AgentDriver,
+    ControlProposalCapabilities,
     ExecutionBudget,
+    ReadEvidence,
     SagaGoal,
     SagaObservation,
     SagaResult,
@@ -206,7 +208,13 @@ def test_terminal_requirement_json_schema_preserves_named_contracts() -> None:
 
 
 def read_definition() -> ReadToolDefinition[Command, Result]:
-    return ReadToolDefinition("observe_generic", Command, Result, Adapter())
+    return ReadToolDefinition(
+        "observe_generic",
+        Command,
+        Result,
+        Adapter(),
+        description="Observe the current generic resource before choosing an effect.",
+    )
 
 
 def _allow(command: BaseModel, snapshot: SagaSnapshot, context: PolicyContext) -> bool:
@@ -473,6 +481,113 @@ def test_goal_and_observation_are_strict_frozen_and_sequence_bound() -> None:
         SagaGoal(goal_id="goal_order_1", text="Bearer raw-secret", context={})
 
 
+def test_control_proposal_capabilities_are_strict_and_immutable() -> None:
+    controls = ControlProposalCapabilities(
+        finish_targets=("succeeded_verified", "aborted_clean"),
+        begin_compensation=True,
+        escalate_to_human=True,
+    )
+
+    assert controls.finish_targets == ("succeeded_verified", "aborted_clean")
+    with pytest.raises(ValidationError):
+        controls.begin_compensation = False
+    with pytest.raises(ValidationError):
+        ControlProposalCapabilities.model_validate(
+            {"finish_targets": ("not_terminal",)}, strict=True
+        )
+
+
+def test_observation_read_evidence_is_backward_compatible_and_immutable() -> None:
+    legacy = SagaObservation(
+        saga_id=SAGA_ID,
+        saga_seq=4,
+        state=SagaStatus.RUNNING,
+        goal=goal(),
+        last_action=None,
+        projection={"resource_status": "created"},
+        remaining_budget=budget(),
+    )
+    evidence = ReadEvidence(
+        tool_name="inspect_order",
+        command={"order_id": "order_1"},
+        result={"state": "paid"},
+        observed_at_saga_seq=4,
+        freshness="fresh",
+    )
+
+    observed = SagaObservation(
+        saga_id=SAGA_ID,
+        saga_seq=4,
+        state=SagaStatus.RUNNING,
+        goal=goal(),
+        last_action=None,
+        projection={"resource_status": "created"},
+        remaining_budget=budget(),
+        read_evidence=(evidence,),
+    )
+
+    assert legacy.read_evidence == ()
+    assert observed.read_evidence == (evidence,)
+    with pytest.raises(ValidationError):
+        evidence.result = {"state": "changed"}
+    with pytest.raises(ValidationError):
+        ReadEvidence(
+            tool_name="inspect_order",
+            command={"order_id": "order_1"},
+            result={"state": "paid"},
+            unavailable_reason="read_unavailable",
+            observed_at_saga_seq=4,
+            freshness="fresh",
+        )
+    with pytest.raises(ValidationError):
+        ReadEvidence(
+            tool_name="inspect_order",
+            command={"order_id": "order_1"},
+            observed_at_saga_seq=4,
+            freshness="fresh",
+        )
+
+
+@pytest.mark.parametrize(
+    "missing",
+    ["observed_at_saga_seq", "freshness"],
+)
+def test_read_evidence_requires_explicit_sequence_and_freshness(missing: str) -> None:
+    values: dict[str, object] = {
+        "tool_name": "inspect_order",
+        "command": {"order_id": "order_1"},
+        "result": {"state": "paid"},
+        "observed_at_saga_seq": 4,
+        "freshness": "fresh",
+    }
+    values.pop(missing)
+
+    with pytest.raises(ValidationError):
+        ReadEvidence.model_validate(values, strict=True)
+
+
+def test_read_evidence_rejects_invalid_freshness_and_sequence() -> None:
+    with pytest.raises(ValidationError):
+        ReadEvidence(
+            tool_name="inspect_order",
+            command={"order_id": "order_1"},
+            result={"state": "paid"},
+            observed_at_saga_seq=0,
+            freshness="fresh",
+        )
+    with pytest.raises(ValidationError):
+        ReadEvidence.model_validate(
+            {
+                "tool_name": "inspect_order",
+                "command": {"order_id": "order_1"},
+                "result": {"state": "paid"},
+                "observed_at_saga_seq": 4,
+                "freshness": "unknown",
+            },
+            strict=True,
+        )
+
+
 def test_should_hide_private_input_when_goal_validation_rejects_context() -> None:
     # Given
     secret = "S3cr3t!"  # noqa: S105 - deliberate validation-leak sentinel
@@ -506,6 +621,9 @@ def test_tool_descriptor_contains_schema_but_no_callable_or_private_config() -> 
 
     assert descriptor.name == "observe_generic"
     assert descriptor.kind == "read"
+    assert descriptor.description == (
+        "Observe the current generic resource before choosing an effect."
+    )
     schema = thaw_json_object(descriptor.input_schema)
     properties = schema["properties"]
     assert isinstance(properties, dict)
@@ -531,10 +649,14 @@ def test_effect_descriptor_exposes_reversibility_without_adapter() -> None:
             partial_effects_possible=False,
         ),
         None,
+        description="Mutate the generic resource when current evidence permits it.",
     )
     descriptor = ToolDescriptor.from_definition(tool)
 
     assert descriptor.kind == "effect"
+    assert descriptor.description == (
+        "Mutate the generic resource when current evidence permits it."
+    )
     assert descriptor.reversibility is Reversibility.SEMANTIC
     assert "adapter" not in descriptor.model_dump(mode="json")
 

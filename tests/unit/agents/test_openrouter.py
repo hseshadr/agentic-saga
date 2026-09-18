@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
-from langchain_core.language_models.chat_models import BaseChatModel
 from pydantic import SecretStr, ValidationError
+from pydantic_ai.models.openrouter import OpenRouterModel
 
 from agentic_saga.agents import OpenRouterSettings, build_openrouter_driver
 from agentic_saga.agents import openrouter as adapter_module
 from tests.unit.agents.test_deepagents import _context
 
 _PRIMARY = "openai/gpt-oss-20b"
-_FALLBACK = "qwen/qwen3-30b-a3b-instruct-2507"
+_COMPARATOR = "openai/gpt-oss-120b"
+_ALTERNATE = "qwen/qwen3-30b-a3b-instruct-2507"
 
 
 def test_should_pin_cheap_capable_models_and_bounded_deterministic_defaults() -> None:
@@ -19,11 +21,11 @@ def test_should_pin_cheap_capable_models_and_bounded_deterministic_defaults() ->
     settings = OpenRouterSettings(api_key=SecretStr("test-key"))
 
     # Then
-    assert settings.model_route == (_PRIMARY, _FALLBACK)
+    assert settings.model_route == (_PRIMARY,)
     assert settings.temperature == 0
     assert settings.reasoning_effort == "low"
     assert settings.max_output_tokens == 512
-    assert settings.timeout_ms == 10_000
+    assert settings.timeout_ms == 30_000
     assert settings.sdk_retries == 0
 
 
@@ -46,18 +48,9 @@ def test_should_reject_moving_or_random_model_routes(model_id: str) -> None:
 def test_should_accept_a_concrete_custom_model_route() -> None:
     settings = OpenRouterSettings(
         api_key=SecretStr("test-key"),
-        primary_model="openai/custom-pinned-model",
+        primary_model=_COMPARATOR,
     )
-    assert settings.primary_model == "openai/custom-pinned-model"
-
-
-def test_should_reject_same_primary_and_fallback() -> None:
-    with pytest.raises(ValidationError, match="fallback model must differ"):
-        OpenRouterSettings(
-            api_key=SecretStr("test-key"),
-            primary_model=_PRIMARY,
-            fallback_model=_PRIMARY,
-        )
+    assert settings.primary_model == _COMPARATOR
 
 
 def test_should_load_key_from_environment_without_exposing_secret(
@@ -66,6 +59,7 @@ def test_should_load_key_from_environment_without_exposing_secret(
     # Given
     secret = "private-" + "provider-value"
     monkeypatch.setenv("OPENROUTER_API_KEY", secret)
+    monkeypatch.delenv("OPENROUTER_MODEL", raising=False)
 
     # When
     settings = OpenRouterSettings.from_environment()
@@ -73,6 +67,17 @@ def test_should_load_key_from_environment_without_exposing_secret(
     # Then
     assert settings.api_key.get_secret_value() == secret
     assert secret not in repr(settings)
+
+
+def test_should_load_a_validated_pinned_model_from_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("OPENROUTER_MODEL", _ALTERNATE)
+
+    settings = OpenRouterSettings.from_environment()
+
+    assert settings.primary_model == _ALTERNATE
 
 
 def test_should_fail_closed_when_environment_key_is_missing(
@@ -104,49 +109,76 @@ def test_should_build_deep_agent_with_ordered_model_route() -> None:
 
     # Then
     assert driver.provider_id == "openrouter"
-    assert driver.model_route == (_PRIMARY, _FALLBACK)
+    assert driver.model_route == (_PRIMARY,)
 
 
-def test_should_apply_budget_caps_and_one_ordered_server_fallback(
+def test_should_not_retain_openrouter_secret_in_driver_representation() -> None:
+    private_value = "private-" + "provider-value"
+
+    driver = build_openrouter_driver(
+        _context("inspect"),
+        OpenRouterSettings(api_key=SecretStr(private_value)),
+    )
+
+    assert private_value not in repr(driver)
+
+
+def test_should_apply_only_supported_parameters_to_one_pinned_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Given
-    captured: dict[str, object] = {}
+    captured: dict[str, dict[str, object]] = {}
+    model = object()
+    provider = SimpleNamespace(client=SimpleNamespace(max_retries=2))
 
-    def factory(**kwargs: object) -> BaseChatModel:
-        captured.update(kwargs)
-        return cast(BaseChatModel, object())
+    def provider_factory(**kwargs: object) -> adapter_module._Provider:
+        captured["provider"] = kwargs
+        return cast(adapter_module._Provider, provider)
 
-    monkeypatch.setattr(adapter_module, "_load_model_factory", lambda: factory)
+    def model_factory(model_name: str, **kwargs: object) -> object:
+        captured["model"] = {"model_name": model_name, **kwargs}
+        return model
+
+    dependencies = adapter_module._OpenRouterDependencies(provider_factory, model_factory)
+    monkeypatch.setattr(adapter_module, "_load_model_dependencies", lambda: dependencies)
 
     # When
     private_value = "private-" + "provider-value"
     settings = OpenRouterSettings(api_key=SecretStr(private_value))
-    adapter_module._build_model(_context("inspect"), settings)
+    built = adapter_module._build_model(_context("inspect"), settings)
 
     # Then
-    assert captured["model"] == _PRIMARY
-    assert captured["model_kwargs"] == {"models": [_FALLBACK], "parallel_tool_calls": False}
-    assert captured["max_tokens"] == 500
-    assert captured["timeout"] == 5_000
-    assert captured["max_retries"] == 0
-    assert captured["temperature"] == 0
-    assert captured["seed"] == 0
-    assert captured["openrouter_provider"] == {"require_parameters": True}
-    assert private_value not in repr(captured)
+    assert built is model
+    assert captured["provider"]["api_key"] == private_value
+    assert provider.client.max_retries == 0
+    assert captured["model"]["provider"] is provider
+    assert captured["model"]["model_name"] == _PRIMARY
+    assert captured["model"]["settings"] == {
+        "max_tokens": 500,
+        "timeout": 5.0,
+        "temperature": 0,
+        "openrouter_reasoning": {"effort": "low"},
+        "openrouter_provider": {"require_parameters": True},
+    }
 
 
 def test_should_cap_non_divisible_model_budget_at_fixed_durable_reservation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # Given
-    captured: dict[str, object] = {}
+    captured: dict[str, dict[str, object]] = {}
+    provider = SimpleNamespace(client=SimpleNamespace(max_retries=2))
 
-    def factory(**kwargs: object) -> BaseChatModel:
-        captured.update(kwargs)
-        return cast(BaseChatModel, object())
+    def provider_factory(**kwargs: object) -> adapter_module._Provider:
+        captured["provider"] = kwargs
+        return cast(adapter_module._Provider, provider)
 
-    monkeypatch.setattr(adapter_module, "_load_model_factory", lambda: factory)
+    def model_factory(model_name: str, **kwargs: object) -> object:
+        captured["model"] = {"model_name": model_name, **kwargs}
+        return object()
+
+    dependencies = adapter_module._OpenRouterDependencies(provider_factory, model_factory)
+    monkeypatch.setattr(adapter_module, "_load_model_dependencies", lambda: dependencies)
     context = _context("inspect")
     budget = context.budget.model_copy(
         update={"turn_limit": 3, "token_limit": 10, "elapsed_ms_limit": 10}
@@ -159,8 +191,31 @@ def test_should_cap_non_divisible_model_budget_at_fixed_durable_reservation(
     )
 
     # Then
-    assert captured["max_tokens"] == 3
-    assert captured["timeout"] == 3
+    settings = captured["model"]["settings"]
+    assert isinstance(settings, dict)
+    assert settings["max_tokens"] == 3
+    assert settings["timeout"] == 0.003
+    assert provider.client.max_retries == 0
+
+
+@pytest.mark.asyncio
+async def test_should_close_and_reopen_provider_owned_client() -> None:
+    model = cast(
+        OpenRouterModel,
+        adapter_module._build_model(
+            _context("inspect"), OpenRouterSettings(api_key=SecretStr("test-key"))
+        ),
+    )
+
+    assert model.client.max_retries == 0
+    with pytest.raises(RuntimeError, match="lifecycle probe"):
+        async with model:
+            assert not model.client.is_closed()
+            raise RuntimeError("lifecycle probe")
+    assert model.client.is_closed()
+    async with model:
+        assert not model.client.is_closed()
+    assert model.client.is_closed()
 
 
 def test_should_fail_safely_when_openrouter_extra_is_absent(
@@ -175,7 +230,7 @@ def test_should_fail_safely_when_openrouter_extra_is_absent(
 
     # When / Then
     with pytest.raises(RuntimeError, match=r"install agentic-saga\[agent\]") as captured:
-        adapter_module._load_model_factory()
+        adapter_module._load_model_dependencies()
     assert "raw dependency internals" not in str(captured.value)
     assert captured.value.__cause__ is None
 

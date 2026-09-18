@@ -116,6 +116,15 @@ def _verify_approval(
     return False
 
 
+def _allow_compensation(proposal: object, snapshot: SagaSnapshot, context: PolicyContext) -> bool:
+    del proposal, snapshot, context
+    return True
+
+
+def _deny_tool_advertisement(tool_name: str, snapshot: SagaSnapshot) -> None:
+    del tool_name, snapshot
+
+
 def _advertise_private(tool_name: str, snapshot: SagaSnapshot) -> JsonObject:
     del tool_name, snapshot
     return {"email": "customer@example.com", "public_constraint": True}
@@ -194,7 +203,13 @@ def _definition(registry: ToolRegistry | None = None) -> SagaDefinition:
     policy = PolicyEngine(
         registry=selected,
         identity_factory=OperationIdentityFactory(_NAMESPACE),
-        rules=PolicyRules(_not_duplicate, _approval_required, _verify_approval),
+        rules=PolicyRules(
+            _not_duplicate,
+            _approval_required,
+            _verify_approval,
+            compensation_allowed=_allow_compensation,
+            tool_advertisement=_deny_tool_advertisement,
+        ),
     )
     requirement = TerminalRequirement(
         invariant_version="composition-invariants-v1",
@@ -797,6 +812,7 @@ async def test_should_redact_definition_sensitive_policy_constraints_before_mode
         _not_duplicate,
         _approval_required,
         _verify_approval,
+        compensation_allowed=_allow_compensation,
         tool_advertisement=_advertise_private,
     )
     policy = PolicyEngine(

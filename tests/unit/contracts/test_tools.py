@@ -1,3 +1,4 @@
+from dataclasses import FrozenInstanceError
 from typing import Literal
 
 import pytest
@@ -137,6 +138,68 @@ def test_effect_definition_uses_trusted_adapter_but_proof_is_data_only() -> None
 
     assert definition.adapter is adapter
     assert "factory" not in str(capabilities.model_dump(mode="json"))
+
+
+def test_tool_definitions_accept_bounded_semantic_descriptions() -> None:
+    read = ReadToolDefinition(
+        "check_inventory",
+        InventoryQuery,
+        InventoryResult,
+        InventoryAdapter(),
+        description="Check authoritative inventory before reserving stock.",
+    )
+    effect = EffectToolDefinition(
+        "charge_payment",
+        "charge-payment-v1",
+        "charge-command-v1",
+        ChargeCommand,
+        ChargeAdapter(),
+        effect_capabilities(),
+        "refund_payment",
+        description="Charge an authorized customer; refund it during compensation.",
+    )
+
+    assert read.description == "Check authoritative inventory before reserving stock."
+    assert effect.description == "Charge an authorized customer; refund it during compensation."
+
+
+def test_legacy_construction_preserves_default_descriptions() -> None:
+    assert inventory_definition().description == "Read current authoritative state."
+    assert charge_definition().description == "Request one durable external effect."
+
+
+@pytest.mark.parametrize("description", ["", "   ", "x" * 2_001, 7])
+def test_read_definition_rejects_invalid_description(description: object) -> None:
+    with pytest.raises(ValueError, match="read description"):
+        ReadToolDefinition(
+            "check_inventory",
+            InventoryQuery,
+            InventoryResult,
+            InventoryAdapter(),
+            description=description,  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize("description", ["", "   ", "x" * 2_001, 7])
+def test_effect_definition_rejects_invalid_description(description: object) -> None:
+    with pytest.raises(ValueError, match="effect description"):
+        EffectToolDefinition(
+            "charge_payment",
+            "charge-payment-v1",
+            "charge-command-v1",
+            ChargeCommand,
+            ChargeAdapter(),
+            effect_capabilities(),
+            "refund_payment",
+            description=description,  # type: ignore[arg-type]
+        )
+
+
+def test_tool_description_is_immutable() -> None:
+    definition = inventory_definition()
+
+    with pytest.raises(FrozenInstanceError):
+        definition.description = "Changed"  # type: ignore[misc]
 
 
 def charge_definition() -> EffectToolDefinition[ChargeCommand]:

@@ -49,7 +49,12 @@ _ROOT_FACADE = (
     "compose_runtime",
     "load_saga_context",
 )
-_AGENTS_FACADE = ("DeepAgentsDriver", "OpenRouterSettings", "build_openrouter_driver")
+_AGENTS_FACADE = (
+    "DeepAgentsDriver",
+    "OpenRouterSettings",
+    "build_openrouter_driver",
+    "native_proposal_tool_names",
+)
 _DEMO_FACADE = ("RecorderServer", "materialize_recorder_site", "serve_recorder")
 
 _EXECUTION_FACADE = (
@@ -252,9 +257,8 @@ def test_agent_dependencies_are_optional_and_bdd_is_development_only() -> None:
 
     assert set(parsed["project"]["optional-dependencies"]) == {"agent"}
     assert agent == {
-        "deepagents>=0.7.13,<0.8",
-        "langchain-openrouter>=0.2.8,<0.3",
-        "langsmith>=0.12,<1",
+        "pydantic-ai-slim[openrouter]==2.45.0",
+        "pydantic-deep==0.3.43",
         "python-dotenv>=1.1,<2",
     }
     assert "pytest-bdd>=8.1,<9" in parsed["dependency-groups"]["dev"]

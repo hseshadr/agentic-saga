@@ -17,6 +17,7 @@ from agentic_saga.contracts.common import (
     Direction,
     JsonObject,
     Reversibility,
+    canonical_json,
     thaw_json_object,
 )
 from agentic_saga.contracts.events import CompensationIntentRecorded, HumanRequired, LedgerEvent
@@ -34,6 +35,7 @@ from agentic_saga.contracts.tools import (
     ReadToolDefinition,
     ToolCapabilities,
     ToolRegistry,
+    UnknownToolError,
 )
 from agentic_saga.contracts.trace import RunTrace
 from agentic_saga.evidence.run_trace import RunTraceExporter
@@ -58,7 +60,7 @@ from agentic_saga.kernel.runtime import (
     PolicyContextProvider,
 )
 from agentic_saga.kernel.state import OperationStatus, SagaSnapshot
-from agentic_saga.manifest import SagaContext, load_saga_context
+from agentic_saga.manifest import SagaContext, SagaManifest, load_saga_context
 from agentic_saga.storage import SQLiteKernelStore
 from examples.ecommerce.domain import (
     CancelFulfillment,
@@ -107,6 +109,7 @@ _INVARIANT_CHECKS = (
     "payment_refunded",
     "no_external_effects",
 )
+_RECOVERY_HORIZON_SECONDS = 3_930
 
 
 @dataclass(frozen=True)
@@ -158,6 +161,7 @@ class _EffectSpec:
     name: str
     model: type[BaseModel]
     compensate_with: str | None
+    description: str
     dependencies: tuple[str, ...] = ()
 
 
@@ -179,11 +183,17 @@ class EcommerceContexts(PolicyContextProvider):
 
     def build(self, snapshot: SagaSnapshot, proposal: AgentProposal, lease: Lease) -> PolicyContext:
         item = _compensation_item(self, snapshot, proposal)
-        return _policy_context(self.budget, proposal, lease, item, self.provider.snapshot())
+        return _policy_context(
+            self,
+            proposal,
+            lease,
+            item,
+            self.provider.snapshot(),
+        )
 
 
 def _policy_context(
-    budget: ExecutionBudget,
+    contexts: EcommerceContexts,
     proposal: AgentProposal,
     lease: Lease,
     item: CompensationItem | None,
@@ -191,28 +201,85 @@ def _policy_context(
 ) -> PolicyContext:
     values = _policy_binding(proposal, item) | {
         "fence_token": lease.fence_token,
-        "budget": budget,
-        "policy_evidence": _payment_evidence(state),
+        "budget": contexts.budget,
+        "policy_evidence": _policy_evidence(state, contexts.registry, proposal),
         "resource_identity": {"order_id": state.order_id, "customer_id": state.customer_id},
     }
     return PolicyContext.model_validate(values | _EMPTY_USAGE)
 
 
+def _policy_evidence(
+    state: ProviderState, registry: ToolRegistry, proposal: AgentProposal
+) -> JsonObject:
+    payment = thaw_json_object(_payment_evidence(state))
+    recovery = thaw_json_object(_recovery_evidence(registry, proposal))
+    return _JSON.validate_python(payment | recovery)
+
+
 def _payment_evidence(state: ProviderState) -> JsonObject:
+    values = _order_policy_values(state) | _inventory_policy_values(state)
+    return _JSON.validate_python(values)
+
+
+def _order_policy_values(state: ProviderState) -> dict[str, object]:
+    return {
+        "source": "ecommerce-manifest-v1",
+        "order_id": state.order_id,
+        "amount_minor": state.order_amount_minor,
+        "currency": state.currency,
+        "customer_id": state.customer_id,
+        "customer_authorized": state.customer_authorized,
+        "captured_amount_minor": state.captured_amount_minor,
+        "captured_currency": state.captured_currency,
+        "captured_customer_id": state.captured_customer_id,
+        "fulfillment": state.fulfillment,
+    }
+
+
+def _inventory_policy_values(state: ProviderState) -> dict[str, object]:
+    return {
+        "sku": state.sku,
+        "order_quantity": state.order_quantity,
+        "available_inventory": state.available,
+        "reserved_inventory": state.reserved,
+        "inventory_version": state.inventory_version,
+    }
+
+
+def _recovery_evidence(registry: ToolRegistry, proposal: AgentProposal) -> JsonObject:
+    retention = _effect_retention(registry, proposal)
     return _JSON.validate_python(
         {
-            "source": "ecommerce-manifest-v1",
-            "order_id": state.order_id,
-            "amount_minor": state.order_amount_minor,
-            "currency": state.currency,
-            "customer_id": state.customer_id,
-            "customer_authorized": state.customer_authorized,
-            "captured_amount_minor": state.captured_amount_minor,
-            "captured_currency": state.captured_currency,
-            "captured_customer_id": state.captured_customer_id,
-            "inventory_version": state.inventory_version,
+            "idempotency_retention_seconds": retention,
+            "recovery_horizon_seconds": _RECOVERY_HORIZON_SECONDS,
+            "recovery_retention_sufficient": _workflow_recovery_ready(registry),
         }
     )
+
+
+def _effect_retention(registry: ToolRegistry, proposal: AgentProposal) -> int | None:
+    if not isinstance(proposal, ToolCall):
+        return None
+    try:
+        definition = registry.definition(proposal.tool_name)
+    except UnknownToolError:
+        return None
+    if not isinstance(definition, EffectToolDefinition):
+        return None
+    return definition.capabilities.idempotency_retention_seconds
+
+
+def _retention_sufficient(retention: int | None) -> bool:
+    return retention is not None and retention >= _RECOVERY_HORIZON_SECONDS
+
+
+def _workflow_recovery_ready(registry: ToolRegistry) -> bool:
+    retentions = tuple(
+        item.capabilities.idempotency_retention_seconds
+        for item in registry.effect_definitions()
+        if item.compensate_with is not None
+    )
+    return bool(retentions) and all(_retention_sufficient(item) for item in retentions)
 
 
 def _policy_binding(proposal: AgentProposal, item: CompensationItem | None) -> dict[str, object]:
@@ -243,7 +310,7 @@ class EcommerceEvidence(InvariantEvidenceProvider):
     def evaluate(
         self, saga_id: str, snapshot: SagaSnapshot, target_status: SagaStatus
     ) -> InvariantEvidence:
-        results = _invariant_results(target_status, self.provider.snapshot())
+        results = _invariant_results(target_status, self.provider.snapshot(), snapshot)
         return InvariantEvidence(
             saga_id=saga_id,
             definition_version=snapshot.definition_version,
@@ -318,7 +385,7 @@ def _begin_compensation(observation: SagaObservation) -> BeginCompensation:
     return BeginCompensation(
         proposal_id=_proposal_id(observation, "begin_compensation"),
         based_on_saga_seq=observation.saga_seq,
-        reason_code="fulfillment_rejected",
+        reason_code="forward_goal_unreachable",
         rationale="The customer goal failed, so every confirmed effect must be safely unwound.",
     )
 
@@ -428,9 +495,33 @@ def _read_tools(provider: EcommerceProvider) -> tuple[object, ...]:
     order: ProviderReadAdapter[InspectOrder, OrderView] = ProviderReadAdapter(
         provider, "inspect_order", OrderView
     )
-    return (
-        ReadToolDefinition("check_inventory", CheckInventory, InventoryView, inventory),
-        ReadToolDefinition("inspect_order", InspectOrder, OrderView, order),
+    return _inventory_read_tool(inventory), _order_read_tool(order)
+
+
+def _inventory_read_tool(
+    adapter: ProviderReadAdapter[CheckInventory, InventoryView],
+) -> ReadToolDefinition[CheckInventory, InventoryView]:
+    return ReadToolDefinition(
+        "check_inventory",
+        CheckInventory,
+        InventoryView,
+        adapter,
+        description="Check authoritative stock availability before reserving inventory.",
+    )
+
+
+def _order_read_tool(
+    adapter: ProviderReadAdapter[InspectOrder, OrderView],
+) -> ReadToolDefinition[InspectOrder, OrderView]:
+    return ReadToolDefinition(
+        "inspect_order",
+        InspectOrder,
+        OrderView,
+        adapter,
+        description=(
+            "Inspect order facts when absent or after a relevant state change; otherwise reuse "
+            "current evidence."
+        ),
     )
 
 
@@ -451,6 +542,7 @@ def _effect_tool(
         _capabilities(reversible, _override(overrides, spec.name)),
         spec.compensate_with,
         compensation_dependencies=spec.dependencies,
+        description=spec.description,
     )
 
 
@@ -465,14 +557,44 @@ def _override(overrides: tuple[CapabilityOverride, ...], tool: str) -> Capabilit
 
 
 _EFFECT_SPECS = (
-    _EffectSpec("reserve_inventory", ReserveInventory, "release_inventory"),
-    _EffectSpec("charge_payment", ChargePayment, "refund_payment", ("reserve_inventory",)),
     _EffectSpec(
-        "schedule_fulfillment", ScheduleFulfillment, "cancel_fulfillment", ("charge_payment",)
+        "reserve_inventory",
+        ReserveInventory,
+        "release_inventory",
+        "Reserve inventory for the order; use release_inventory to compensate it if needed.",
     ),
-    _EffectSpec("release_inventory", ReleaseInventory, None),
-    _EffectSpec("refund_payment", RefundPayment, None),
-    _EffectSpec("cancel_fulfillment", CancelFulfillment, None),
+    _EffectSpec(
+        "charge_payment",
+        ChargePayment,
+        "refund_payment",
+        "Charge the authorized customer; use refund_payment to compensate it if needed.",
+        ("reserve_inventory",),
+    ),
+    _EffectSpec(
+        "schedule_fulfillment",
+        ScheduleFulfillment,
+        "cancel_fulfillment",
+        ("Schedule the order for fulfillment; use cancel_fulfillment to compensate it if needed."),
+        ("charge_payment",),
+    ),
+    _EffectSpec(
+        "release_inventory",
+        ReleaseInventory,
+        None,
+        "Release inventory while compensating a confirmed reserve_inventory effect.",
+    ),
+    _EffectSpec(
+        "refund_payment",
+        RefundPayment,
+        None,
+        "Refund payment while compensating a confirmed charge_payment effect.",
+    ),
+    _EffectSpec(
+        "cancel_fulfillment",
+        CancelFulfillment,
+        None,
+        "Cancel fulfillment while compensating a confirmed schedule_fulfillment effect.",
+    ),
 )
 
 
@@ -498,13 +620,35 @@ def _never_approve(*values: object) -> bool:
     return False
 
 
+def _compensation_allowed(
+    proposal: BeginCompensation, snapshot: SagaSnapshot, context: PolicyContext
+) -> bool:
+    del proposal, snapshot
+    return context.policy_evidence.get("fulfillment") == "rejected"
+
+
 def _requires_exception_approval(
+    command: BaseModel, snapshot: SagaSnapshot, context: PolicyContext
+) -> bool:
+    if context.direction is Direction.FORWARD and not _forward_workflow_is_authorized(context):
+        return True
+    return _requires_business_approval(command, snapshot, context)
+
+
+def _forward_workflow_is_authorized(context: PolicyContext) -> bool:
+    evidence = context.policy_evidence
+    return bool(evidence.get("customer_authorized")) and (
+        evidence.get("recovery_retention_sufficient") is True
+    )
+
+
+def _requires_business_approval(
     command: BaseModel, snapshot: SagaSnapshot, context: PolicyContext
 ) -> bool:
     if isinstance(command, ChargePayment):
         return not _charge_is_authorized(command, context)
     if isinstance(command, ReserveInventory):
-        return command.expected_version != _inventory_version(context)
+        return not _reservation_is_authorized(command, context)
     if isinstance(command, RefundPayment):
         return not (
             _matches_captured_payment(command, context)
@@ -516,6 +660,32 @@ def _requires_exception_approval(
 def _inventory_version(context: PolicyContext) -> int:
     value = context.policy_evidence.get("inventory_version")
     return value if isinstance(value, int) else -1
+
+
+def _reservation_is_authorized(command: ReserveInventory, context: PolicyContext) -> bool:
+    evidence = context.policy_evidence
+    if not _reservation_identity_matches(command, evidence):
+        return False
+    if command.expected_version != _inventory_version(context):
+        return False
+    return _reservation_quantity_is_safe(command, evidence)
+
+
+def _reservation_identity_matches(command: ReserveInventory, evidence: JsonObject) -> bool:
+    return command.order_id == evidence.get("order_id") and command.sku == evidence.get("sku")
+
+
+def _reservation_quantity_is_safe(command: ReserveInventory, evidence: JsonObject) -> bool:
+    reserved = _evidence_int(evidence, "reserved_inventory")
+    ordered = _evidence_int(evidence, "order_quantity")
+    available = _evidence_int(evidence, "available_inventory")
+    outstanding = ordered - reserved
+    return reserved >= 0 and command.quantity == outstanding and command.quantity <= available
+
+
+def _evidence_int(evidence: JsonObject, name: str) -> int:
+    value = evidence.get(name)
+    return value if type(value) is int else -1
 
 
 def _charge_is_authorized(command: BaseModel, context: PolicyContext) -> bool:
@@ -571,7 +741,17 @@ def _running_constraint(registry: ToolRegistry, tool: str) -> JsonObject | None:
     definition = registry.definition(tool)
     if isinstance(definition, EffectToolDefinition) and definition.compensate_with is None:
         return None
-    return _JSON.validate_python({"phase": "forward", "one_action_at_a_time": True})
+    values: dict[str, object] = {"phase": "forward", "one_action_at_a_time": True}
+    if isinstance(definition, EffectToolDefinition):
+        retention = definition.capabilities.idempotency_retention_seconds
+        values |= {
+            "idempotency_retention_seconds": retention,
+            "recovery_horizon_seconds": _RECOVERY_HORIZON_SECONDS,
+            "recovery_retention_sufficient": _workflow_recovery_ready(registry),
+        }
+        if tool == "reserve_inventory":
+            values["rejection_refresh_tool"] = "check_inventory"
+    return _JSON.validate_python(values)
 
 
 def _compensation_constraint(
@@ -595,7 +775,7 @@ class _AdvertisementPolicy:
     planner: CompensationPlanner
 
     def definition_identity(self) -> JsonObject:
-        return _JSON.validate_python({"policy_version": "ecommerce-advertisement-v1"}, strict=True)
+        return _JSON.validate_python({"policy_version": "ecommerce-advertisement-v3"}, strict=True)
 
     def __call__(self, tool: str, snapshot: SagaSnapshot) -> JsonObject | None:
         return _advertise(self.registry, self.planner, tool, snapshot)
@@ -605,9 +785,10 @@ def _policy(registry: ToolRegistry, planner: CompensationPlanner) -> PolicyEngin
     rules = PolicyRules(
         is_duplicate_effect=_not_duplicate,
         approval_required=VersionedPolicyRule(
-            _requires_exception_approval, "ecommerce-approval-v1"
+            _requires_exception_approval, "ecommerce-approval-v3"
         ),
         approval_verifier=_never_approve,
+        compensation_allowed=_compensation_allowed,
         tool_advertisement=_AdvertisementPolicy(registry, planner),
     )
     return PolicyEngine(
@@ -642,11 +823,13 @@ def _rule(rule_id: str, passed: bool, value: object) -> InvariantResult:
     )
 
 
-def _invariant_results(target: SagaStatus, state: ProviderState) -> tuple[InvariantResult, ...]:
+def _invariant_results(
+    target: SagaStatus, state: ProviderState, snapshot: SagaSnapshot
+) -> tuple[InvariantResult, ...]:
     clean = _is_clean(state)
     rules = {
         SagaStatus.SUCCEEDED_VERIFIED: _success_rules(state),
-        SagaStatus.COMPENSATED_VERIFIED: _compensation_rules(state),
+        SagaStatus.COMPENSATED_VERIFIED: _compensation_rules(state, snapshot),
         SagaStatus.ABORTED_CLEAN: (_rule("no_external_effects", clean, clean),),
         SagaStatus.RESOLVED_WITH_EXCEPTION: (_rule("operator_accepted", False, False),),
     }
@@ -661,12 +844,53 @@ def _success_rules(state: ProviderState) -> tuple[InvariantResult, ...]:
     )
 
 
-def _compensation_rules(state: ProviderState) -> tuple[InvariantResult, ...]:
+def _compensation_rules(
+    state: ProviderState, snapshot: SagaSnapshot
+) -> tuple[InvariantResult, ...]:
+    confirmed = _confirmed_forward_tools(snapshot)
     return (
-        _rule("inventory_released", state.reserved == 0, state.reserved),
-        _rule("order_cancelled", state.fulfillment == "cancelled", state.fulfillment),
-        _rule("payment_refunded", _refunded_exactly(state), _payment_proof(state)),
+        _inventory_release_rule(state, confirmed),
+        _fulfillment_cancel_rule(state, confirmed),
+        _payment_refund_rule(state, confirmed),
     )
+
+
+def _inventory_release_rule(state: ProviderState, confirmed: frozenset[str]) -> InvariantResult:
+    return _conditional_rule(
+        "inventory_released", "reserve_inventory", confirmed, state.reserved == 0, state.reserved
+    )
+
+
+def _fulfillment_cancel_rule(state: ProviderState, confirmed: frozenset[str]) -> InvariantResult:
+    return _conditional_rule(
+        "order_cancelled",
+        "schedule_fulfillment",
+        confirmed,
+        state.fulfillment == "cancelled",
+        state.fulfillment,
+    )
+
+
+def _payment_refund_rule(state: ProviderState, confirmed: frozenset[str]) -> InvariantResult:
+    return _conditional_rule(
+        "payment_refunded",
+        "charge_payment",
+        confirmed,
+        _refunded_exactly(state),
+        _payment_proof(state),
+    )
+
+
+def _conditional_rule(
+    rule_id: str,
+    forward_tool: str,
+    confirmed: frozenset[str],
+    passed: bool,
+    value: object,
+) -> InvariantResult:
+    applicable = forward_tool in confirmed
+    evidence = {"applicable": applicable, "value": value}
+    return _rule(rule_id, not applicable or passed, evidence)
 
 
 def _captured_exactly(state: ProviderState) -> bool:
@@ -732,23 +956,62 @@ def _assembly(
     provider: EcommerceProvider,
     clock: FakeClock,
     overrides: tuple[CapabilityOverride, ...] = (),
+    eval_turn_limit: int | None = None,
 ) -> _Assembly:
     registry = build_registry(provider, overrides)
     planner = CompensationPlanner(OperationIdentityFactory(_NAMESPACE))
     policy = _policy(registry, planner)
-    context = _saga_context(registry)
+    context = _saga_context(registry, eval_turn_limit)
     definition = _definition(registry, policy, context)
     parts = _KernelParts(registry, planner, policy, definition, context)
     return _services(_Resources(store, provider, clock), parts, overrides)
 
 
-def _saga_context(registry: ToolRegistry) -> SagaContext:
-    return load_saga_context(
+def _saga_context(registry: ToolRegistry, eval_turn_limit: int | None = None) -> SagaContext:
+    context = load_saga_context(
         _MANIFEST,
         registry=registry,
         policy_checks=_POLICY_CHECKS,
         invariant_checks=_INVARIANT_CHECKS,
     )
+    if eval_turn_limit is None:
+        return context
+    return _eval_saga_context(context, eval_turn_limit)
+
+
+def _eval_saga_context(context: SagaContext, turn_limit: int) -> SagaContext:
+    budget = _eval_budget(context.budget, turn_limit)
+    manifest = _eval_manifest(context.manifest, budget)
+    return SagaContext(
+        manifest=manifest,
+        agent_context=_agent_context_json(manifest, context.tool_descriptors),
+        tool_descriptors=context.tool_descriptors,
+        budget=budget,
+    )
+
+
+def _eval_budget(base: ExecutionBudget, turn_limit: int) -> ExecutionBudget:
+    values = base.model_dump()
+    values.update(
+        turn_limit=turn_limit,
+        elapsed_ms_limit=turn_limit * (base.elapsed_ms_limit // base.turn_limit),
+        token_limit=turn_limit * (base.token_limit // base.turn_limit),
+    )
+    return ExecutionBudget.model_validate(values, strict=True)
+
+
+def _eval_manifest(manifest: SagaManifest, budget: ExecutionBudget) -> SagaManifest:
+    values = manifest.model_dump()
+    values["budgets"] = budget.model_dump()
+    return SagaManifest.model_validate(values, strict=True)
+
+
+def _agent_context_json(manifest: SagaManifest, descriptors: Sequence[ToolDescriptor]) -> str:
+    payload = {
+        "manifest": manifest.model_dump(mode="json"),
+        "tools": [item.model_dump(mode="json") for item in descriptors],
+    }
+    return canonical_json(payload).decode()
 
 
 def _services(
@@ -801,7 +1064,7 @@ def prepare_eval_case(case: EvalCase, directory: Path, clock: FakeClock) -> _Ass
         fixture.faults,
     )
     store = SQLiteKernelStore.initialize(directory / "saga.db", clock=clock)
-    return _assembly(store, provider, clock, fixture.capability_overrides)
+    return _assembly(store, provider, clock, fixture.capability_overrides, case.max_agent_turns)
 
 
 async def run_with_agent(assembly: _Assembly, case: EvalCase, agent: AgentDriver) -> EvalEvidence:
@@ -831,6 +1094,7 @@ def _eval_context(case: EvalCase) -> dict[str, object]:
         "quantity": state.order_quantity,
         "amount_minor": state.order_amount_minor,
         "currency": state.currency,
+        "customer_authorized": state.customer_authorized,
         "alternate_warehouse_id": state.alternate_warehouse_id,
         "capability_overrides": [
             item.model_dump(mode="json") for item in case.fixture.capability_overrides
@@ -911,7 +1175,13 @@ def _reopen(
 ) -> _Assembly:
     store = _open_store(assembly.store.path, clock, claim_id_factory)
     provider = EcommerceProvider.open(assembly.provider.path, clock)
-    return _assembly(store, provider, clock, assembly.overrides)
+    return _assembly(
+        store,
+        provider,
+        clock,
+        assembly.overrides,
+        assembly.context.budget.turn_limit,
+    )
 
 
 def _open_store(
