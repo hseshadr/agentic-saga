@@ -95,7 +95,9 @@ _DENOMINATORS = _JSON.validate_python(
     }
 )
 _REPORT = LiveEvalReportArtifact(
-    identity=_IDENTITY,
+    identity=live_eval_module.RunIdentity.model_validate(
+        _IDENTITY.model_dump(exclude={"prompt_sha256", "manifest_sha256"})
+    ),
     denominators=_DENOMINATORS,
     provider_failures=_JSON.validate_python({"transport_exhausted": 0}),
     samples=_JSON.validate_python({}),
@@ -162,6 +164,13 @@ def _sample_records(root: Path) -> tuple[Path, ...]:
     return tuple(sorted((root / "samples").glob("*.json")))
 
 
+def _sample_artifacts(root: Path) -> tuple[LiveSampleArtifact, ...]:
+    return tuple(
+        LiveSampleArtifact.model_validate_json(path.read_bytes(), strict=True)
+        for path in _sample_records(root)
+    )
+
+
 def _temporary_artifacts(root: Path) -> tuple[Path, ...]:
     return tuple(root.rglob("*.tmp"))
 
@@ -191,6 +200,19 @@ def _tamper_model(root: Path) -> None:
     unsigned = {key: value for key, value in payload.items() if key != "artifact_sha256"}
     payload["artifact_sha256"] = sha256_json(unsigned)
     path.write_text(json.dumps(payload))
+
+
+def _tamper_identity_without_digest(root: Path) -> None:
+    path = _sample_records(root)[0]
+    payload = json.loads(path.read_bytes())
+    payload["identity"]["prompt_sha256"] = "9" * 64
+    path.write_text(json.dumps(payload))
+
+
+def _resign(artifact: LiveSampleArtifact, **updates: object) -> LiveSampleArtifact:
+    changed = artifact.model_copy(update=updates)
+    values = changed.model_dump(mode="json", exclude={"artifact_sha256"})
+    return changed.model_copy(update={"artifact_sha256": sha256_json(values)})
 
 
 def _tamper_request_policy(root: Path) -> None:
@@ -262,6 +284,15 @@ async def test_fake_driver_executes_four_canonical_release_proofs_without_networ
     assert report.identity.suite is EvalSuite.RELEASE
     assert report.score.model_sample_count == 4
     assert len(records) == 4
+    artifacts = _sample_artifacts(tmp_path)
+    assert len({item.identity.prompt_sha256 for item in artifacts}) == 4
+    assert len({item.identity.manifest_sha256 for item in artifacts}) == 4
+    assert report.samples == _JSON.validate_python(
+        {
+            item.sample_ref: sha256(path.read_bytes()).hexdigest()
+            for item, path in zip(artifacts, records, strict=True)
+        }
+    )
     assert SECRET not in payload
     assert not _temporary_artifacts(tmp_path)
     first = _first_sample(tmp_path)
@@ -392,6 +423,68 @@ async def test_completed_samples_resume_without_invoking_driver(
     second = await run_live_corpus(CORPUS, 1, tmp_path, _options(driver_factory=fail_factory))
 
     assert second == first
+
+
+@pytest.mark.asyncio
+async def test_report_rejects_mismatched_shared_identity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _enable_live(monkeypatch)
+    await run_live_corpus(CORPUS, 1, tmp_path, _options())
+    artifacts = _sample_artifacts(tmp_path)
+    changed = _resign(
+        artifacts[1],
+        identity=artifacts[1].identity.model_copy(update={"configured_model": "tampered/model"}),
+    )
+
+    with pytest.raises(LiveEvalConfigurationError, match="shared run identity"):
+        live_eval_module._report((artifacts[0], changed, *artifacts[2:]))
+
+
+@pytest.mark.asyncio
+async def test_report_rejects_mismatched_identity_within_one_case(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _enable_live(monkeypatch)
+    await run_live_corpus(CORPUS, 1, tmp_path, _options())
+    first = _sample_artifacts(tmp_path)[0]
+    changed = _resign(
+        first,
+        identity=first.identity.model_copy(update={"prompt_sha256": "9" * 64}),
+        sample_ref="samples/duplicate-case-001.json",
+    )
+
+    with pytest.raises(LiveEvalConfigurationError, match="case identity"):
+        live_eval_module._report((first, changed))
+
+
+@pytest.mark.asyncio
+async def test_report_rejects_duplicate_sample_reference(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _enable_live(monkeypatch)
+    await run_live_corpus(CORPUS, 1, tmp_path, _options())
+    first = _sample_artifacts(tmp_path)[0]
+
+    with pytest.raises(LiveEvalConfigurationError, match="sample reference"):
+        live_eval_module._report((first, first))
+
+
+def test_report_rejects_empty_artifact_set() -> None:
+    with pytest.raises(LiveEvalConfigurationError, match="nonempty"):
+        live_eval_module._report(())
+
+
+@pytest.mark.asyncio
+async def test_tampered_sample_identity_breaks_digest_before_resume(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _enable_live(monkeypatch)
+    await run_live_corpus(CORPUS, 1, tmp_path, _options())
+    _tamper_identity_without_digest(tmp_path)
+
+    with pytest.raises(LiveEvalConfigurationError, match="digest"):
+        await run_live_corpus(CORPUS, 1, tmp_path, _options())
 
 
 @pytest.mark.asyncio

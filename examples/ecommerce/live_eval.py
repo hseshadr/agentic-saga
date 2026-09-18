@@ -102,10 +102,8 @@ class RequestPolicyIdentity(StrictModel):
     sdk_retries: Literal[0] = 0
 
 
-class EvalIdentity(StrictModel):
+class RunIdentity(StrictModel):
     corpus_sha256: _Digest
-    prompt_sha256: _Digest
-    manifest_sha256: _Digest
     tool_catalog_sha256: _Digest
     configured_provider: Literal["openrouter"] = "openrouter"
     configured_model: _Name
@@ -114,6 +112,11 @@ class EvalIdentity(StrictModel):
     dependency_versions: JsonObject
     source_revision: _SourceRevision | None = None
     source_dirty: bool | None = None
+
+
+class EvalIdentity(RunIdentity):
+    prompt_sha256: _Digest
+    manifest_sha256: _Digest
 
 
 class NativeToolTurnEvidence(StrictModel):
@@ -139,8 +142,8 @@ class LiveSampleArtifact(StrictModel):
 
 
 class LiveEvalReportArtifact(StrictModel):
-    schema_version: Literal["2.0"] = "2.0"
-    identity: EvalIdentity
+    schema_version: Literal["3.0"] = "3.0"
+    identity: RunIdentity
     denominators: JsonObject
     provider_failures: JsonObject
     samples: JsonObject
@@ -505,15 +508,46 @@ def _verify_trace(artifact: LiveSampleArtifact, output_dir: Path) -> None:
 
 
 def _report(artifacts: tuple[LiveSampleArtifact, ...]) -> LiveEvalReportArtifact:
+    _require_report_artifacts(artifacts)
+    identity = _run_identity(artifacts[0].identity)
+    _require_shared_identity(artifacts, identity)
+    _require_case_identities(artifacts)
     samples = tuple(item.sample for item in artifacts)
     values = {
-        "identity": artifacts[0].identity,
+        "identity": identity,
         "denominators": _denominators(samples),
         "provider_failures": _failure_counts(samples),
         "samples": _references(artifacts),
         "score": evals.aggregate(samples),
     }
     return LiveEvalReportArtifact.model_validate(values)
+
+
+def _require_report_artifacts(artifacts: tuple[LiveSampleArtifact, ...]) -> None:
+    if not artifacts:
+        raise LiveEvalConfigurationError("report requires a nonempty artifact set")
+    for artifact in artifacts:
+        _verify_artifact_digest(artifact)
+
+
+def _run_identity(identity: EvalIdentity) -> RunIdentity:
+    values = identity.model_dump(exclude={"prompt_sha256", "manifest_sha256"})
+    return RunIdentity.model_validate(values, strict=True)
+
+
+def _require_shared_identity(
+    artifacts: tuple[LiveSampleArtifact, ...], expected: RunIdentity
+) -> None:
+    if any(_run_identity(item.identity) != expected for item in artifacts):
+        raise LiveEvalConfigurationError("samples have mismatched shared run identity")
+
+
+def _require_case_identities(artifacts: tuple[LiveSampleArtifact, ...]) -> None:
+    identities: dict[str, EvalIdentity] = {}
+    for item in artifacts:
+        prior = identities.setdefault(item.sample.case_id, item.identity)
+        if prior != item.identity:
+            raise LiveEvalConfigurationError("samples have mismatched case identity")
 
 
 def _denominators(samples: tuple[evals.EvalSample, ...]) -> JsonObject:
@@ -561,6 +595,8 @@ def _failure_counts(samples: tuple[evals.EvalSample, ...]) -> JsonObject:
 
 
 def _references(artifacts: tuple[LiveSampleArtifact, ...]) -> JsonObject:
+    if len({item.sample_ref for item in artifacts}) != len(artifacts):
+        raise LiveEvalConfigurationError("report sample reference must be unique")
     values = {
         item.sample_ref: sha256(_model_bytes(item.model_dump(mode="json"))).hexdigest()
         for item in artifacts
