@@ -27,10 +27,16 @@ from agentic_saga.storage import __all__ as storage_all
 ROOT = Path(__file__).parents[1]
 
 _DAGGER_AUTH_ARGUMENT = "--git-auth-header=env:DAGGER_GIT_HTTP_AUTH_HEADER"
-_FORK_SAFE_AUTH_EXPRESSION = (
-    "${{ (github.event_name != 'pull_request' || "
+_DAGGER_AUTH_PREDICATE = (
+    "github.event.repository.private && (github.event_name != 'pull_request' || "
     "github.event.pull_request.head.repo.full_name == github.repository) && "
-    f"'{_DAGGER_AUTH_ARGUMENT}' || '' }}}}"
+    "secrets.DAGGER_GIT_HTTP_AUTH_HEADER != ''"
+)
+_SAFE_DAGGER_AUTH_ARGUMENT = (
+    f"${{{{ {_DAGGER_AUTH_PREDICATE} && '{_DAGGER_AUTH_ARGUMENT}' || '' }}}}"
+)
+_SAFE_DAGGER_AUTH_ENV = (
+    f"${{{{ {_DAGGER_AUTH_PREDICATE} && secrets.DAGGER_GIT_HTTP_AUTH_HEADER || '' }}}}"
 )
 
 _ROOT_FACADE = (
@@ -606,11 +612,10 @@ def _assert_checkout(step: dict[str, object]) -> None:
 def _assert_dagger(step: dict[str, object], operation: str) -> None:
     assert set(step) == {"uses", "env", "with"}
     assert step["uses"] == "dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77"
-    assert _mapping(step["env"]) == {
-        "DAGGER_GIT_HTTP_AUTH_HEADER": "${{ secrets.DAGGER_GIT_HTTP_AUTH_HEADER }}"
-    }
-    auth_argument = _FORK_SAFE_AUTH_EXPRESSION if operation == "ci" else _DAGGER_AUTH_ARGUMENT
-    expected = f"{operation} --source=. --commit-sha=${{{{ github.sha }}}} {auth_argument}"
+    assert _mapping(step["env"]) == {"DAGGER_GIT_HTTP_AUTH_HEADER": _SAFE_DAGGER_AUTH_ENV}
+    expected = (
+        f"{operation} --source=. --commit-sha=${{{{ github.sha }}}} {_SAFE_DAGGER_AUTH_ARGUMENT}"
+    )
     assert _mapping(step["with"]) == {"version": "0.21.8", "verb": "call", "args": expected}
 
 
@@ -660,18 +665,14 @@ def _ingress_fixture(operation: str = "ci") -> dict[str, object]:
                     },
                     {
                         "uses": "dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77",
-                        "env": {
-                            "DAGGER_GIT_HTTP_AUTH_HEADER": (
-                                "${{ secrets.DAGGER_GIT_HTTP_AUTH_HEADER }}"
-                            )
-                        },
+                        "env": {"DAGGER_GIT_HTTP_AUTH_HEADER": _SAFE_DAGGER_AUTH_ENV},
                         "with": {
                             "version": "0.21.8",
                             "verb": "call",
                             "args": (
                                 f"{operation} --source=. --commit-sha="
                                 "${{ github.sha }} "
-                                f"{_FORK_SAFE_AUTH_EXPRESSION}"
+                                f"{_SAFE_DAGGER_AUTH_ARGUMENT}"
                             ),
                         },
                     },

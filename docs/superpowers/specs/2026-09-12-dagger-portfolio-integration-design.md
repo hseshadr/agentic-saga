@@ -148,10 +148,11 @@ class AgenticSaga:
 ```
 
 The public API accepts the exact source snapshot, exact commit identity, and an optional typed
-secret. Authenticated callers keep the private-history path; public-fork pull requests omit the
-secret and use anonymous public history. It does not accept arbitrary execution configuration.
-Repository identity, toolchain versions, commands, cache namespaces, paths, and performance
-thresholds are fixed internal constants.
+secret. While the repository is private, trusted callers keep the private-history path and
+external-fork pull requests omit the secret. Once the repository is public, every event uses
+anonymous public history so the obsolete secret can be deleted. It does not accept arbitrary
+execution configuration. Repository identity, toolchain versions, commands, cache namespaces,
+paths, and performance thresholds are fixed internal constants.
 
 `ci` first completes the shared source/history guard. Under each pinned Python 3.12 and 3.13
 runtime it then runs three fixed repository-owned commands: the Python Poe gate, the Poe
@@ -183,12 +184,15 @@ repository.
 ## Repository authentication and public-fork safety
 
 GitHub checks out Agentic Saga at `${{ github.sha }}` with `persist-credentials: false` and full
-history. Pushes, manual runs, scheduled runs, and same-repository pull requests read the repository
-Actions secret `DAGGER_GIT_HTTP_AUTH_HEADER`, whose masked value is the value-only
-`Basic <base64(x-access-token:TOKEN)>` Git authorization header. Public-fork pull requests cannot
-receive repository secrets, so the workflow omits the optional Dagger argument and resolves the
-now-public history anonymously. The local module forwards a supplied secret only to the shared
-Foundation, without exposing it in logs or ordinary command arguments.
+history. While the repository is private, pushes, manual runs, scheduled runs, and same-repository
+pull requests may read the repository Actions secret `DAGGER_GIT_HTTP_AUTH_HEADER`, whose masked
+value is the value-only `Basic <base64(x-access-token:TOKEN)>` Git authorization header. The
+workflow exposes it to the Dagger action and adds the optional argument only when that secret is
+non-empty. External-fork and no-secret pull requests, including Dependabot, receive an empty
+environment value and no argument. Once the repository is public, the same visibility guard does
+that for every event, allowing the obsolete Actions secret to be deleted. The local module
+forwards a supplied secret only to the shared Foundation, without exposing it in logs or ordinary
+command arguments.
 
 Foundation binds the supplied source directory to `hseshadr/agentic-saga@<full-sha>` and fetches
 the canonical Git tree/history at the same commit using Dagger's Git API, with the typed header
@@ -197,12 +201,12 @@ complete history.
 
 Failure to authenticate when authentication was supplied, resolve the commit, compare the source,
 or scan history fails closed. There is no anonymous fallback for a trusted authenticated run and
-no secret is forwarded to an untrusted public fork.
+no secret is forwarded to an untrusted external fork or any public-repository event.
 
 Tests must prove that:
 
-- public-fork callers use no auth header;
-- private callers forward a `dagger.Secret` to the Git API;
+- public repositories and external-fork callers use no auth header;
+- trusted private-repository callers forward a `dagger.Secret` to the Git API;
 - the secret value is absent from errors and container arguments;
 - authentication or history failure prevents every product gate;
 - malformed repository or commit identities fail before network execution.
@@ -233,8 +237,10 @@ The required workflow contains one job named `Dagger`. Its only steps are:
 1. `actions/checkout` pinned to a full commit, with full history, exact `${{ github.sha }}`, and
    persisted credentials disabled.
 2. `dagger/dagger-for-github` pinned to a full commit and Dagger `0.21.8`, calling the closed `ci`
-   function with exact source and commit identity. Trusted runs also pass the masked Git
-   authorization secret; public-fork pull requests omit it.
+   function with exact source and commit identity. Only trusted private-repository runs with a
+   non-empty configured secret expose it to the action and pass the auth argument. External forks,
+   no-secret events, and all public-repository events expose an empty environment value and omit
+   the argument.
 
 The scheduled security workflow has the same two-step shape and calls `security`.
 

@@ -71,10 +71,14 @@ PUBLIC_INPUTS = (
     ("git_auth_header", "dagger.Secret | None"),
 )
 AUTH_ARGUMENT = "--git-auth-header=env:DAGGER_GIT_HTTP_AUTH_HEADER"
-FORK_SAFE_AUTH_EXPRESSION = (
-    "${{ (github.event_name != 'pull_request' || "
+AUTH_PREDICATE = (
+    "github.event.repository.private && (github.event_name != 'pull_request' || "
     "github.event.pull_request.head.repo.full_name == github.repository) && "
-    f"'{AUTH_ARGUMENT}' || '' }}}}"
+    "secrets.DAGGER_GIT_HTTP_AUTH_HEADER != ''"
+)
+SAFE_AUTH_ARGUMENT_EXPRESSION = f"${{{{ {AUTH_PREDICATE} && '{AUTH_ARGUMENT}' || '' }}}}"
+SAFE_AUTH_ENV_EXPRESSION = (
+    f"${{{{ {AUTH_PREDICATE} && secrets.DAGGER_GIT_HTTP_AUTH_HEADER || '' }}}}"
 )
 GENERATED_PATHS = (".dagger/sdk/generated.py", ".dagger/.venv/pyvenv.cfg")
 GENERATED_PREFIXES = (".dagger/sdk/", ".dagger/.venv/")
@@ -285,8 +289,9 @@ def _assert_workflow_boundary(name: str, workflow: str) -> None:
         for step in steps
         if step.get("uses") == f"dagger/dagger-for-github@{DAGGER_ACTION_SHA}"
     ]
-    auth_argument = FORK_SAFE_AUTH_EXPRESSION if name == "dagger.yml" else AUTH_ARGUMENT
-    expected_args = f"{argument} --source=. --commit-sha=${{{{ github.sha }}}} {auth_argument}"
+    expected_args = (
+        f"{argument} --source=. --commit-sha=${{{{ github.sha }}}} {SAFE_AUTH_ARGUMENT_EXPRESSION}"
+    )
     arguments = [
         cast(dict[str, str], step["with"])["args"]
         for step in steps
@@ -294,6 +299,7 @@ def _assert_workflow_boundary(name: str, workflow: str) -> None:
     ]
     assert len(checkout) == 1
     assert len(dagger_steps) == 1
+    assert dagger_steps[0]["env"] == {"DAGGER_GIT_HTTP_AUTH_HEADER": SAFE_AUTH_ENV_EXPRESSION}
     assert arguments == [expected_args], "workflow must contain one sole Dagger invocation"
     assert dagger_steps[0]["with"] == {"version": "0.21.8", "verb": "call", "args": expected_args}
 
@@ -551,6 +557,43 @@ def test_should_preserve_thin_pinned_workflow_ingress(name: str) -> None:
     # When its checkout, action, and public invocation are checked.
     # Then CI remains a pinned thin shell around the Dagger graph.
     _assert_workflow_boundary(name, workflow)
+
+
+@pytest.mark.parametrize(
+    ("private", "event_name", "head_repository", "secret_available", "expected"),
+    (
+        (True, "push", None, True, True),
+        (True, "pull_request", "hseshadr/agentic-saga", True, True),
+        (True, "pull_request", "contributor/agentic-saga", True, False),
+        (True, "schedule", None, True, True),
+        (True, "workflow_dispatch", None, True, True),
+        (True, "push", None, False, False),
+        (True, "pull_request", "hseshadr/agentic-saga", False, False),
+        (False, "push", None, True, False),
+        (False, "pull_request", "hseshadr/agentic-saga", True, False),
+        (False, "pull_request", "contributor/agentic-saga", True, False),
+        (False, "schedule", None, True, False),
+        (False, "workflow_dispatch", None, True, False),
+    ),
+)
+def test_should_select_auth_only_for_private_trusted_events(
+    private: bool,
+    event_name: str,
+    head_repository: str | None,
+    secret_available: bool,
+    expected: bool,
+) -> None:
+    # Given the repository visibility and event identity used by the exact workflow expression.
+    trusted = event_name != "pull_request" or head_repository == main.REPOSITORY
+
+    # When the authentication selection contract is evaluated.
+    selected = private and trusted and secret_available
+    secret = "masked-secret" if secret_available else ""
+    environment = secret if selected else ""
+
+    # Then public, external-fork, and no-secret events receive neither auth surface.
+    assert selected is expected
+    assert environment == (secret if expected else "")
 
 
 @pytest.mark.parametrize(
