@@ -51,7 +51,7 @@ it("keeps loading and invalid-trace states axe-clean", async () => {
 it("keeps loaded and empty-filter states axe-clean", async () => {
   const user = userEvent.setup();
   const loaded = render(<App repository={loadedRepository()} />);
-  await screen.findByText("Succeeded verified");
+  await screen.findByText("Completed safely");
   await expectAxeClean(loaded.container);
   await user.click(screen.getByRole("tab", { name: "Ledger" }));
   await user.type(screen.getByLabelText("Search recorded fields"), "not-a-recorded-value");

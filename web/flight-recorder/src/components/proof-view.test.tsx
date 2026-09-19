@@ -19,16 +19,28 @@ describe("ProofView", () => {
     const replay = projection("business-failure");
     render(<ProofView onSelectEvent={select} projection={replay} />);
 
-    expect(screen.getByText("3 of 3 recorded invariants valid")).toBeVisible();
-    expect(screen.getByText("payment_refunded")).toBeVisible();
-    expect(screen.getAllByText("ecommerce-invariants-v1")).toHaveLength(3);
-    expect(screen.getAllByText("compensated_verified")).toHaveLength(3);
-    await user.click(screen.getByRole("button", { name: "Inspect proof source event 36" }));
+    expect(screen.getByText("1 of 1 recorded invariants valid")).toBeVisible();
+    expect(screen.getByText("obligations_reversed")).toBeVisible();
+    expect(screen.getByText("temporal-compensation-proof-v1")).toBeVisible();
+    expect(screen.getByText("compensated_verified")).toBeVisible();
+    const sourceSequence = replay.proof.sourceEvent?.saga_seq;
+    await user.click(
+      screen.getByRole("button", { name: `Inspect proof source event ${sourceSequence}` }),
+    );
     expect(select).toHaveBeenCalledWith(replay.proof.sourceEvent?.event_id);
   });
 
   it("shows no future proof at an earlier replay position", () => {
-    render(<ProofView onSelectEvent={vi.fn()} projection={projection("business-failure", 34)} />);
+    const replay = projection("business-failure");
+    const firstInvariant = replay.events.findIndex(
+      ({ event_type }) => event_type === "invariant_evaluated",
+    );
+    render(
+      <ProofView
+        onSelectEvent={vi.fn()}
+        projection={projection("business-failure", firstInvariant - 1)}
+      />,
+    );
     expect(
       screen.getByText("No invariant proof is visible at this replay position."),
     ).toBeVisible();

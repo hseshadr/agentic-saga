@@ -16,6 +16,7 @@ from agentic_saga.contracts.outcomes import (
     ReconcilePending,
     ReconcileUnsupported,
     ReconciliationOutcome,
+    normalize_reconciliation_outcome,
 )
 
 
@@ -213,6 +214,29 @@ def test_should_reject_non_utc_check_time_when_reconciliation_is_pending() -> No
     # When / Then
     with pytest.raises(ValidationError):
         ReconcilePending.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("provider_correlation", "expected_correlation"),
+    [
+        ("opaque://payments/request_12345678/v2", "opaque://payments/request_12345678/v2"),
+        ("provider-request-7", "opaque://agentic-saga/fallback_12345678/v1"),
+    ],
+)
+def test_should_normalize_pending_reconciliation_to_safe_correlation(
+    provider_correlation: str, expected_correlation: str
+) -> None:
+    fallback = "opaque://agentic-saga/fallback_12345678/v1"
+    pending = ReconcilePending(
+        correlation=provider_correlation,
+        check_after=datetime(2026, 9, 6, tzinfo=UTC),
+    )
+
+    normalized = normalize_reconciliation_outcome(pending, fallback_correlation=fallback)
+
+    assert isinstance(normalized, ReconcilePending)
+    assert normalized.correlation == expected_correlation
+    assert normalized.check_after == pending.check_after
 
 
 def test_should_prevent_assignment_when_outcome_is_frozen() -> None:

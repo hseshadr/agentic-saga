@@ -162,6 +162,15 @@ def test_should_reject_manifest_without_one_planning_unit_per_turn(field: str) -
         SagaManifest.model_validate(raw)
 
 
+@pytest.mark.parametrize("field", ["turn_limit", "tool_call_limit"])
+def test_should_reject_manifest_budget_above_temporal_bound(field: str) -> None:
+    raw = YAML(typ="safe").load(_manifest_text("0" * 64))
+    raw["budgets"][field] = 101
+
+    with pytest.raises(ValidationError, match=field):
+        SagaManifest.model_validate(raw)
+
+
 def test_should_keep_resolved_manifest_immutable(tmp_path: Path) -> None:
     # Given
     registry = _registry("search_options")

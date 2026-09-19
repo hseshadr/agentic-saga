@@ -26,9 +26,15 @@ npx --yes pnpm@11.5.0 gate
 
 ## What the first screen proves
 
-The top strip states the run, mode, outcome, and verified-proof count. The trajectory lists stored
-runs. The center board keeps every durable event in ledger order across Agent, Kernel guard,
-Effect + repair, and Proof lanes. The right inspector shows only recorded, redacted evidence.
+The top strip names the scenario, plain-language outcome, and verified safety-check count. Built-in
+ecommerce traces also show the business flow: check stock, reserve the item, charge payment,
+arrange delivery, and verify the order. If a later step fails, a separate lane shows cancel,
+refund, and release progress in the safe reverse order. This business view is enabled by explicit
+catalog metadata; generic trace catalogs continue to receive the generic recorder.
+
+The trajectory lists stored runs. The center board keeps every durable event in history order across
+Agent, Workflow guard, Effect + repair, and Proof lanes. The right inspector shows only recorded,
+redacted evidence.
 
 Select a signal with a pointer or keyboard. The board isolates all recorded events connected by
 the same forward or compensation operation IDs. Every signal stays readable; visible `chain` and
@@ -41,12 +47,18 @@ marks a stop or human escalation.
 
 ## Replay and inspect
 
-The first render shows the recorded outcome and never starts playback. Use Previous, Next, Restart,
-or Play to move one durable event at a time; Left/Right, Home, and Space provide the same controls
-when focus is outside an interactive element. Play pauses at reconciliation, rejection,
-compensation, proof, and human-review landmarks. With reduced motion enabled, automatic playback
-is disabled and manual stepping remains available. Changing evidence views pauses playback;
-changing runs starts a fresh local replay at that run’s recorded outcome.
+The first render shows the recorded outcome and never starts playback. Choose **Watch from start**
+to return to the first event and begin immediately. One new event appears every 700 milliseconds so
+a person can follow the forward work and reverse-order recovery. Use Previous, Next, Restart, or
+Play for direct control; Left/Right, Home, and Space provide the same controls when focus is outside
+an interactive element. Replay pauses at reconciliation, rejection, compensation, proof, and
+human-review landmarks. With reduced motion enabled, automatic playback is disabled and manual
+stepping remains available. Changing evidence views pauses playback; changing runs starts a fresh
+local replay at that run’s recorded outcome.
+
+This is a dynamic replay of captured evidence, not a claim that the backend is executing live. The
+projection reads only events at or before the visible cursor, so future success, failure, recovery,
+and proof do not leak into an earlier frame.
 
 - **Story** translates recorded event types into fixed plain-language descriptions.
 - **Ledger** filters only safe identifiers and receipt references, and renders at most 25 rows per
@@ -60,7 +72,8 @@ at the latest 200 visible events, while the source trace remains available throu
 
 ## Trust boundary
 
-The browser accepts the current snake_case kernel `RunTrace` contract directly. The locked
+The browser accepts the current snake_case `RunTrace` contract projected from Temporal Workflow
+state. The locked
 `lossless-json` parser has no transitive dependencies and preserves numeric meaning across Python
 and JavaScript. Python-generated hash goldens cover floats, exponent boundaries, negative zero,
 and large integers. Strict validation rejects extra or missing fields, unsupported versions,
@@ -98,34 +111,35 @@ destination. Local-filesystem behavior, directory access, ACLs, same-UID mutatio
 cleanup remain operator responsibilities.
 
 Only redacted inputs, outputs, receipts, structured rationale, authority, state, and causal IDs are
-displayed. Private chain-of-thought is neither expected nor rendered. Each exported trace uses the
-exact immutable redaction policy owned by its historical `SagaDefinition`. Built-in credential and
-payment-secret rules are only a floor; applications must explicitly classify ordinary PII keys,
-and unlisted fields are public by contract. Browser validation is defense in depth, not a secret
-scrubber. Generic JSON fields entering the Python contract are capped at depth 16, 4,096 nodes, 256
-items per container, 16 KiB per UTF-8 string, and 64 KiB encoded.
+displayed. Private chain-of-thought is neither expected nor rendered. The default Temporal
+converter accepts only public/redacted Workflow payloads; private production history requires an
+application-configured encryption codec and namespace access controls. Built-in credential and
+payment-secret rules are only a floor, so applications must explicitly classify every ordinary PII
+field they admit. Browser validation is defense in depth, not a secret scrubber. Generic JSON
+fields entering the Python contract are capped at depth 16, 4,096 nodes, 256 items per container,
+16 KiB per UTF-8 string, and 64 KiB encoded.
 
 ## Rebuild the real fixtures
 
-The four catalog traces come from the real ecommerce runtime with deterministic IDs used only by
-this offline example. Regenerate the traces and their index digests from the repository root:
+The four catalog traces come from the real Temporal ecommerce Workflow with deterministic example
+inputs. Regenerate the traces and their index digests from the repository root:
 
 ```bash
 uv run python -m examples.ecommerce.export_flight_recorder
 uv run pytest tests/integration/examples/test_flight_recorder_fixtures.py -q
 ```
 
-The generic kernel's non-fixture default still uses unpredictable claim IDs. The checked-in paths
-cover verified success, a lost response reconciled after restart, verified compensation, and an
-unverifiable compensation that stops at `HUMAN_REQUIRED`.
+The checked-in paths cover verified success, a lost response reconciled under the same stable
+operation identity, verified compensation, and an unverifiable compensation that stops at
+`HUMAN_REQUIRED`.
 
 ## Current boundary
 
 V0.1 ships the source workbench, bundled static assets, four generated redacted traces, a
 strict package-resource loader, exclusive materialization, loopback serving, the `agentic-saga demo`
-entry point, user-controlled Story/Ledger/Proof replay, keyboard and reduced-motion behavior,
-responsive 320px layouts, and source plus packaged-wheel browser gates. Every release candidate
-requires a clean exact-commit measurement and matching hosted CI evidence.
+entry point, a guided ecommerce flow, user-controlled Story/Ledger/Proof replay, keyboard and
+reduced-motion behavior, responsive 320px layouts, and source plus packaged-wheel browser gates.
+Every release candidate requires a clean exact-commit measurement and matching hosted CI evidence.
 
 It is not a live monitor, workflow editor, operations control plane, general web API, hosted
 service, or authenticity system. It shows captured evidence only. See the

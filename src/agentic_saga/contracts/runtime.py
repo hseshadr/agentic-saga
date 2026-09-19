@@ -28,25 +28,19 @@ type TerminalStatus = Literal[
     "succeeded_verified",
     "compensated_verified",
     "aborted_clean",
-    "resolved_with_exception",
 ]
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 
 
 class SagaStatus(StrEnum):
-    """Enumerate durable lifecycle states, including verified terminal outcomes."""
+    """Enumerate states emitted by the current durable Temporal workflow."""
 
-    CREATED = "created"
     RUNNING = "running"
-    RECOVERY_PLAN_REQUIRED = "recovery_plan_required"
-    RETRY_WAIT = "retry_wait"
-    RECONCILING_UNKNOWN = "reconciling_unknown"
     COMPENSATING = "compensating"
     HUMAN_REQUIRED = "human_required"
     SUCCEEDED_VERIFIED = "succeeded_verified"
     COMPENSATED_VERIFIED = "compensated_verified"
     ABORTED_CLEAN = "aborted_clean"
-    RESOLVED_WITH_EXCEPTION = "resolved_with_exception"
 
 
 class ExecutionBudget(BaseModel):
@@ -155,23 +149,6 @@ class ReadEvidence(BaseModel):
         return self
 
 
-class ControlProposalCapabilities(BaseModel):
-    """Expose only control proposals the deterministic kernel can currently accept."""
-
-    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
-
-    finish_targets: tuple[TerminalStatus, ...] = ()
-    begin_compensation: bool = False
-    escalate_to_human: bool = False
-
-    @field_validator("finish_targets")
-    @classmethod
-    def require_unique_targets(cls, value: tuple[str, ...]) -> tuple[str, ...]:
-        if len(value) != len(set(value)):
-            raise ValueError("finish targets must be unique")
-        return value
-
-
 class SagaObservation(BaseModel):
     """Present the agent with the current projection and remaining turn budget."""
 
@@ -185,9 +162,7 @@ class SagaObservation(BaseModel):
     projection: JsonObject
     remaining_budget: ExecutionBudget
     read_evidence: tuple[ReadEvidence, ...] = ()
-    proposal_controls: ControlProposalCapabilities = Field(
-        default_factory=ControlProposalCapabilities
-    )
+    finish_allowed: bool = False
 
 
 class SagaResult(BaseModel):
@@ -243,7 +218,6 @@ def _effect_descriptor[CommandT: BaseModel](
 
 __all__ = [
     "AgentDriver",
-    "ControlProposalCapabilities",
     "ExecutionBudget",
     "ReadEvidence",
     "SagaGoal",

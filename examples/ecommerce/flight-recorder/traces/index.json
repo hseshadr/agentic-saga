@@ -3,35 +3,39 @@
   "runs": [
     {
       "id": "happy-path",
-      "name": "Verified order fulfillment",
-      "summary": "The agent proposes inventory reservation, payment capture, and fulfillment; the kernel authorizes each effect and assigns success only after three exact-state invariants pass.",
+      "name": "Everything works",
+      "summary": "Stock is reserved, payment is captured, delivery is arranged, and fresh provider evidence confirms the order is complete.",
       "mode": "scripted",
+      "presentation": "ecommerce",
       "trace_ref": "happy-path.json",
-      "trace_sha256": "a7c0c1ec7d36a8594fdf53e9b26eba054add190d098f14c3bfac69f1fe4957ec"
+      "trace_sha256": "8b7bbe895122d8bba456b394a471b0ee95d51eb25050cea6d3c6b56ebb7431f0"
     },
     {
       "id": "lost-response",
-      "name": "Lost payment response reconciled",
-      "summary": "Payment commits but its response is lost; after a durable restart the runtime reconciles the same operation without a duplicate charge, then verifies success.",
+      "name": "The payment reply is lost",
+      "summary": "The charge happened but its reply vanished. The system checks the provider instead of charging twice, then safely continues.",
       "mode": "scripted",
+      "presentation": "ecommerce",
       "trace_ref": "lost-response.json",
-      "trace_sha256": "90b4e62adb4b9b7f3dc8fa8f620c3e1a7be2f874e871301bf88e645b2fc20780"
+      "trace_sha256": "b0ab1e310c834a1b6ee897d4d1e0de3803f94be531a2c2be517acf6be2a6c8fa"
     },
     {
       "id": "business-failure",
-      "name": "Payment declined after inventory reservation",
-      "summary": "The kernel records the failed charge, then releases inventory and cancels the order in reverse order before verifying the compensated state.",
+      "name": "Delivery fails after payment",
+      "summary": "Inventory and payment succeed, but fulfillment rejects the order. The Saga cancels delivery, refunds payment, and releases stock in reverse order.",
       "mode": "scripted",
+      "presentation": "ecommerce",
       "trace_ref": "business-failure.json",
-      "trace_sha256": "70c44cf633479e34f772f894191242f2c379f6fc6c202feab78db87cda3a62e8"
+      "trace_sha256": "662983d14d875c724136e424787ece738109f1bb6abea97170798db0ea08c95e"
     },
     {
       "id": "compensation-failure",
-      "name": "Compensation cannot be verified",
-      "summary": "A failed inventory release cannot be proven safe, so the kernel stops the unwind and records a human-required escalation instead of guessing.",
+      "name": "The refund cannot be verified",
+      "summary": "The refund reply remains uncertain. The Saga pauses, rejects stale and unauthorized decisions, then resumes only after trusted human verification.",
       "mode": "scripted",
+      "presentation": "ecommerce",
       "trace_ref": "compensation-failure.json",
-      "trace_sha256": "ede956a83992476553a2e37a30568999f0b5f0263ffba778b3f924dfad8b8edb"
+      "trace_sha256": "a85afcef54a5303eddfec50b5e267ba7086b3bae514fe0730facd277638ce4af"
     }
   ]
 }

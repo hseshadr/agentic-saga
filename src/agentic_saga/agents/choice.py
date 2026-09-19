@@ -11,8 +11,6 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from agentic_saga.agents.deepagents import AgentFailureCategory, AgentPlanningError
 from agentic_saga.agents.proposals import (
-    BeginCompensationIntent,
-    EscalateIntent,
     FinishIntent,
     ProposalIntent,
     ToolCallIntent,
@@ -40,7 +38,7 @@ type DecisionCall = Callable[[dict[str, object], dict[str, object]], Awaitable[D
 
 _MAX_CANDIDATES = 255
 _PROBABILITY_TOLERANCE = 0.000_001
-_CONTROL_TOOLS = frozenset({"finish_saga", "begin_compensation", "escalate_to_human"})
+_CONTROL_TOOLS = frozenset({"finish_saga"})
 
 
 class ProposalCandidate(BaseModel):
@@ -156,13 +154,8 @@ def _tool_names(available_tools: Sequence[ToolDescriptor]) -> frozenset[str]:
 
 
 def _control_is_eligible(proposal: ProposalIntent, observation: SagaObservation) -> bool:
-    controls = observation.proposal_controls
     if isinstance(proposal, FinishIntent):
-        return proposal.target_status in controls.finish_targets
-    if isinstance(proposal, BeginCompensationIntent):
-        return controls.begin_compensation
-    if isinstance(proposal, EscalateIntent):
-        return controls.escalate_to_human
+        return observation.finish_allowed
     return False
 
 

@@ -1,24 +1,24 @@
 {
   "schema_version": "1.0",
-  "run_id": "trace_636fd5ceda0e66a52d9f745d094e728abfe6dc4212548c510dda659c8ea4536d",
-  "saga_id": "saga_bc495e50bc292bc71a6c63c4e6287dab549f34b14f1692280f607c22acffd341",
-  "definition_version": "1.0",
-  "started_at": "2026-01-01T00:00:00Z",
-  "finished_at": "2026-01-01T00:00:00Z",
+  "run_id": "trace_485792ae9dea9609367a8ff389b2ecb5",
+  "saga_id": "saga_fdd6820fc4d66ea3fbcabe92f926aae507b47e6ea0fcb942195599a11c8fc54e",
+  "definition_version": "ecommerce-temporal-v1",
+  "started_at": "2026-01-01T00:00:01Z",
+  "finished_at": "2026-01-01T00:00:15Z",
   "outcome": "compensated_verified",
   "events": [
     {
-      "event_id": "evt_636fd5ceda0e66a52d9f745d094e728abfe6dc4212548c510dda659c8ea4536d",
+      "event_id": "evt_bc9ad086aedb274789523d12f73dcd6b",
       "saga_seq": 1,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "kernel",
-      "event_type": "saga_created",
-      "actor": "runtime",
-      "trace_id": "trace_636fd5ceda0e66a52d9f745d094e728abfe6dc4212548c510dda659c8ea4536d",
-      "definition_version": "1.0",
+      "recorded_at": "2026-01-01T00:00:01Z",
+      "authority": "workflow",
+      "event_type": "saga_started",
+      "actor": "temporal_workflow",
+      "trace_id": "trace_485792ae9dea9609367a8ff389b2ecb5",
+      "definition_version": "ecommerce-temporal-v1",
       "fence_token": null,
       "before_status": null,
-      "after_status": "created",
+      "after_status": "running",
       "operation_id": null,
       "step_instance_id": null,
       "direction": null,
@@ -26,96 +26,118 @@
       "attempt": null,
       "tool_name": null,
       "compensates_operation_id": null,
+      "redacted_input": null,
+      "redacted_output": null,
+      "rationale": {
+        "goal_id": "checkout_order"
+      },
+      "policy_decision": null,
+      "receipt": null,
+      "correlation": null,
+      "input_hash": null,
+      "output_hash": null
+    },
+    {
+      "event_id": "evt_5f2dd101467264ebdf63ff5f110b0703",
+      "saga_seq": 2,
+      "recorded_at": "2026-01-01T00:00:02Z",
+      "authority": "agent",
+      "event_type": "agent_decision_recorded",
+      "actor": "agent_driver",
+      "trace_id": "trace_485792ae9dea9609367a8ff389b2ecb5",
+      "definition_version": "ecommerce-temporal-v1",
+      "fence_token": null,
+      "before_status": "running",
+      "after_status": "running",
+      "operation_id": null,
+      "step_instance_id": null,
+      "direction": null,
+      "semantic_generation": null,
+      "attempt": null,
+      "tool_name": "reserve_inventory",
+      "compensates_operation_id": null,
+      "redacted_input": null,
+      "redacted_output": null,
+      "rationale": {
+        "accepted": true,
+        "proposal_id": "proposal_00000001",
+        "proposal_kind": "tool_call",
+        "tool_name": "reserve_inventory"
+      },
+      "policy_decision": null,
+      "receipt": null,
+      "correlation": null,
+      "input_hash": null,
+      "output_hash": null
+    },
+    {
+      "event_id": "evt_9bf1348fc09a7390872448333d30c26d",
+      "saga_seq": 3,
+      "recorded_at": "2026-01-01T00:00:03Z",
+      "authority": "effect",
+      "event_type": "effect_outcome_recorded",
+      "actor": "registered_tool",
+      "trace_id": "trace_485792ae9dea9609367a8ff389b2ecb5",
+      "definition_version": "ecommerce-temporal-v1",
+      "fence_token": null,
+      "before_status": "running",
+      "after_status": "running",
+      "operation_id": "op_ce1c448a3748e0cc551dc329985c85a9fcbce50502ac3837e67670ff54fc3611",
+      "step_instance_id": "step_00000001",
+      "direction": "forward",
+      "semantic_generation": 0,
+      "attempt": null,
+      "tool_name": "reserve_inventory",
+      "compensates_operation_id": null,
       "redacted_input": {
-        "context": {
+        "expected_version": 1,
+        "order_id": "order_demo_001",
+        "quantity": 1,
+        "sku": "sku_travel_pack"
+      },
+      "redacted_output": {
+        "kind": "effect_confirmed",
+        "receipt": {
+          "receipt_ref": "opaque://ecommerce/b3f2fcb4ca4374e14f408a81b12eb82d8cf97eb2e6623bad6283e201c943f888/v1"
+        }
+      },
+      "rationale": {
+        "arguments": {
+          "expected_version": 1,
           "order_id": "order_demo_001",
           "quantity": 1,
           "sku": "sku_travel_pack"
         },
-        "goal_id": "goal_ecommerce_demo_001",
-        "text": "Fulfill the requested order or restore a verified safe business state."
-      },
-      "redacted_output": null,
-      "rationale": {
-        "definition_name": "ecommerce_order"
-      },
-      "policy_decision": null,
-      "receipt": null,
-      "correlation": null,
-      "input_hash": "8cb0fb0b7e1c6ce88342e553c4969bbb3d294585141155b4e5de7d83ba5be2b0",
-      "output_hash": null
-    },
-    {
-      "event_id": "evt_3009e4ccfbf5138a0d521ecb61fc777a45c0b4045b26f6267caaf420bb10c5d4",
-      "saga_seq": 2,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "kernel",
-      "event_type": "saga_started",
-      "actor": "runtime",
-      "trace_id": "trace_3009e4ccfbf5138a0d521ecb61fc777a45c0b4045b26f6267caaf420bb10c5d4",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "created",
-      "after_status": "running",
-      "operation_id": null,
-      "step_instance_id": null,
-      "direction": null,
-      "semantic_generation": null,
-      "attempt": null,
-      "tool_name": null,
-      "compensates_operation_id": null,
-      "redacted_input": null,
-      "redacted_output": null,
-      "rationale": {},
-      "policy_decision": null,
-      "receipt": null,
-      "correlation": null,
-      "input_hash": null,
-      "output_hash": null
-    },
-    {
-      "event_id": "evt_11c26ed90a8b87f4f61e3336ed2e037fcf12e431db604b1b40cf17b380505af6",
-      "saga_seq": 3,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "agent",
-      "event_type": "agent_turn_reserved",
-      "actor": "runtime",
-      "trace_id": "trace_11c26ed90a8b87f4f61e3336ed2e037fcf12e431db604b1b40cf17b380505af6",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "running",
-      "after_status": "running",
-      "operation_id": null,
-      "step_instance_id": null,
-      "direction": null,
-      "semantic_generation": null,
-      "attempt": null,
-      "tool_name": null,
-      "compensates_operation_id": null,
-      "redacted_input": null,
-      "redacted_output": null,
-      "rationale": {
-        "reserved_elapsed_ms": 30000,
-        "reserved_tokens": 1000,
-        "turn_id": "turn_76c1bab0976c52bc318ffe788bc50d58158eb71080e095a99df5f0429394b89e",
-        "turn_index": 1
+        "operation_id": "op_ce1c448a3748e0cc551dc329985c85a9fcbce50502ac3837e67670ff54fc3611",
+        "outcome": "succeeded",
+        "proof_for_success": false,
+        "public_receipt": {
+          "receipt_ref": "opaque://ecommerce/b3f2fcb4ca4374e14f408a81b12eb82d8cf97eb2e6623bad6283e201c943f888/v1"
+        },
+        "reason_code": null,
+        "semantic_generation": 0,
+        "step_instance_id": "step_00000001",
+        "tool_name": "reserve_inventory",
+        "verified": false
       },
       "policy_decision": null,
-      "receipt": null,
+      "receipt": {
+        "receipt_ref": "opaque://ecommerce/b3f2fcb4ca4374e14f408a81b12eb82d8cf97eb2e6623bad6283e201c943f888/v1"
+      },
       "correlation": null,
-      "input_hash": null,
-      "output_hash": null
+      "input_hash": "5a7af571dcb1ee00b4f4c48bf17c634b947d2f66a8038bb1c6d761ece366bcf1",
+      "output_hash": "b9a256e3995f66365a43d8ba8b4bf2427d49536618289e27b582539fab5d796d"
     },
     {
-      "event_id": "evt_80294ff6f7ae7b4892e601d4ee7e4183bbdf484e3f56d84883920341908cdcf7",
+      "event_id": "evt_e8e57ae8c456761dde29ea6014e3541b",
       "saga_seq": 4,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "effect",
-      "event_type": "read_started",
-      "actor": "runtime",
-      "trace_id": "trace_80294ff6f7ae7b4892e601d4ee7e4183bbdf484e3f56d84883920341908cdcf7",
-      "definition_version": "1.0",
-      "fence_token": 1,
+      "recorded_at": "2026-01-01T00:00:04Z",
+      "authority": "agent",
+      "event_type": "agent_decision_recorded",
+      "actor": "agent_driver",
+      "trace_id": "trace_485792ae9dea9609367a8ff389b2ecb5",
+      "definition_version": "ecommerce-temporal-v1",
+      "fence_token": null,
       "before_status": "running",
       "after_status": "running",
       "operation_id": null,
@@ -123,70 +145,90 @@
       "direction": null,
       "semantic_generation": null,
       "attempt": null,
-      "tool_name": "check_inventory",
+      "tool_name": "charge_payment",
       "compensates_operation_id": null,
-      "redacted_input": {
-        "quantity": 1,
-        "sku": "sku_travel_pack"
-      },
+      "redacted_input": null,
       "redacted_output": null,
       "rationale": {
-        "proposal_id": "proposal_505c05bd1dc5416818ab",
-        "turn_id": "turn_76c1bab0976c52bc318ffe788bc50d58158eb71080e095a99df5f0429394b89e"
+        "accepted": true,
+        "proposal_id": "proposal_00000003",
+        "proposal_kind": "tool_call",
+        "tool_name": "charge_payment"
       },
       "policy_decision": null,
       "receipt": null,
       "correlation": null,
-      "input_hash": "0d70f7f577fdee82280865e3454f050711df12a883cc2075a4171dba9ac983b7",
+      "input_hash": null,
       "output_hash": null
     },
     {
-      "event_id": "evt_dba11b3d33ee92c4cada4032ddb8c889d2874582c67e59ed44594901b436f19f",
+      "event_id": "evt_1f6d64d2cf312cad1306f1f5e99b6642",
       "saga_seq": 5,
-      "recorded_at": "2026-01-01T00:00:00Z",
+      "recorded_at": "2026-01-01T00:00:05Z",
       "authority": "effect",
-      "event_type": "read_observed",
-      "actor": "runtime",
-      "trace_id": "trace_dba11b3d33ee92c4cada4032ddb8c889d2874582c67e59ed44594901b436f19f",
-      "definition_version": "1.0",
-      "fence_token": 1,
+      "event_type": "effect_outcome_recorded",
+      "actor": "registered_tool",
+      "trace_id": "trace_485792ae9dea9609367a8ff389b2ecb5",
+      "definition_version": "ecommerce-temporal-v1",
+      "fence_token": null,
       "before_status": "running",
       "after_status": "running",
-      "operation_id": null,
-      "step_instance_id": null,
-      "direction": null,
-      "semantic_generation": null,
+      "operation_id": "op_069ca590bf7ed884637af115f1a5e59a45d97d415d10115ecad8dfaf66e7ef7a",
+      "step_instance_id": "step_00000003",
+      "direction": "forward",
+      "semantic_generation": 0,
       "attempt": null,
-      "tool_name": "check_inventory",
+      "tool_name": "charge_payment",
       "compensates_operation_id": null,
-      "redacted_input": null,
+      "redacted_input": {
+        "amount_minor": 7900,
+        "currency": "USD",
+        "customer_id": "customer_demo_001",
+        "order_id": "order_demo_001"
+      },
       "redacted_output": {
-        "available": 2,
-        "reserved": 0,
-        "sku": "sku_travel_pack",
-        "version": 1,
-        "warehouse_id": "primary"
+        "kind": "effect_confirmed",
+        "receipt": {
+          "receipt_ref": "opaque://ecommerce/75fb31cf26ba9f6bf6e761362bce9a62f37ee9490e6c5a80cff49eeeefd3bcd1/v1"
+        }
       },
       "rationale": {
-        "proposal_id": "proposal_505c05bd1dc5416818ab",
-        "turn_id": "turn_76c1bab0976c52bc318ffe788bc50d58158eb71080e095a99df5f0429394b89e"
+        "arguments": {
+          "amount_minor": 7900,
+          "currency": "USD",
+          "customer_id": "customer_demo_001",
+          "order_id": "order_demo_001"
+        },
+        "operation_id": "op_069ca590bf7ed884637af115f1a5e59a45d97d415d10115ecad8dfaf66e7ef7a",
+        "outcome": "succeeded",
+        "proof_for_success": false,
+        "public_receipt": {
+          "receipt_ref": "opaque://ecommerce/75fb31cf26ba9f6bf6e761362bce9a62f37ee9490e6c5a80cff49eeeefd3bcd1/v1"
+        },
+        "reason_code": null,
+        "semantic_generation": 0,
+        "step_instance_id": "step_00000003",
+        "tool_name": "charge_payment",
+        "verified": false
       },
       "policy_decision": null,
-      "receipt": null,
+      "receipt": {
+        "receipt_ref": "opaque://ecommerce/75fb31cf26ba9f6bf6e761362bce9a62f37ee9490e6c5a80cff49eeeefd3bcd1/v1"
+      },
       "correlation": null,
-      "input_hash": null,
-      "output_hash": "f4c831bbf02dd81e6832427b469ba7fcbfb09b3f88309581bb4a33f40c785200"
+      "input_hash": "e45a58329f7e75a797e75dbdb5b2f4799c8a4224f4f62728e7a505750d1a7fce",
+      "output_hash": "741e615bbf137606f5e4ea21e384a4a2e88802fa72c0e2b37f8cf9714fff31b4"
     },
     {
-      "event_id": "evt_5215412fc37ea6773f9d2fd2e195e7178e105385b74949c6e1e8c1d0ec8ec38f",
+      "event_id": "evt_375432ea8e584f822edc43805547568f",
       "saga_seq": 6,
-      "recorded_at": "2026-01-01T00:00:00Z",
+      "recorded_at": "2026-01-01T00:00:06Z",
       "authority": "agent",
-      "event_type": "agent_turn_reserved",
-      "actor": "runtime",
-      "trace_id": "trace_5215412fc37ea6773f9d2fd2e195e7178e105385b74949c6e1e8c1d0ec8ec38f",
-      "definition_version": "1.0",
-      "fence_token": 1,
+      "event_type": "agent_decision_recorded",
+      "actor": "agent_driver",
+      "trace_id": "trace_485792ae9dea9609367a8ff389b2ecb5",
+      "definition_version": "ecommerce-temporal-v1",
+      "fence_token": null,
       "before_status": "running",
       "after_status": "running",
       "operation_id": null,
@@ -194,15 +236,15 @@
       "direction": null,
       "semantic_generation": null,
       "attempt": null,
-      "tool_name": null,
+      "tool_name": "schedule_fulfillment",
       "compensates_operation_id": null,
       "redacted_input": null,
       "redacted_output": null,
       "rationale": {
-        "reserved_elapsed_ms": 30000,
-        "reserved_tokens": 1000,
-        "turn_id": "turn_c5df35a1f8c38bcb2f5322862b04fe2cb308fee53a8cd191e95cfde54e9b0687",
-        "turn_index": 2
+        "accepted": true,
+        "proposal_id": "proposal_00000005",
+        "proposal_kind": "tool_call",
+        "tool_name": "schedule_fulfillment"
       },
       "policy_decision": null,
       "receipt": null,
@@ -211,1012 +253,337 @@
       "output_hash": null
     },
     {
-      "event_id": "evt_b6264b8ff9533f79188fd7b667299411179c067596cbae987250a5ff82f9afa4",
+      "event_id": "evt_9fa6ea0345f0c8249a2de1ee8f82d21f",
       "saga_seq": 7,
-      "recorded_at": "2026-01-01T00:00:00Z",
+      "recorded_at": "2026-01-01T00:00:07Z",
       "authority": "effect",
-      "event_type": "effect_intent_recorded",
-      "actor": "kernel",
-      "trace_id": "trace_5f46653725501d49b6fa9866198b4f2faf6a4d3d92f4f7e82b6abf34ca07ea6d",
-      "definition_version": "1.0",
-      "fence_token": 1,
+      "event_type": "effect_outcome_recorded",
+      "actor": "registered_tool",
+      "trace_id": "trace_485792ae9dea9609367a8ff389b2ecb5",
+      "definition_version": "ecommerce-temporal-v1",
+      "fence_token": null,
       "before_status": "running",
       "after_status": "running",
-      "operation_id": "op_4f9b65eb3d2996bb8f8433083742b62836c696ec58d5b83384041daf5eb20f64",
-      "step_instance_id": "step_4549a74799314fc1",
+      "operation_id": "op_091135cb331e5754206429c33b84a0c107c0f493f1bd59a9fcf038329822fc19",
+      "step_instance_id": "step_00000005",
       "direction": "forward",
       "semantic_generation": 0,
-      "attempt": 1,
-      "tool_name": "reserve_inventory",
+      "attempt": null,
+      "tool_name": "schedule_fulfillment",
       "compensates_operation_id": null,
       "redacted_input": {
-        "expected_version": 1,
-        "order_id": "order_demo_001",
-        "quantity": 1,
-        "sku": "sku_travel_pack"
+        "order_id": "order_demo_001"
       },
-      "redacted_output": null,
+      "redacted_output": {
+        "kind": "effect_confirmed",
+        "receipt": {
+          "receipt_ref": "opaque://ecommerce/0529b316c555e71b03df02ff3c31124ac9578708b525cccdfe1dda9eec6f572e/v1"
+        }
+      },
       "rationale": {
-        "compensate_with": "release_inventory"
+        "arguments": {
+          "order_id": "order_demo_001"
+        },
+        "operation_id": "op_091135cb331e5754206429c33b84a0c107c0f493f1bd59a9fcf038329822fc19",
+        "outcome": "succeeded",
+        "proof_for_success": false,
+        "public_receipt": {
+          "receipt_ref": "opaque://ecommerce/0529b316c555e71b03df02ff3c31124ac9578708b525cccdfe1dda9eec6f572e/v1"
+        },
+        "reason_code": null,
+        "semantic_generation": 0,
+        "step_instance_id": "step_00000005",
+        "tool_name": "schedule_fulfillment",
+        "verified": false
       },
       "policy_decision": null,
-      "receipt": null,
+      "receipt": {
+        "receipt_ref": "opaque://ecommerce/0529b316c555e71b03df02ff3c31124ac9578708b525cccdfe1dda9eec6f572e/v1"
+      },
       "correlation": null,
-      "input_hash": "5a7af571dcb1ee00b4f4c48bf17c634b947d2f66a8038bb1c6d761ece366bcf1",
-      "output_hash": null
+      "input_hash": "bb81d4a39af50386db716c3951db666ee0a6d2e6039b031c3f34846adcf9c5e4",
+      "output_hash": "158cf4aad7a63386e24f9d458270a5624e69d21a2319232f54bc87a9f7c97e90"
     },
     {
-      "event_id": "evt_ed3241c8f34e113847d6ea95a7a9085c0f905caa0c4e33077b993d7522bd6e26",
+      "event_id": "evt_a5991721575193e143544202ef4bccd0",
       "saga_seq": 8,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "effect",
-      "event_type": "dispatch_started",
-      "actor": "dispatcher",
-      "trace_id": "trace_c499741293ffb94987bc7313c599641bcde99754228dc955d74c651ecb09110a",
-      "definition_version": "1.0",
-      "fence_token": 1,
+      "recorded_at": "2026-01-01T00:00:08Z",
+      "authority": "agent",
+      "event_type": "agent_decision_recorded",
+      "actor": "agent_driver",
+      "trace_id": "trace_485792ae9dea9609367a8ff389b2ecb5",
+      "definition_version": "ecommerce-temporal-v1",
+      "fence_token": null,
       "before_status": "running",
       "after_status": "running",
-      "operation_id": "op_4f9b65eb3d2996bb8f8433083742b62836c696ec58d5b83384041daf5eb20f64",
-      "step_instance_id": "step_4549a74799314fc1",
-      "direction": "forward",
-      "semantic_generation": 0,
-      "attempt": 1,
-      "tool_name": "reserve_inventory",
+      "operation_id": null,
+      "step_instance_id": null,
+      "direction": null,
+      "semantic_generation": null,
+      "attempt": null,
+      "tool_name": "verify_order",
       "compensates_operation_id": null,
-      "redacted_input": {
-        "expected_version": 1,
-        "order_id": "order_demo_001",
-        "quantity": 1,
-        "sku": "sku_travel_pack"
-      },
+      "redacted_input": null,
       "redacted_output": null,
-      "rationale": {},
+      "rationale": {
+        "accepted": true,
+        "proposal_id": "proposal_00000007",
+        "proposal_kind": "tool_call",
+        "tool_name": "verify_order"
+      },
       "policy_decision": null,
       "receipt": null,
       "correlation": null,
-      "input_hash": "5a7af571dcb1ee00b4f4c48bf17c634b947d2f66a8038bb1c6d761ece366bcf1",
+      "input_hash": null,
       "output_hash": null
     },
     {
-      "event_id": "evt_48672bbf45f76b3ffebf76da417f20e84c405f9bccecf5e024398a1c6c4cdb04",
+      "event_id": "evt_84bb2572cbdd482b36b02df731d7b0e4",
       "saga_seq": 9,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "effect",
-      "event_type": "effect_outcome_recorded",
-      "actor": "dispatcher",
-      "trace_id": "trace_c499741293ffb94987bc7313c599641bcde99754228dc955d74c651ecb09110a",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "running",
-      "after_status": "running",
-      "operation_id": "op_4f9b65eb3d2996bb8f8433083742b62836c696ec58d5b83384041daf5eb20f64",
-      "step_instance_id": "step_4549a74799314fc1",
-      "direction": "forward",
-      "semantic_generation": 0,
-      "attempt": 1,
-      "tool_name": "reserve_inventory",
-      "compensates_operation_id": null,
-      "redacted_input": null,
-      "redacted_output": {
-        "kind": "effect_confirmed",
-        "receipt": {
-          "receipt_ref": "opaque://ecommerce/84ac660ce91a574de1321cf246523e5a6c257b11c2d259a02916d5bea03cbcd3/v1"
-        }
-      },
-      "rationale": {},
-      "policy_decision": null,
-      "receipt": {
-        "receipt": {
-          "receipt_ref": "opaque://ecommerce/84ac660ce91a574de1321cf246523e5a6c257b11c2d259a02916d5bea03cbcd3/v1"
-        }
-      },
-      "correlation": null,
-      "input_hash": null,
-      "output_hash": "8a3f76d46541383ef17301337cee1bf4346612c3df1f04fbe216f3b65b3babf2"
-    },
-    {
-      "event_id": "evt_5d94b3627c131b13496d6755c58a18ac27a48c226dbfe150700d188cca97c5ac",
-      "saga_seq": 10,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "agent",
-      "event_type": "agent_turn_reserved",
-      "actor": "runtime",
-      "trace_id": "trace_5d94b3627c131b13496d6755c58a18ac27a48c226dbfe150700d188cca97c5ac",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "running",
-      "after_status": "running",
-      "operation_id": null,
-      "step_instance_id": null,
-      "direction": null,
-      "semantic_generation": null,
-      "attempt": null,
-      "tool_name": null,
-      "compensates_operation_id": null,
-      "redacted_input": null,
-      "redacted_output": null,
-      "rationale": {
-        "reserved_elapsed_ms": 30000,
-        "reserved_tokens": 1000,
-        "turn_id": "turn_906cfc7700307ec12aff70b7a5eae5384136cf5c08d9b4c19860440e7cf297c6",
-        "turn_index": 3
-      },
-      "policy_decision": null,
-      "receipt": null,
-      "correlation": null,
-      "input_hash": null,
-      "output_hash": null
-    },
-    {
-      "event_id": "evt_64f00d7754881bdb9d7986744b30df31f0b38ef2d2988d30bb35e10525130367",
-      "saga_seq": 11,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "effect",
-      "event_type": "effect_intent_recorded",
-      "actor": "kernel",
-      "trace_id": "trace_6f06700c8dac1239147ef7c632d12b8c9c1a6f8362c6aafc750115c83c87a688",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "running",
-      "after_status": "running",
-      "operation_id": "op_00d0dc0aec907198ab702dfc6ef9b54b8e2ce637c18401de7e1d53e4699e7dad",
-      "step_instance_id": "step_690ed687e86f7089",
-      "direction": "forward",
-      "semantic_generation": 0,
-      "attempt": 1,
-      "tool_name": "charge_payment",
-      "compensates_operation_id": null,
-      "redacted_input": {
-        "amount_minor": 7900,
-        "currency": "USD",
-        "customer_id": "customer_demo_001",
-        "order_id": "order_demo_001"
-      },
-      "redacted_output": null,
-      "rationale": {
-        "compensate_with": "refund_payment"
-      },
-      "policy_decision": null,
-      "receipt": null,
-      "correlation": null,
-      "input_hash": "e45a58329f7e75a797e75dbdb5b2f4799c8a4224f4f62728e7a505750d1a7fce",
-      "output_hash": null
-    },
-    {
-      "event_id": "evt_f5b08388fc3d3c2e6006971a71cf2074a64c52fce7467f540f5d08553b845a2b",
-      "saga_seq": 12,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "effect",
-      "event_type": "dispatch_started",
-      "actor": "dispatcher",
-      "trace_id": "trace_3a35658f33e5b71cbf4fffa8326a1e50e7b11f671949daa01c29a89860864e6c",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "running",
-      "after_status": "running",
-      "operation_id": "op_00d0dc0aec907198ab702dfc6ef9b54b8e2ce637c18401de7e1d53e4699e7dad",
-      "step_instance_id": "step_690ed687e86f7089",
-      "direction": "forward",
-      "semantic_generation": 0,
-      "attempt": 1,
-      "tool_name": "charge_payment",
-      "compensates_operation_id": null,
-      "redacted_input": {
-        "amount_minor": 7900,
-        "currency": "USD",
-        "customer_id": "customer_demo_001",
-        "order_id": "order_demo_001"
-      },
-      "redacted_output": null,
-      "rationale": {},
-      "policy_decision": null,
-      "receipt": null,
-      "correlation": null,
-      "input_hash": "e45a58329f7e75a797e75dbdb5b2f4799c8a4224f4f62728e7a505750d1a7fce",
-      "output_hash": null
-    },
-    {
-      "event_id": "evt_07114b56413f9ab18a46a1992f83f48ce63e6de34e932db93bc830c8ac30dc32",
-      "saga_seq": 13,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "effect",
-      "event_type": "effect_outcome_recorded",
-      "actor": "dispatcher",
-      "trace_id": "trace_3a35658f33e5b71cbf4fffa8326a1e50e7b11f671949daa01c29a89860864e6c",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "running",
-      "after_status": "running",
-      "operation_id": "op_00d0dc0aec907198ab702dfc6ef9b54b8e2ce637c18401de7e1d53e4699e7dad",
-      "step_instance_id": "step_690ed687e86f7089",
-      "direction": "forward",
-      "semantic_generation": 0,
-      "attempt": 1,
-      "tool_name": "charge_payment",
-      "compensates_operation_id": null,
-      "redacted_input": null,
-      "redacted_output": {
-        "kind": "effect_confirmed",
-        "receipt": {
-          "receipt_ref": "opaque://ecommerce/a633c350684c41818a082d9b0e6d5a13e081ee4c46d6fc98293af67522cc50af/v1"
-        }
-      },
-      "rationale": {},
-      "policy_decision": null,
-      "receipt": {
-        "receipt": {
-          "receipt_ref": "opaque://ecommerce/a633c350684c41818a082d9b0e6d5a13e081ee4c46d6fc98293af67522cc50af/v1"
-        }
-      },
-      "correlation": null,
-      "input_hash": null,
-      "output_hash": "b0de688c67d92e6af4e82c49ea4ac9ee050522e12a27c436c9aa54b647e57aa1"
-    },
-    {
-      "event_id": "evt_67671a97221f564e40a82251ca8586854002ab8c73b3fac1075df47ccf7f6926",
-      "saga_seq": 14,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "agent",
-      "event_type": "agent_turn_reserved",
-      "actor": "runtime",
-      "trace_id": "trace_67671a97221f564e40a82251ca8586854002ab8c73b3fac1075df47ccf7f6926",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "running",
-      "after_status": "running",
-      "operation_id": null,
-      "step_instance_id": null,
-      "direction": null,
-      "semantic_generation": null,
-      "attempt": null,
-      "tool_name": null,
-      "compensates_operation_id": null,
-      "redacted_input": null,
-      "redacted_output": null,
-      "rationale": {
-        "reserved_elapsed_ms": 30000,
-        "reserved_tokens": 1000,
-        "turn_id": "turn_b9acf795d993738ed2264b0c361675276072f71120731ff08a089645537f2ecc",
-        "turn_index": 4
-      },
-      "policy_decision": null,
-      "receipt": null,
-      "correlation": null,
-      "input_hash": null,
-      "output_hash": null
-    },
-    {
-      "event_id": "evt_69be4af360453750bc16090f9c2b3e7b44588fe70b20f34d139979250b70fa7e",
-      "saga_seq": 15,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "effect",
-      "event_type": "effect_intent_recorded",
-      "actor": "kernel",
-      "trace_id": "trace_c251b364fc9bbfec02aee33b4aa41c0ff1ad4a0d5d52160e6a7ebaa7ea2b68d1",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "running",
-      "after_status": "running",
-      "operation_id": "op_7a30e92107ac598a772dc950851c78edf7ee98c8dac6ac224217059ef1b1363e",
-      "step_instance_id": "step_c309c2c404233bab",
-      "direction": "forward",
-      "semantic_generation": 0,
-      "attempt": 1,
-      "tool_name": "schedule_fulfillment",
-      "compensates_operation_id": null,
-      "redacted_input": {
-        "order_id": "order_demo_001"
-      },
-      "redacted_output": null,
-      "rationale": {
-        "compensate_with": "cancel_fulfillment"
-      },
-      "policy_decision": null,
-      "receipt": null,
-      "correlation": null,
-      "input_hash": "bb81d4a39af50386db716c3951db666ee0a6d2e6039b031c3f34846adcf9c5e4",
-      "output_hash": null
-    },
-    {
-      "event_id": "evt_2968e8eb6ae9e943ca4c8d342cfb825d713d94f143dbcd234c20c612dcddeec8",
-      "saga_seq": 16,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "effect",
-      "event_type": "dispatch_started",
-      "actor": "dispatcher",
-      "trace_id": "trace_2fe95a186411791f4d23ddb157e9b488bd8bf2f86c80fab9f2701dcdaa2e40f0",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "running",
-      "after_status": "running",
-      "operation_id": "op_7a30e92107ac598a772dc950851c78edf7ee98c8dac6ac224217059ef1b1363e",
-      "step_instance_id": "step_c309c2c404233bab",
-      "direction": "forward",
-      "semantic_generation": 0,
-      "attempt": 1,
-      "tool_name": "schedule_fulfillment",
-      "compensates_operation_id": null,
-      "redacted_input": {
-        "order_id": "order_demo_001"
-      },
-      "redacted_output": null,
-      "rationale": {},
-      "policy_decision": null,
-      "receipt": null,
-      "correlation": null,
-      "input_hash": "bb81d4a39af50386db716c3951db666ee0a6d2e6039b031c3f34846adcf9c5e4",
-      "output_hash": null
-    },
-    {
-      "event_id": "evt_f4a00b37a3a999b11e17744ab1f5c9fc5cab449f222e5f996cde8b8b4663381b",
-      "saga_seq": 17,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "effect",
-      "event_type": "effect_outcome_recorded",
-      "actor": "dispatcher",
-      "trace_id": "trace_2fe95a186411791f4d23ddb157e9b488bd8bf2f86c80fab9f2701dcdaa2e40f0",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "running",
-      "after_status": "running",
-      "operation_id": "op_7a30e92107ac598a772dc950851c78edf7ee98c8dac6ac224217059ef1b1363e",
-      "step_instance_id": "step_c309c2c404233bab",
-      "direction": "forward",
-      "semantic_generation": 0,
-      "attempt": 1,
-      "tool_name": "schedule_fulfillment",
-      "compensates_operation_id": null,
-      "redacted_input": null,
-      "redacted_output": {
-        "kind": "effect_confirmed",
-        "receipt": {
-          "receipt_ref": "opaque://ecommerce/e78805215aa0a85786aba6136ac04a23b868ecf98deef6758f94a9782c7ec7fc/v1"
-        }
-      },
-      "rationale": {},
-      "policy_decision": null,
-      "receipt": {
-        "receipt": {
-          "receipt_ref": "opaque://ecommerce/e78805215aa0a85786aba6136ac04a23b868ecf98deef6758f94a9782c7ec7fc/v1"
-        }
-      },
-      "correlation": null,
-      "input_hash": null,
-      "output_hash": "277ff638add08500aa3686bc45b8357dafbcf806afd01dd85ab1d4590d337624"
-    },
-    {
-      "event_id": "evt_15c5acd69c90526c800a061ea7e8655e9ca93add826705ab2e0c44210299a831",
-      "saga_seq": 18,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "agent",
-      "event_type": "agent_turn_reserved",
-      "actor": "runtime",
-      "trace_id": "trace_15c5acd69c90526c800a061ea7e8655e9ca93add826705ab2e0c44210299a831",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "running",
-      "after_status": "running",
-      "operation_id": null,
-      "step_instance_id": null,
-      "direction": null,
-      "semantic_generation": null,
-      "attempt": null,
-      "tool_name": null,
-      "compensates_operation_id": null,
-      "redacted_input": null,
-      "redacted_output": null,
-      "rationale": {
-        "reserved_elapsed_ms": 30000,
-        "reserved_tokens": 1000,
-        "turn_id": "turn_61cc324b356c60be5a1b987e46ea9e1ab4d35adc182724ed3536bdce9336c498",
-        "turn_index": 5
-      },
-      "policy_decision": null,
-      "receipt": null,
-      "correlation": null,
-      "input_hash": null,
-      "output_hash": null
-    },
-    {
-      "event_id": "evt_d0a5abea24794f962309222a69f91368c393ea823d2cd44b4b94b7194e70eb8e",
-      "saga_seq": 19,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "effect",
-      "event_type": "read_started",
-      "actor": "runtime",
-      "trace_id": "trace_d0a5abea24794f962309222a69f91368c393ea823d2cd44b4b94b7194e70eb8e",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "running",
-      "after_status": "running",
-      "operation_id": null,
-      "step_instance_id": null,
-      "direction": null,
-      "semantic_generation": null,
-      "attempt": null,
-      "tool_name": "inspect_order",
-      "compensates_operation_id": null,
-      "redacted_input": {
-        "order_id": "order_demo_001"
-      },
-      "redacted_output": null,
-      "rationale": {
-        "proposal_id": "proposal_b3a58b4a0811b7a6b361",
-        "turn_id": "turn_61cc324b356c60be5a1b987e46ea9e1ab4d35adc182724ed3536bdce9336c498"
-      },
-      "policy_decision": null,
-      "receipt": null,
-      "correlation": null,
-      "input_hash": "bb81d4a39af50386db716c3951db666ee0a6d2e6039b031c3f34846adcf9c5e4",
-      "output_hash": null
-    },
-    {
-      "event_id": "evt_a5e4f698ecf7150b2b1ddc17f81b16ae85f3a8daa9cb67501e8ffedb5b28f78f",
-      "saga_seq": 20,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "effect",
-      "event_type": "read_observed",
-      "actor": "runtime",
-      "trace_id": "trace_a5e4f698ecf7150b2b1ddc17f81b16ae85f3a8daa9cb67501e8ffedb5b28f78f",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "running",
-      "after_status": "running",
-      "operation_id": null,
-      "step_instance_id": null,
-      "direction": null,
-      "semantic_generation": null,
-      "attempt": null,
-      "tool_name": "inspect_order",
-      "compensates_operation_id": null,
-      "redacted_input": null,
-      "redacted_output": {
-        "fulfillment": "rejected",
-        "order_id": "order_demo_001",
-        "payment": "captured"
-      },
-      "rationale": {
-        "proposal_id": "proposal_b3a58b4a0811b7a6b361",
-        "turn_id": "turn_61cc324b356c60be5a1b987e46ea9e1ab4d35adc182724ed3536bdce9336c498"
-      },
-      "policy_decision": null,
-      "receipt": null,
-      "correlation": null,
-      "input_hash": null,
-      "output_hash": "e8283473ea7d93540c57a969fb882ce69f8445642bad856366a9125379017455"
-    },
-    {
-      "event_id": "evt_fb03e0dd1c65f4d75e9923312ede1d766cea71385f50138f43bd94bdd24aa5ed",
-      "saga_seq": 21,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "agent",
-      "event_type": "agent_turn_reserved",
-      "actor": "runtime",
-      "trace_id": "trace_fb03e0dd1c65f4d75e9923312ede1d766cea71385f50138f43bd94bdd24aa5ed",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "running",
-      "after_status": "running",
-      "operation_id": null,
-      "step_instance_id": null,
-      "direction": null,
-      "semantic_generation": null,
-      "attempt": null,
-      "tool_name": null,
-      "compensates_operation_id": null,
-      "redacted_input": null,
-      "redacted_output": null,
-      "rationale": {
-        "reserved_elapsed_ms": 30000,
-        "reserved_tokens": 1000,
-        "turn_id": "turn_de3ede20e3eb6d61f3d41603d24b0c3578538afdc5078f20123aecd91a305835",
-        "turn_index": 6
-      },
-      "policy_decision": null,
-      "receipt": null,
-      "correlation": null,
-      "input_hash": null,
-      "output_hash": null
-    },
-    {
-      "event_id": "evt_f3cf15bee2fef172b808c6fb151677392365711ca5a67cd9733bd07028fd48f0",
-      "saga_seq": 22,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "compensation",
-      "event_type": "compensation_started",
-      "actor": "kernel",
-      "trace_id": "trace_ccf9f7d37f39491c24831da52bf63b55fc42aa08e2d8e26b78c700b4a349938c",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "running",
-      "after_status": "compensating",
-      "operation_id": null,
-      "step_instance_id": null,
-      "direction": null,
-      "semantic_generation": null,
-      "attempt": null,
-      "tool_name": null,
-      "compensates_operation_id": null,
-      "redacted_input": null,
-      "redacted_output": null,
-      "rationale": {
-        "proposal_id": "proposal_d7ca211c22d3f9af2790",
-        "reason_code": "forward_goal_unreachable"
-      },
-      "policy_decision": null,
-      "receipt": null,
-      "correlation": null,
-      "input_hash": null,
-      "output_hash": null
-    },
-    {
-      "event_id": "evt_8f7d956cc085ab3220814c808e060ec14d01b193068dcaf45da1a1fe41035da5",
-      "saga_seq": 23,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "agent",
-      "event_type": "agent_turn_reserved",
-      "actor": "runtime",
-      "trace_id": "trace_8f7d956cc085ab3220814c808e060ec14d01b193068dcaf45da1a1fe41035da5",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "compensating",
-      "after_status": "compensating",
-      "operation_id": null,
-      "step_instance_id": null,
-      "direction": null,
-      "semantic_generation": null,
-      "attempt": null,
-      "tool_name": null,
-      "compensates_operation_id": null,
-      "redacted_input": null,
-      "redacted_output": null,
-      "rationale": {
-        "reserved_elapsed_ms": 30000,
-        "reserved_tokens": 1000,
-        "turn_id": "turn_1cc91ee805b0050ed227be93b7ed432b21962c7bc685ae29ef89f337959114ee",
-        "turn_index": 7
-      },
-      "policy_decision": null,
-      "receipt": null,
-      "correlation": null,
-      "input_hash": null,
-      "output_hash": null
-    },
-    {
-      "event_id": "evt_5480a4f93b9aa4e2ab22f2b3863d9b167d08ee82f6cf400b2fe88d364e226fd4",
-      "saga_seq": 24,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "compensation",
-      "event_type": "compensation_intent_recorded",
-      "actor": "kernel",
-      "trace_id": "trace_4c77cdc3824553b60f0f9fcbd9e1c7e1c2aed6cc5307d3ef4be4d64c69015779",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "compensating",
-      "after_status": "compensating",
-      "operation_id": "op_8e19197dacc0e705ea9973a7d8da2f61080283725f7b7fcbffaa5933a3dbe4a8",
-      "step_instance_id": "step_c309c2c404233bab",
-      "direction": "compensation",
-      "semantic_generation": 0,
-      "attempt": 1,
-      "tool_name": "cancel_fulfillment",
-      "compensates_operation_id": "op_7a30e92107ac598a772dc950851c78edf7ee98c8dac6ac224217059ef1b1363e",
-      "redacted_input": {
-        "order_id": "order_demo_001"
-      },
-      "redacted_output": null,
-      "rationale": {
-        "compensates_operation_id": "op_7a30e92107ac598a772dc950851c78edf7ee98c8dac6ac224217059ef1b1363e"
-      },
-      "policy_decision": null,
-      "receipt": {
-        "forward_receipts": [
-          {
-            "receipt_ref": "opaque://ecommerce/e78805215aa0a85786aba6136ac04a23b868ecf98deef6758f94a9782c7ec7fc/v1"
-          }
-        ]
-      },
-      "correlation": null,
-      "input_hash": "bb81d4a39af50386db716c3951db666ee0a6d2e6039b031c3f34846adcf9c5e4",
-      "output_hash": null
-    },
-    {
-      "event_id": "evt_4b984159213b222b3da339fafc6389337e00cd2a7210a7dc5e7cd61bfc214bf1",
-      "saga_seq": 25,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "compensation",
-      "event_type": "dispatch_started",
-      "actor": "dispatcher",
-      "trace_id": "trace_24e39d1e0cf4491fd1958958265839e743ba980b0f2d8dc9e77290a7742800f3",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "compensating",
-      "after_status": "compensating",
-      "operation_id": "op_8e19197dacc0e705ea9973a7d8da2f61080283725f7b7fcbffaa5933a3dbe4a8",
-      "step_instance_id": "step_c309c2c404233bab",
-      "direction": "compensation",
-      "semantic_generation": 0,
-      "attempt": 1,
-      "tool_name": "cancel_fulfillment",
-      "compensates_operation_id": null,
-      "redacted_input": {
-        "order_id": "order_demo_001"
-      },
-      "redacted_output": null,
-      "rationale": {},
-      "policy_decision": null,
-      "receipt": null,
-      "correlation": null,
-      "input_hash": "bb81d4a39af50386db716c3951db666ee0a6d2e6039b031c3f34846adcf9c5e4",
-      "output_hash": null
-    },
-    {
-      "event_id": "evt_9e4aec3463796ac12ee60dd33e9c570c88665bad746f5de720215203d1f143d1",
-      "saga_seq": 26,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "compensation",
-      "event_type": "effect_outcome_recorded",
-      "actor": "dispatcher",
-      "trace_id": "trace_24e39d1e0cf4491fd1958958265839e743ba980b0f2d8dc9e77290a7742800f3",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "compensating",
-      "after_status": "compensating",
-      "operation_id": "op_8e19197dacc0e705ea9973a7d8da2f61080283725f7b7fcbffaa5933a3dbe4a8",
-      "step_instance_id": "step_c309c2c404233bab",
-      "direction": "compensation",
-      "semantic_generation": 0,
-      "attempt": 1,
-      "tool_name": "cancel_fulfillment",
-      "compensates_operation_id": null,
-      "redacted_input": null,
-      "redacted_output": {
-        "kind": "effect_confirmed",
-        "receipt": {
-          "receipt_ref": "opaque://ecommerce/05d663665442476d36e99435a2911ec6a80ed49b0c83f1687a7f3d96e0ec8e97/v1"
-        }
-      },
-      "rationale": {},
-      "policy_decision": null,
-      "receipt": {
-        "receipt": {
-          "receipt_ref": "opaque://ecommerce/05d663665442476d36e99435a2911ec6a80ed49b0c83f1687a7f3d96e0ec8e97/v1"
-        }
-      },
-      "correlation": null,
-      "input_hash": null,
-      "output_hash": "aea86700a8d0766d2a5d116f1fab8cca7c4334c4ee79d3903bb75fd1b5871862"
-    },
-    {
-      "event_id": "evt_2f38ece722374fa5fcf8ee47c77797d341148329ab695e1e088a5b8d912300d2",
-      "saga_seq": 27,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "agent",
-      "event_type": "agent_turn_reserved",
-      "actor": "runtime",
-      "trace_id": "trace_2f38ece722374fa5fcf8ee47c77797d341148329ab695e1e088a5b8d912300d2",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "compensating",
-      "after_status": "compensating",
-      "operation_id": null,
-      "step_instance_id": null,
-      "direction": null,
-      "semantic_generation": null,
-      "attempt": null,
-      "tool_name": null,
-      "compensates_operation_id": null,
-      "redacted_input": null,
-      "redacted_output": null,
-      "rationale": {
-        "reserved_elapsed_ms": 30000,
-        "reserved_tokens": 1000,
-        "turn_id": "turn_d1d50b3ed341e1a00717ea8206225fadd306d55bcf65e0cc7e384f16a621d1a1",
-        "turn_index": 8
-      },
-      "policy_decision": null,
-      "receipt": null,
-      "correlation": null,
-      "input_hash": null,
-      "output_hash": null
-    },
-    {
-      "event_id": "evt_10785585c909567d84223c09d62c8f6bbf6c9bc9e31c18b8a7fd74def78a2858",
-      "saga_seq": 28,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "compensation",
-      "event_type": "compensation_intent_recorded",
-      "actor": "kernel",
-      "trace_id": "trace_b50e050ae7e631e6d2a1765eee1195ff528bcc4a34b0401b26b32ad0b7aadac7",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "compensating",
-      "after_status": "compensating",
-      "operation_id": "op_f376b79b8560de393248e0136ec8d674d5c04e6b7f0709c8e4dbb172583de770",
-      "step_instance_id": "step_690ed687e86f7089",
-      "direction": "compensation",
-      "semantic_generation": 0,
-      "attempt": 1,
-      "tool_name": "refund_payment",
-      "compensates_operation_id": "op_00d0dc0aec907198ab702dfc6ef9b54b8e2ce637c18401de7e1d53e4699e7dad",
-      "redacted_input": {
-        "amount_minor": 7900,
-        "currency": "USD",
-        "customer_id": "customer_demo_001",
-        "order_id": "order_demo_001"
-      },
-      "redacted_output": null,
-      "rationale": {
-        "compensates_operation_id": "op_00d0dc0aec907198ab702dfc6ef9b54b8e2ce637c18401de7e1d53e4699e7dad"
-      },
-      "policy_decision": null,
-      "receipt": {
-        "forward_receipts": [
-          {
-            "receipt_ref": "opaque://ecommerce/a633c350684c41818a082d9b0e6d5a13e081ee4c46d6fc98293af67522cc50af/v1"
-          }
-        ]
-      },
-      "correlation": null,
-      "input_hash": "e45a58329f7e75a797e75dbdb5b2f4799c8a4224f4f62728e7a505750d1a7fce",
-      "output_hash": null
-    },
-    {
-      "event_id": "evt_717777a2b733f89966a0a7c416b3c455f797037909fa5bf65138c94405bb20f5",
-      "saga_seq": 29,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "compensation",
-      "event_type": "dispatch_started",
-      "actor": "dispatcher",
-      "trace_id": "trace_be0db9a66451c57bcd6b5b2b0cc24657f4617555317453b9caef732b1bb5ced0",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "compensating",
-      "after_status": "compensating",
-      "operation_id": "op_f376b79b8560de393248e0136ec8d674d5c04e6b7f0709c8e4dbb172583de770",
-      "step_instance_id": "step_690ed687e86f7089",
-      "direction": "compensation",
-      "semantic_generation": 0,
-      "attempt": 1,
-      "tool_name": "refund_payment",
-      "compensates_operation_id": null,
-      "redacted_input": {
-        "amount_minor": 7900,
-        "currency": "USD",
-        "customer_id": "customer_demo_001",
-        "order_id": "order_demo_001"
-      },
-      "redacted_output": null,
-      "rationale": {},
-      "policy_decision": null,
-      "receipt": null,
-      "correlation": null,
-      "input_hash": "e45a58329f7e75a797e75dbdb5b2f4799c8a4224f4f62728e7a505750d1a7fce",
-      "output_hash": null
-    },
-    {
-      "event_id": "evt_80b2668860ada110b10befbd6edfba9d1273b127581b3521032d0aad07576578",
-      "saga_seq": 30,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "compensation",
-      "event_type": "effect_outcome_recorded",
-      "actor": "dispatcher",
-      "trace_id": "trace_be0db9a66451c57bcd6b5b2b0cc24657f4617555317453b9caef732b1bb5ced0",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "compensating",
-      "after_status": "compensating",
-      "operation_id": "op_f376b79b8560de393248e0136ec8d674d5c04e6b7f0709c8e4dbb172583de770",
-      "step_instance_id": "step_690ed687e86f7089",
-      "direction": "compensation",
-      "semantic_generation": 0,
-      "attempt": 1,
-      "tool_name": "refund_payment",
-      "compensates_operation_id": null,
-      "redacted_input": null,
-      "redacted_output": {
-        "kind": "effect_confirmed",
-        "receipt": {
-          "receipt_ref": "opaque://ecommerce/874a5716781c0d6897f71ebd31d8c74ca6f3f84acaac9e9ec40fc8f136bd2e63/v1"
-        }
-      },
-      "rationale": {},
-      "policy_decision": null,
-      "receipt": {
-        "receipt": {
-          "receipt_ref": "opaque://ecommerce/874a5716781c0d6897f71ebd31d8c74ca6f3f84acaac9e9ec40fc8f136bd2e63/v1"
-        }
-      },
-      "correlation": null,
-      "input_hash": null,
-      "output_hash": "5a0d7c661d1df036fbfc453a99789a057241dc4609d7ad7bb29a697c79f6fd68"
-    },
-    {
-      "event_id": "evt_61bbe62632f9ae36660472d23d46f11ae72e1a1c413672e38526b7fe32e89f06",
-      "saga_seq": 31,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "agent",
-      "event_type": "agent_turn_reserved",
-      "actor": "runtime",
-      "trace_id": "trace_61bbe62632f9ae36660472d23d46f11ae72e1a1c413672e38526b7fe32e89f06",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "compensating",
-      "after_status": "compensating",
-      "operation_id": null,
-      "step_instance_id": null,
-      "direction": null,
-      "semantic_generation": null,
-      "attempt": null,
-      "tool_name": null,
-      "compensates_operation_id": null,
-      "redacted_input": null,
-      "redacted_output": null,
-      "rationale": {
-        "reserved_elapsed_ms": 30000,
-        "reserved_tokens": 1000,
-        "turn_id": "turn_a81771b560b7d640e081c080fdf06bcc4076a66186154f6bf87f2547c5147fb6",
-        "turn_index": 9
-      },
-      "policy_decision": null,
-      "receipt": null,
-      "correlation": null,
-      "input_hash": null,
-      "output_hash": null
-    },
-    {
-      "event_id": "evt_57db49ed3b1fae2fd8245e7b4ab6d24da2562c3531b76aad6602977a8b7d89a1",
-      "saga_seq": 32,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "compensation",
-      "event_type": "compensation_intent_recorded",
-      "actor": "kernel",
-      "trace_id": "trace_fe9a28e7ea0a303cf3f9600864d23718f8396ac7b0685b6b1cab12cf0722d49a",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "compensating",
-      "after_status": "compensating",
-      "operation_id": "op_9e7e8cae5712666b4465386a835696cba4d1c4b6d34d12211cd3736aedb2afb7",
-      "step_instance_id": "step_4549a74799314fc1",
-      "direction": "compensation",
-      "semantic_generation": 0,
-      "attempt": 1,
-      "tool_name": "release_inventory",
-      "compensates_operation_id": "op_4f9b65eb3d2996bb8f8433083742b62836c696ec58d5b83384041daf5eb20f64",
-      "redacted_input": {
-        "order_id": "order_demo_001",
-        "quantity": 1,
-        "sku": "sku_travel_pack"
-      },
-      "redacted_output": null,
-      "rationale": {
-        "compensates_operation_id": "op_4f9b65eb3d2996bb8f8433083742b62836c696ec58d5b83384041daf5eb20f64"
-      },
-      "policy_decision": null,
-      "receipt": {
-        "forward_receipts": [
-          {
-            "receipt_ref": "opaque://ecommerce/84ac660ce91a574de1321cf246523e5a6c257b11c2d259a02916d5bea03cbcd3/v1"
-          }
-        ]
-      },
-      "correlation": null,
-      "input_hash": "67a6ca0650be2129ef47f38e2c50b898c58fd87d7d5dceefa122c5284041bcce",
-      "output_hash": null
-    },
-    {
-      "event_id": "evt_e616ba5d1160a21d3c0440dc0da85457fba2d53b9af9e4fb201eb0845a1b0bdf",
-      "saga_seq": 33,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "compensation",
-      "event_type": "dispatch_started",
-      "actor": "dispatcher",
-      "trace_id": "trace_f5293cdde243d3500cf516f11e24e9b78683e8c1dbeb436fb2e04808ed5aa7cf",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "compensating",
-      "after_status": "compensating",
-      "operation_id": "op_9e7e8cae5712666b4465386a835696cba4d1c4b6d34d12211cd3736aedb2afb7",
-      "step_instance_id": "step_4549a74799314fc1",
-      "direction": "compensation",
-      "semantic_generation": 0,
-      "attempt": 1,
-      "tool_name": "release_inventory",
-      "compensates_operation_id": null,
-      "redacted_input": {
-        "order_id": "order_demo_001",
-        "quantity": 1,
-        "sku": "sku_travel_pack"
-      },
-      "redacted_output": null,
-      "rationale": {},
-      "policy_decision": null,
-      "receipt": null,
-      "correlation": null,
-      "input_hash": "67a6ca0650be2129ef47f38e2c50b898c58fd87d7d5dceefa122c5284041bcce",
-      "output_hash": null
-    },
-    {
-      "event_id": "evt_7edfc83e0ebbf55537960bbfe9e96f187265fe516123a8fbada476cdf81f36a6",
-      "saga_seq": 34,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "compensation",
-      "event_type": "effect_outcome_recorded",
-      "actor": "dispatcher",
-      "trace_id": "trace_f5293cdde243d3500cf516f11e24e9b78683e8c1dbeb436fb2e04808ed5aa7cf",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "compensating",
-      "after_status": "compensating",
-      "operation_id": "op_9e7e8cae5712666b4465386a835696cba4d1c4b6d34d12211cd3736aedb2afb7",
-      "step_instance_id": "step_4549a74799314fc1",
-      "direction": "compensation",
-      "semantic_generation": 0,
-      "attempt": 1,
-      "tool_name": "release_inventory",
-      "compensates_operation_id": null,
-      "redacted_input": null,
-      "redacted_output": {
-        "kind": "effect_confirmed",
-        "receipt": {
-          "receipt_ref": "opaque://ecommerce/ed3743ca3eb949c406039052271204e1ed2fb388da47ddca583702fe05d93832/v1"
-        }
-      },
-      "rationale": {},
-      "policy_decision": null,
-      "receipt": {
-        "receipt": {
-          "receipt_ref": "opaque://ecommerce/ed3743ca3eb949c406039052271204e1ed2fb388da47ddca583702fe05d93832/v1"
-        }
-      },
-      "correlation": null,
-      "input_hash": null,
-      "output_hash": "926cfb6b17473ab04a1ab1c8484966bd3e77cc704490b178d8f37ab17c52df16"
-    },
-    {
-      "event_id": "evt_531fc265792de1bc6cabee742325b462615c23a24cddb762e4e35febc40efaff",
-      "saga_seq": 35,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "agent",
-      "event_type": "agent_turn_reserved",
-      "actor": "runtime",
-      "trace_id": "trace_531fc265792de1bc6cabee742325b462615c23a24cddb762e4e35febc40efaff",
-      "definition_version": "1.0",
-      "fence_token": 1,
-      "before_status": "compensating",
-      "after_status": "compensating",
-      "operation_id": null,
-      "step_instance_id": null,
-      "direction": null,
-      "semantic_generation": null,
-      "attempt": null,
-      "tool_name": null,
-      "compensates_operation_id": null,
-      "redacted_input": null,
-      "redacted_output": null,
-      "rationale": {
-        "reserved_elapsed_ms": 30000,
-        "reserved_tokens": 1000,
-        "turn_id": "turn_88c56d534af5b14280023ba505c2e077f145104bd32635d04b920e19e3f80c64",
-        "turn_index": 10
-      },
-      "policy_decision": null,
-      "receipt": null,
-      "correlation": null,
-      "input_hash": null,
-      "output_hash": null
-    },
-    {
-      "event_id": "evt_41d1cdfb288e66747e1ae77bdf52626cac8c2b37a81f45118589aa57c53a87de",
-      "saga_seq": 36,
-      "recorded_at": "2026-01-01T00:00:00Z",
+      "recorded_at": "2026-01-01T00:00:09Z",
       "authority": "proof",
       "event_type": "invariant_evaluated",
-      "actor": "kernel",
-      "trace_id": "trace_5aec5078c6fca167936c30578675d8d6b97f419cb17f44c62dc94a8d4efc55cb",
-      "definition_version": "1.0",
-      "fence_token": 1,
+      "actor": "registered_tool",
+      "trace_id": "trace_485792ae9dea9609367a8ff389b2ecb5",
+      "definition_version": "ecommerce-temporal-v1",
+      "fence_token": null,
+      "before_status": "running",
+      "after_status": "running",
+      "operation_id": "op_ebc97fbd054be8f9ac637064979c0f22c47fc62c5f9005f3096c4d99fb5e90b0",
+      "step_instance_id": "step_00000007",
+      "direction": "forward",
+      "semantic_generation": 0,
+      "attempt": null,
+      "tool_name": "verify_order",
+      "compensates_operation_id": null,
+      "redacted_input": {
+        "order_id": "order_demo_001"
+      },
+      "redacted_output": {
+        "kind": "read_observed",
+        "verified": false
+      },
+      "rationale": {
+        "all_passed": false,
+        "invariant_version": "temporal-proof-v1",
+        "results": {
+          "verify_order": false
+        },
+        "rule_id": "verify_order",
+        "target_status": "succeeded_verified"
+      },
+      "policy_decision": null,
+      "receipt": null,
+      "correlation": null,
+      "input_hash": "bb81d4a39af50386db716c3951db666ee0a6d2e6039b031c3f34846adcf9c5e4",
+      "output_hash": "5b9f46b66023c29fd2257281a7c6b23a92782c0a7922f263db0f767c5d125ba4"
+    },
+    {
+      "event_id": "evt_2af9736acdcf8bd54c47e33db5736ffc",
+      "saga_seq": 10,
+      "recorded_at": "2026-01-01T00:00:10Z",
+      "authority": "workflow",
+      "event_type": "compensation_started",
+      "actor": "temporal_workflow",
+      "trace_id": "trace_485792ae9dea9609367a8ff389b2ecb5",
+      "definition_version": "ecommerce-temporal-v1",
+      "fence_token": null,
+      "before_status": "running",
+      "after_status": "compensating",
+      "operation_id": null,
+      "step_instance_id": null,
+      "direction": null,
+      "semantic_generation": null,
+      "attempt": null,
+      "tool_name": null,
+      "compensates_operation_id": null,
+      "redacted_input": null,
+      "redacted_output": null,
+      "rationale": {
+        "reason_code": null,
+        "status": "compensating"
+      },
+      "policy_decision": null,
+      "receipt": null,
+      "correlation": null,
+      "input_hash": null,
+      "output_hash": null
+    },
+    {
+      "event_id": "evt_fd5abfaf26403d40eec4506131fd3d6b",
+      "saga_seq": 11,
+      "recorded_at": "2026-01-01T00:00:11Z",
+      "authority": "compensation",
+      "event_type": "compensation_outcome_recorded",
+      "actor": "registered_tool",
+      "trace_id": "trace_485792ae9dea9609367a8ff389b2ecb5",
+      "definition_version": "ecommerce-temporal-v1",
+      "fence_token": null,
+      "before_status": "compensating",
+      "after_status": "compensating",
+      "operation_id": "op_48b119376b0893af6662f16b77a456c09f48e7daa635304620178f80452a0cfd",
+      "step_instance_id": "step_00000005",
+      "direction": "compensation",
+      "semantic_generation": 0,
+      "attempt": null,
+      "tool_name": "cancel_fulfillment",
+      "compensates_operation_id": "op_091135cb331e5754206429c33b84a0c107c0f493f1bd59a9fcf038329822fc19",
+      "redacted_input": {
+        "order_id": "order_demo_001"
+      },
+      "redacted_output": {
+        "kind": "effect_confirmed",
+        "receipt": {
+          "receipt_ref": "opaque://ecommerce/3b4b5a354cc9a5a9bc46a077559366e3598c079a38db93d32969efbcccdee818/v1"
+        }
+      },
+      "rationale": {
+        "arguments": {
+          "order_id": "order_demo_001"
+        },
+        "compensates_operation_id": "op_091135cb331e5754206429c33b84a0c107c0f493f1bd59a9fcf038329822fc19",
+        "operation_id": "op_48b119376b0893af6662f16b77a456c09f48e7daa635304620178f80452a0cfd",
+        "outcome": "succeeded",
+        "public_receipt": {
+          "receipt_ref": "opaque://ecommerce/3b4b5a354cc9a5a9bc46a077559366e3598c079a38db93d32969efbcccdee818/v1"
+        },
+        "reason_code": null,
+        "semantic_generation": 0,
+        "step_instance_id": "step_00000005",
+        "tool_name": "cancel_fulfillment"
+      },
+      "policy_decision": null,
+      "receipt": {
+        "receipt_ref": "opaque://ecommerce/3b4b5a354cc9a5a9bc46a077559366e3598c079a38db93d32969efbcccdee818/v1"
+      },
+      "correlation": null,
+      "input_hash": "bb81d4a39af50386db716c3951db666ee0a6d2e6039b031c3f34846adcf9c5e4",
+      "output_hash": "c996d5e5651462312e0d55369eb713bdbea3a275d1c23732983ddc7605f6932e"
+    },
+    {
+      "event_id": "evt_e112ca7eb12155242eaa964a648613a6",
+      "saga_seq": 12,
+      "recorded_at": "2026-01-01T00:00:12Z",
+      "authority": "compensation",
+      "event_type": "compensation_outcome_recorded",
+      "actor": "registered_tool",
+      "trace_id": "trace_485792ae9dea9609367a8ff389b2ecb5",
+      "definition_version": "ecommerce-temporal-v1",
+      "fence_token": null,
+      "before_status": "compensating",
+      "after_status": "compensating",
+      "operation_id": "op_f7a6ff72f5af06473900875daab059c2e56cfe3b22a1fb7ccbf163f83b33a8d6",
+      "step_instance_id": "step_00000003",
+      "direction": "compensation",
+      "semantic_generation": 0,
+      "attempt": null,
+      "tool_name": "refund_payment",
+      "compensates_operation_id": "op_069ca590bf7ed884637af115f1a5e59a45d97d415d10115ecad8dfaf66e7ef7a",
+      "redacted_input": {
+        "amount_minor": 7900,
+        "currency": "USD",
+        "customer_id": "customer_demo_001",
+        "order_id": "order_demo_001"
+      },
+      "redacted_output": {
+        "kind": "effect_confirmed",
+        "receipt": {
+          "receipt_ref": "opaque://ecommerce/f6b90f888c57e068695f8edb1eb70a17344aab0b4fc1756036196b29ae563677/v1"
+        }
+      },
+      "rationale": {
+        "arguments": {
+          "amount_minor": 7900,
+          "currency": "USD",
+          "customer_id": "customer_demo_001",
+          "order_id": "order_demo_001"
+        },
+        "compensates_operation_id": "op_069ca590bf7ed884637af115f1a5e59a45d97d415d10115ecad8dfaf66e7ef7a",
+        "operation_id": "op_f7a6ff72f5af06473900875daab059c2e56cfe3b22a1fb7ccbf163f83b33a8d6",
+        "outcome": "succeeded",
+        "public_receipt": {
+          "receipt_ref": "opaque://ecommerce/f6b90f888c57e068695f8edb1eb70a17344aab0b4fc1756036196b29ae563677/v1"
+        },
+        "reason_code": null,
+        "semantic_generation": 0,
+        "step_instance_id": "step_00000003",
+        "tool_name": "refund_payment"
+      },
+      "policy_decision": null,
+      "receipt": {
+        "receipt_ref": "opaque://ecommerce/f6b90f888c57e068695f8edb1eb70a17344aab0b4fc1756036196b29ae563677/v1"
+      },
+      "correlation": null,
+      "input_hash": "e45a58329f7e75a797e75dbdb5b2f4799c8a4224f4f62728e7a505750d1a7fce",
+      "output_hash": "60a63ef19698b1c0811e5ba54a0707efbdb50b53fee782ec22bf100410bd1511"
+    },
+    {
+      "event_id": "evt_9dc9e394d934820412a0cef7ed972f63",
+      "saga_seq": 13,
+      "recorded_at": "2026-01-01T00:00:13Z",
+      "authority": "compensation",
+      "event_type": "compensation_outcome_recorded",
+      "actor": "registered_tool",
+      "trace_id": "trace_485792ae9dea9609367a8ff389b2ecb5",
+      "definition_version": "ecommerce-temporal-v1",
+      "fence_token": null,
+      "before_status": "compensating",
+      "after_status": "compensating",
+      "operation_id": "op_7defea537355484fa84b3a6a142685c84f24f2c38c668ced094f40b1855d17d1",
+      "step_instance_id": "step_00000001",
+      "direction": "compensation",
+      "semantic_generation": 0,
+      "attempt": null,
+      "tool_name": "release_inventory",
+      "compensates_operation_id": "op_ce1c448a3748e0cc551dc329985c85a9fcbce50502ac3837e67670ff54fc3611",
+      "redacted_input": {
+        "expected_version": 1,
+        "order_id": "order_demo_001",
+        "quantity": 1,
+        "sku": "sku_travel_pack"
+      },
+      "redacted_output": {
+        "kind": "effect_confirmed",
+        "receipt": {
+          "receipt_ref": "opaque://ecommerce/f3456f26ca84568d17bd0eb08cc1c424b0726fc226b6ad7ec22acbafaf383632/v1"
+        }
+      },
+      "rationale": {
+        "arguments": {
+          "expected_version": 1,
+          "order_id": "order_demo_001",
+          "quantity": 1,
+          "sku": "sku_travel_pack"
+        },
+        "compensates_operation_id": "op_ce1c448a3748e0cc551dc329985c85a9fcbce50502ac3837e67670ff54fc3611",
+        "operation_id": "op_7defea537355484fa84b3a6a142685c84f24f2c38c668ced094f40b1855d17d1",
+        "outcome": "succeeded",
+        "public_receipt": {
+          "receipt_ref": "opaque://ecommerce/f3456f26ca84568d17bd0eb08cc1c424b0726fc226b6ad7ec22acbafaf383632/v1"
+        },
+        "reason_code": null,
+        "semantic_generation": 0,
+        "step_instance_id": "step_00000001",
+        "tool_name": "release_inventory"
+      },
+      "policy_decision": null,
+      "receipt": {
+        "receipt_ref": "opaque://ecommerce/f3456f26ca84568d17bd0eb08cc1c424b0726fc226b6ad7ec22acbafaf383632/v1"
+      },
+      "correlation": null,
+      "input_hash": "5a7af571dcb1ee00b4f4c48bf17c634b947d2f66a8038bb1c6d761ece366bcf1",
+      "output_hash": "f4549a0c94560f216c3276b390d73c6bfee33c4d5254e434796f75b5dde665d9"
+    },
+    {
+      "event_id": "evt_88741c24f7ef723dc12b0672b75d65a1",
+      "saga_seq": 14,
+      "recorded_at": "2026-01-01T00:00:14Z",
+      "authority": "proof",
+      "event_type": "invariant_evaluated",
+      "actor": "temporal_workflow",
+      "trace_id": "trace_485792ae9dea9609367a8ff389b2ecb5",
+      "definition_version": "ecommerce-temporal-v1",
+      "fence_token": null,
       "before_status": "compensating",
       "after_status": "compensating",
       "operation_id": null,
@@ -1230,13 +597,11 @@
       "redacted_output": null,
       "rationale": {
         "all_passed": true,
-        "evaluated_at_seq": 35,
-        "invariant_version": "ecommerce-invariants-v1",
+        "invariant_version": "temporal-compensation-proof-v1",
         "results": {
-          "inventory_released": true,
-          "order_cancelled": true,
-          "payment_refunded": true
+          "obligations_reversed": true
         },
+        "rule_id": "obligations_reversed",
         "target_status": "compensated_verified"
       },
       "policy_decision": null,
@@ -1246,15 +611,15 @@
       "output_hash": null
     },
     {
-      "event_id": "evt_1a60540e7a9635653f21f55bb11be2ba116d87717118bd957d47c893ea60ae8b",
-      "saga_seq": 37,
-      "recorded_at": "2026-01-01T00:00:00Z",
-      "authority": "kernel",
+      "event_id": "evt_f57b19aa33fceb851bf67795c0bce0b9",
+      "saga_seq": 15,
+      "recorded_at": "2026-01-01T00:00:15Z",
+      "authority": "workflow",
       "event_type": "terminal_assigned",
-      "actor": "kernel",
-      "trace_id": "trace_5aec5078c6fca167936c30578675d8d6b97f419cb17f44c62dc94a8d4efc55cb",
-      "definition_version": "1.0",
-      "fence_token": 1,
+      "actor": "temporal_workflow",
+      "trace_id": "trace_485792ae9dea9609367a8ff389b2ecb5",
+      "definition_version": "ecommerce-temporal-v1",
+      "fence_token": null,
       "before_status": "compensating",
       "after_status": "compensated_verified",
       "operation_id": null,
@@ -1267,6 +632,7 @@
       "redacted_input": null,
       "redacted_output": null,
       "rationale": {
+        "reason_code": null,
         "status": "compensated_verified"
       },
       "policy_decision": null,
@@ -1278,38 +644,27 @@
   ],
   "proofs": [
     {
-      "source_event_id": "evt_41d1cdfb288e66747e1ae77bdf52626cac8c2b37a81f45118589aa57c53a87de",
-      "source_event_seq": 36,
-      "invariant_version": "ecommerce-invariants-v1",
-      "evaluated_at_seq": 35,
-      "target_status": "compensated_verified",
-      "rule_id": "inventory_released",
+      "source_event_id": "evt_84bb2572cbdd482b36b02df731d7b0e4",
+      "source_event_seq": 9,
+      "invariant_version": "temporal-proof-v1",
+      "evaluated_at_seq": 8,
+      "target_status": "succeeded_verified",
+      "rule_id": "verify_order",
       "inputs": null,
-      "result": "valid",
+      "result": "invalid",
       "explanation": "ledger_recorded_invariant_result"
     },
     {
-      "source_event_id": "evt_41d1cdfb288e66747e1ae77bdf52626cac8c2b37a81f45118589aa57c53a87de",
-      "source_event_seq": 36,
-      "invariant_version": "ecommerce-invariants-v1",
-      "evaluated_at_seq": 35,
+      "source_event_id": "evt_88741c24f7ef723dc12b0672b75d65a1",
+      "source_event_seq": 14,
+      "invariant_version": "temporal-compensation-proof-v1",
+      "evaluated_at_seq": 13,
       "target_status": "compensated_verified",
-      "rule_id": "order_cancelled",
-      "inputs": null,
-      "result": "valid",
-      "explanation": "ledger_recorded_invariant_result"
-    },
-    {
-      "source_event_id": "evt_41d1cdfb288e66747e1ae77bdf52626cac8c2b37a81f45118589aa57c53a87de",
-      "source_event_seq": 36,
-      "invariant_version": "ecommerce-invariants-v1",
-      "evaluated_at_seq": 35,
-      "target_status": "compensated_verified",
-      "rule_id": "payment_refunded",
+      "rule_id": "obligations_reversed",
       "inputs": null,
       "result": "valid",
       "explanation": "ledger_recorded_invariant_result"
     }
   ],
-  "final_projection_hash": "e61d0781ef95b12087210d2005f02b75fb61f6995c804dc9ff7bae8f19aaf832"
+  "final_projection_hash": "26e7c74230f67010d695ae5344b8d7cbce0f1b36b2088e9bfee34c7e575baea9"
 }

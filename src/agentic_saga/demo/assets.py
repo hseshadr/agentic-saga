@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from importlib import resources
 from pathlib import Path
-from typing import Final, cast
+from typing import Final, Literal, cast
 
 from agentic_saga.contracts.trace import RunTrace
 
@@ -20,6 +20,7 @@ _MAX_INDEX_BYTES: Final[int] = 512 * 1024
 _MAX_NAME_CHARS: Final[int] = 120
 _MAX_SUMMARY_CHARS: Final[int] = 500
 _SCENARIO = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
+_Presentation = Literal["ecommerce"]
 
 
 class MaterializationError(ValueError):
@@ -34,7 +35,12 @@ class _Anchor:
     site_identity: tuple[int, int]
 
 
-def materialize_recorder_site(destination: Path, traces: Mapping[str, RunTrace]) -> None:
+def materialize_recorder_site(
+    destination: Path,
+    traces: Mapping[str, RunTrace],
+    *,
+    presentation: _Presentation | None = None,
+) -> None:
     """Build a fresh recorder site, purging trace payloads after failure.
 
     An unserved empty root can remain for caller cleanup; same-UID mutation is out of scope.
@@ -43,7 +49,7 @@ def materialize_recorder_site(destination: Path, traces: Mapping[str, RunTrace])
     _require_posix_capabilities()
     anchor = _claim_destination(destination)
     try:
-        _materialize_claim(anchor, traces)
+        _materialize_claim(anchor, traces, presentation)
     finally:
         os.close(anchor.site_descriptor)
         os.close(anchor.parent_descriptor)
@@ -152,9 +158,13 @@ def _open_child(descriptor: int, part: str) -> int:
     return child
 
 
-def _materialize_claim(anchor: _Anchor, traces: Mapping[str, RunTrace]) -> None:
+def _materialize_claim(
+    anchor: _Anchor,
+    traces: Mapping[str, RunTrace],
+    presentation: _Presentation | None,
+) -> None:
     try:
-        _write_site(anchor.site_descriptor, traces)
+        _write_site(anchor.site_descriptor, traces, presentation)
         _validate_site_at(anchor.site_descriptor)
         _require_current_claim(anchor)
     except BaseException as original:
@@ -205,12 +215,18 @@ def _descriptor_identity(descriptor: int) -> tuple[int, int]:
     return site.st_dev, site.st_ino
 
 
-def _write_site(site_descriptor: int, traces: Mapping[str, RunTrace]) -> None:
+def _write_site(
+    site_descriptor: int,
+    traces: Mapping[str, RunTrace],
+    presentation: _Presentation | None,
+) -> None:
     _copy_static_assets(site_descriptor)
     os.mkdir("traces", mode=0o700, dir_fd=site_descriptor)
     trace_descriptor = os.open("traces", _directory_flags(), dir_fd=site_descriptor)
     try:
-        entries = tuple(_write_trace(trace_descriptor, item) for item in sorted(traces.items()))
+        entries = tuple(
+            _write_trace(trace_descriptor, item, presentation) for item in sorted(traces.items())
+        )
         _write_file(trace_descriptor, "index.json", _index_payload(entries))
     finally:
         os.close(trace_descriptor)
@@ -276,12 +292,16 @@ def _require_static_size(source: Path, files: tuple[Path, ...]) -> None:
         raise MaterializationError("packaged recorder assets exceed safety bounds")
 
 
-def _write_trace(trace_directory: int, item: tuple[str, RunTrace]) -> dict[str, str]:
+def _write_trace(
+    trace_directory: int,
+    item: tuple[str, RunTrace],
+    presentation: _Presentation | None,
+) -> dict[str, str]:
     scenario, trace = item
     payload = _trace_payload(trace)
     trace_name = f"{scenario}.json"
     _write_file(trace_directory, trace_name, payload)
-    return _index_entry(scenario, trace_name, payload)
+    return _index_entry(scenario, trace_name, payload, presentation)
 
 
 def _trace_payload(trace: RunTrace) -> bytes:
@@ -295,8 +315,13 @@ def _trace_payload(trace: RunTrace) -> bytes:
     return payload
 
 
-def _index_entry(scenario: str, trace_name: str, payload: bytes) -> dict[str, str]:
-    return {
+def _index_entry(
+    scenario: str,
+    trace_name: str,
+    payload: bytes,
+    presentation: _Presentation | None,
+) -> dict[str, str]:
+    entry = {
         "id": scenario,
         "name": f"Recorded run: {scenario}",
         "summary": "Materialized strict RunTrace 1.0 evidence.",
@@ -304,6 +329,9 @@ def _index_entry(scenario: str, trace_name: str, payload: bytes) -> dict[str, st
         "trace_ref": trace_name,
         "trace_sha256": sha256(payload).hexdigest(),
     }
+    if presentation is not None:
+        entry["presentation"] = presentation
+    return entry
 
 
 def _index_payload(entries: tuple[dict[str, str], ...]) -> bytes:
@@ -445,7 +473,8 @@ def _require_digest(payload: bytes, digest: str) -> None:
 def _has_expected_entry_shape(entry: object) -> bool:
     if not isinstance(entry, dict):
         return False
-    if set(entry) != {"id", "name", "summary", "mode", "trace_ref", "trace_sha256"}:
+    required = {"id", "name", "summary", "mode", "trace_ref", "trace_sha256"}
+    if not required.issubset(entry) or not set(entry) - required <= {"presentation"}:
         return False
     return _has_valid_entry_values(entry)
 
@@ -454,10 +483,22 @@ def _has_valid_entry_values(entry: dict[object, object]) -> bool:
     if not all(isinstance(entry.get(key), str) for key in entry):
         return False
     return (
-        _is_bounded_text(entry["name"], _MAX_NAME_CHARS)
-        and _is_bounded_text(entry["summary"], _MAX_SUMMARY_CHARS)
-        and entry["mode"] in {"scripted", "live"}
+        _has_valid_entry_text(entry) and _has_valid_mode(entry) and _has_valid_presentation(entry)
     )
+
+
+def _has_valid_entry_text(entry: dict[object, object]) -> bool:
+    return _is_bounded_text(entry["name"], _MAX_NAME_CHARS) and _is_bounded_text(
+        entry["summary"], _MAX_SUMMARY_CHARS
+    )
+
+
+def _has_valid_mode(entry: dict[object, object]) -> bool:
+    return entry["mode"] in {"scripted", "live"}
+
+
+def _has_valid_presentation(entry: dict[object, object]) -> bool:
+    return entry.get("presentation", "ecommerce") == "ecommerce"
 
 
 def _is_bounded_text(value: object, maximum: int) -> bool:

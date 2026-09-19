@@ -12,13 +12,7 @@ from agentic_saga.contracts.runtime import SagaObservation
 
 type _BoundedName = Annotated[str, StringConstraints(strict=True, min_length=1, max_length=200)]
 type _Rationale = Annotated[str, StringConstraints(strict=True, min_length=1, max_length=500)]
-type _ReasonCode = Annotated[str, StringConstraints(strict=True, pattern=r"^[a-z][a-z0-9_]{0,99}$")]
-type _TerminalStatus = Literal[
-    "succeeded_verified",
-    "compensated_verified",
-    "aborted_clean",
-    "resolved_with_exception",
-]
+type _TerminalStatus = Literal["succeeded_verified"]
 
 _PROPOSAL_ID_DOMAIN = "agentic-saga:bounded-choice-proposal:v1"
 _AGENT_PROPOSAL: TypeAdapter[AgentProposal] = TypeAdapter(AgentProposal)
@@ -45,24 +39,8 @@ class FinishIntent(_IntentBase):
     target_status: _TerminalStatus
 
 
-class BeginCompensationIntent(_IntentBase):
-    """A complete request to enter kernel-derived compensation."""
-
-    kind: Literal["begin_compensation"] = "begin_compensation"
-    reason_code: Literal["forward_goal_unreachable"]
-    rationale: _Rationale
-
-
-class EscalateIntent(_IntentBase):
-    """A complete request for an advertised human decision."""
-
-    kind: Literal["escalate"] = "escalate"
-    reason_code: _ReasonCode
-    rationale: _Rationale
-
-
 type ProposalIntent = Annotated[
-    ToolCallIntent | FinishIntent | BeginCompensationIntent | EscalateIntent,
+    ToolCallIntent | FinishIntent,
     Field(discriminator="kind"),
 ]
 
@@ -92,8 +70,6 @@ def _proposal_id(observation: SagaObservation, candidate_id: str, intent: Propos
 
 
 __all__ = [
-    "BeginCompensationIntent",
-    "EscalateIntent",
     "FinishIntent",
     "ProposalIntent",
     "ToolCallIntent",

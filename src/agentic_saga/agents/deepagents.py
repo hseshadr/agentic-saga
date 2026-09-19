@@ -11,8 +11,6 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, TypeAdapte
 
 from agentic_saga.contracts.actions import (
     AgentProposal,
-    BeginCompensation,
-    Escalate,
     Finish,
     ToolCall,
 )
@@ -30,13 +28,7 @@ from agentic_saga.manifest import SagaContext, SagaManifest, require_public_agen
 type ProposalCall = Callable[[str, str], Awaitable[object]]
 type _BoundedName = Annotated[str, StringConstraints(min_length=1, max_length=200)]
 type _Rationale = Annotated[str, StringConstraints(min_length=1, max_length=500)]
-type _ReasonCode = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]{0,99}$")]
-type _TerminalStatus = Literal[
-    "succeeded_verified",
-    "compensated_verified",
-    "aborted_clean",
-    "resolved_with_exception",
-]
+type _TerminalStatus = Literal["succeeded_verified"]
 
 _TOO_MANY_REQUESTS = 429
 _CLIENT_ERROR_RANGE = range(400, 500)
@@ -44,14 +36,8 @@ _SERVER_ERROR_RANGE = range(500, 600)
 _PROPOSAL_ID_DOMAIN = "agentic-saga:deep-agent-proposal:v1"
 _TOOLSET_ID = "agentic-saga-eligible-proposals"
 _FINISH_TOOL = "finish_saga"
-_COMPENSATE_TOOL = "begin_compensation"
-_ESCALATE_TOOL = "escalate_to_human"
-_CONTROL_TOOLS = frozenset({_FINISH_TOOL, _COMPENSATE_TOOL, _ESCALATE_TOOL})
-_CONTROL_DESCRIPTIONS = {
-    _FINISH_TOOL: "Propose a kernel-verified terminal status.",
-    _COMPENSATE_TOOL: "Ask the kernel to enter compensation and derive rollback order.",
-    _ESCALATE_TOOL: "Ask the kernel to park for a proven human decision.",
-}
+_CONTROL_TOOLS = frozenset({_FINISH_TOOL})
+_FINISH_DESCRIPTION = "Propose verified success to the deterministic Temporal workflow."
 _NATIVE_DEFERRED_CALL_LIMIT = 1
 _MODEL_RESULT_RETRIES = 1
 _AGENT_PROPOSAL: TypeAdapter[AgentProposal] = TypeAdapter(AgentProposal)
@@ -60,7 +46,7 @@ _AUTHORITY = "\n".join(
     (
         "Agentic Saga authority:",
         "Call exactly one advertised native proposal tool from current public evidence.",
-        "Only the deterministic Saga kernel executes business tools or assigns terminal state.",
+        "Only the deterministic Temporal workflow executes business tools or assigns state.",
         "Never invent a tool, receipt, approval, idempotency key, outcome, or private fact.",
         "The adapter assigns proposal identity and binds the current Saga sequence.",
         "Reuse read_evidence only when freshness=fresh; refresh affected stale facts.",
@@ -76,43 +62,25 @@ _AUTHORITY = "\n".join(
         ),
         (
             "- Before the first mutation, ensure remaining_budget.turn_limit covers the "
-            "evidence, effects, and terminal proof; otherwise finish aborted_clean before "
-            "creating partial work."
+            "evidence, effects, and terminal proof; otherwise avoid creating partial work."
         ),
         (
-            "- A confirmed forward effect is success evidence, not failure. Never begin "
-            "compensation from stale or missing evidence or speculation. Refresh facts needed "
-            "for the next forward step; compensate only when current evidence proves the "
-            "forward goal cannot safely complete."
+            "- A confirmed forward effect is success evidence. Refresh facts needed for the "
+            "next currently eligible business choice."
         ),
         (
-            "- Call finish_saga with succeeded_verified when current checks prove the goal, "
-            "or aborted_clean when checks prove no external obligation exists."
+            "- Call finish_saga with succeeded_verified only when it is advertised and current "
+            "checks prove the goal."
         ),
         (
-            "- Call begin_compensation when the forward goal is unreachable and confirmed "
-            "effects remain. The kernel derives rollback order."
+            "- An ordinary failed proof triggers workflow-owned compensation; unresolved "
+            "evidence triggers verified human handling."
         ),
         (
-            "- If last_action.event_type=terminal_denied, its failed forward invariant proves "
-            "the goal cannot complete, confirmed effects remain, and begin_compensation is "
-            "advertised, call begin_compensation immediately."
+            "- The deterministic Temporal workflow owns reconciliation, reverse compensation, "
+            "and entry into HUMAN_REQUIRED."
         ),
-        (
-            "- Whenever begin_compensation is advertised, the kernel has a compensation path; "
-            "rollback tools intentionally appear only after that transition. Never escalate "
-            "merely because rollback tools are not yet advertised."
-        ),
-        (
-            "- During compensation, call only the currently advertised compensation tool; "
-            "the kernel-owned frontier determines eligibility."
-        ),
-        ("- After every rollback check passes, call finish_saga with compensated_verified."),
-        (
-            "- Call escalate_to_human only for a proven operator decision or unresolved "
-            "external outcome, including when the goal explicitly requires human escalation."
-        ),
-        "- Unknown outcomes are reconciled by the deterministic runtime before another turn.",
+        "- Unknown outcomes are reconciled by the Temporal workflow before another agent turn.",
         (
             "- Select only an exact advertised native tool; an exact advertised action is "
             "available, so never claim that a matching action is unavailable or copy an "
@@ -204,20 +172,8 @@ class _FinishIntent(_IntentBase):
     target_status: _TerminalStatus
 
 
-class _BeginCompensationIntent(_IntentBase):
-    kind: Literal["begin_compensation"]
-    reason_code: Literal["forward_goal_unreachable"]
-    rationale: _Rationale
-
-
-class _EscalateIntent(_IntentBase):
-    kind: Literal["escalate"]
-    reason_code: _ReasonCode
-    rationale: _Rationale
-
-
 type _AgentIntent = Annotated[
-    _ToolCallIntent | _FinishIntent | _BeginCompensationIntent | _EscalateIntent,
+    _ToolCallIntent | _FinishIntent,
     Field(discriminator="kind"),
 ]
 
@@ -233,16 +189,6 @@ class AgentDecision(BaseModel):
 class _FinishArguments(_IntentBase):
     rationale: _Rationale
     target_status: _TerminalStatus
-
-
-class _CompensationArguments(_IntentBase):
-    reason_code: Literal["forward_goal_unreachable"]
-    rationale: _Rationale
-
-
-class _EscalationArguments(_IntentBase):
-    reason_code: _ReasonCode
-    rationale: _Rationale
 
 
 class _RunResult(Protocol):
@@ -331,7 +277,7 @@ class _NativeProposalCall:
 
 @dataclass(frozen=True)
 class DeepAgentsDriver(AgentDriver):
-    """Translate one native Pydantic Deep tool call into one kernel proposal."""
+    """Translate one native Pydantic Deep tool call into one workflow proposal."""
 
     context: SagaContext
     proposal_call: ProposalCall | _NativeProposalCall
@@ -451,17 +397,10 @@ def _call_arguments(call: _DeferredCall) -> JsonObject:
 
 
 def _control_intent(name: object, arguments: JsonObject) -> _AgentIntent:
-    payload = thaw_json_object(arguments)
-    if name == _FINISH_TOOL:
-        finish = _FinishArguments.model_validate(payload, strict=True)
-        return _FinishIntent(kind="finish", **finish.model_dump())
-    if name == _COMPENSATE_TOOL:
-        compensation = _CompensationArguments.model_validate(payload, strict=True)
-        return _BeginCompensationIntent(kind="begin_compensation", **compensation.model_dump())
-    if name == _ESCALATE_TOOL:
-        escalation = _EscalationArguments.model_validate(payload, strict=True)
-        return _EscalateIntent(kind="escalate", **escalation.model_dump())
-    raise ValueError("agent selected an unavailable proposal tool")
+    if name != _FINISH_TOOL:
+        raise ValueError("agent selected an unavailable proposal tool")
+    finish = _FinishArguments.model_validate(thaw_json_object(arguments), strict=True)
+    return _FinishIntent(kind="finish", **finish.model_dump())
 
 
 def _validated_proposal(raw: object, observation: SagaObservation) -> AgentProposal:
@@ -586,7 +525,7 @@ def _business_definition(
     dependencies: _PydanticDependencies,
     descriptor: ToolDescriptor,
 ) -> object:
-    description = f"{descriptor.description} Proposal only; the Saga kernel executes it."
+    description = f"{descriptor.description} Proposal only; the Temporal workflow executes it."
     return dependencies.tool_definition(
         name=descriptor.name,
         description=description,
@@ -600,56 +539,37 @@ def _control_definitions(
     dependencies: _PydanticDependencies,
     observation: SagaObservation,
 ) -> list[object]:
-    arguments: dict[str, type[BaseModel]] = {
-        _FINISH_TOOL: _FinishArguments,
-        _COMPENSATE_TOOL: _CompensationArguments,
-        _ESCALATE_TOOL: _EscalationArguments,
-    }
-    return [
-        _control_definition(dependencies, observation, name, arguments[name])
-        for name in _control_tool_names(observation)
-    ]
+    if not _control_tool_names(observation):
+        return []
+    return [_finish_definition(dependencies)]
 
 
 def _control_tool_names(observation: SagaObservation) -> tuple[str, ...]:
-    controls = observation.proposal_controls
-    return tuple(
-        name
-        for name, allowed in (
-            (_FINISH_TOOL, bool(controls.finish_targets)),
-            (_COMPENSATE_TOOL, controls.begin_compensation),
-            (_ESCALATE_TOOL, controls.escalate_to_human),
-        )
-        if allowed
-    )
+    if observation.finish_allowed:
+        return (_FINISH_TOOL,)
+    return ()
 
 
-def _control_definition(
+def _finish_definition(
     dependencies: _PydanticDependencies,
-    observation: SagaObservation,
-    name: str,
-    arguments: type[BaseModel],
 ) -> object:
-    schema = arguments.model_json_schema()
-    if name == _FINISH_TOOL:
-        schema = _finish_schema(observation)
     return dependencies.tool_definition(
-        name=name,
-        description=_CONTROL_DESCRIPTIONS[name],
-        parameters_json_schema=schema,
+        name=_FINISH_TOOL,
+        description=_FINISH_DESCRIPTION,
+        parameters_json_schema=_finish_schema(),
         strict=True,
         sequential=True,
     )
 
 
-def _finish_schema(observation: SagaObservation) -> dict[str, object]:
+def _finish_schema() -> dict[str, object]:
     return {
         "type": "object",
         "properties": {
             "rationale": {"type": "string", "minLength": 1, "maxLength": 500},
             "target_status": {
                 "type": "string",
-                "enum": list(observation.proposal_controls.finish_targets),
+                "enum": ["succeeded_verified"],
             },
         },
         "required": ["rationale", "target_status"],
@@ -792,14 +712,9 @@ def _proposal_is_current(
 
 
 def _control_is_current(proposal: AgentProposal, observation: SagaObservation) -> bool:
-    controls = observation.proposal_controls
     if isinstance(proposal, Finish):
-        return proposal.target_status in controls.finish_targets
-    if isinstance(proposal, BeginCompensation):
-        return controls.begin_compensation
-    if isinstance(proposal, Escalate):
-        return controls.escalate_to_human
-    return True
+        return proposal.target_status == "succeeded_verified" and observation.finish_allowed
+    return isinstance(proposal, ToolCall)
 
 
 def _require_catalog(context: SagaContext, available_tools: Sequence[ToolDescriptor]) -> None:

@@ -1,234 +1,120 @@
-# Ecommerce reference Saga
+# Ecommerce Agentic Saga
 
-TL;DR: this is a small, offline example of the Agentic Saga boundary. A proposal-only agent chooses
-the next business action. The kernel owns authorization, durable intent, dispatch, reconciliation,
-the compensation frontier, human escalation, and terminal proof.
+## TL;DR
 
-Run the default business-failure and compensation path from the repository root:
+A Saga completes a business transaction across several systems without pretending they share one
+database transaction. Each successful external change records how to reverse it. If a later step
+fails, the Saga compensates the completed changes in reverse order.
+
+This example checks out one order:
+
+```text
+reserve stock → charge payment → schedule delivery → verify the order
+      ↓                ↓                 ↓
+ release stock ← refund payment ← cancel delivery
+```
+
+The agent chooses the next forward tool from the goal and current public evidence. Temporal owns
+the durable loop. The Workflow—not the prompt—enforces prerequisites, call budgets, fresh terminal
+proof, stable operation identities, retries, reconciliation, and compensation order.
+
+## Run it
+
+Start Temporal's lightweight local development server in one terminal:
 
 ```bash
-uv run --no-dev python -m examples.ecommerce.run
+temporal server start-dev
 ```
 
-Pass `happy-path`, `lost-response`, or `compensation-failure` to run another path. Every scenario
-uses temporary SQLite databases, no credential, no network, and the same production kernel APIs.
+Run a scenario in another terminal:
 
-## The boundary in one minute
-
-`ScriptedProposalDriver` reads the latest public `SagaObservation` and the currently advertised tool
-descriptors, then returns exactly one typed proposal. It never calls a provider. The runtime sends
-that proposal through deterministic policy and only then records and dispatches an effect.
-
-Each confirmed effect makes earlier reads stale. The happy-path trajectory treats the durable
-effect receipt as progress, refreshes only the facts needed before the next effect, and refreshes
-again before terminal proof. A model must not interpret missing or stale evidence as a reason to
-start compensation.
-
-If the goal fails, the agent may propose `BeginCompensation`. That request cannot name a rollback.
-The kernel changes phase only when effects are settled and an eligible obligation exists. On later
-turns, it advertises only the compensation actions in the planner's safe frontier.
-
-Payment policy is application code: the expected order, customer, amount, and currency come from
-authoritative provider state. A refund must also match the confirmed charge operation and its
-receipt. The provider enforces the same terms and persists captured/refunded amounts; terminal
-invariants verify those exact values rather than trusting a status flag.
-
-## Native calls in two trajectories
-
-The optional live driver uses Pydantic Deep native deferred tools end to end. In these abbreviated
-transcripts, `MODEL -> native tool call` is business intent.
-`KERNEL -> observed result` is the next public observation only after the deterministic kernel has
-validated policy, persisted intent, dispatched the registered adapter, and stored the outcome.
-
-### Happy path
-
-```text
-MODEL -> native tool call
-check_inventory(sku="sku_travel_pack", quantity=1)
-KERNEL -> observed result
-read_observed(available=2, reserved=0, version=1)
-
-MODEL -> native tool call
-reserve_inventory(order_id="order_demo_001", sku="sku_travel_pack",
-                  quantity=1, expected_version=1)
-KERNEL -> observed result
-effect_confirmed(tool="reserve_inventory")
-
-MODEL -> native tool call
-inspect_order(order_id="order_demo_001")
-KERNEL -> observed result
-read_observed(payment="open", fulfillment="pending")
-
-MODEL -> native tool call
-charge_payment(order_id="order_demo_001", customer_id="customer_demo_001",
-               amount_minor=7900, currency="USD")
-KERNEL -> observed result
-effect_confirmed(tool="charge_payment")
-
-MODEL -> native tool call
-inspect_order(order_id="order_demo_001")
-KERNEL -> observed result
-read_observed(payment="captured", fulfillment="pending")
-
-MODEL -> native tool call
-schedule_fulfillment(order_id="order_demo_001")
-KERNEL -> observed result
-effect_confirmed(tool="schedule_fulfillment")
-
-MODEL -> native tool call
-inspect_order(order_id="order_demo_001")
-KERNEL -> observed result
-read_observed(payment="captured", fulfillment="scheduled")
-
-MODEL -> native tool call
-finish_saga(target_status="succeeded_verified", rationale="Fresh proof satisfies the goal.")
-KERNEL -> observed result
-terminal_assigned(status="succeeded_verified")
+```bash
+uv run python -m examples.ecommerce.run happy-path
+uv run python -m examples.ecommerce.run business-failure
+uv run python -m examples.ecommerce.run lost-response
+uv run python -m examples.ecommerce.run compensation-failure
 ```
 
-### Failure after charge
+The example CLI is intentionally local-only and connects to `localhost:7233` by default. An
+alternate loopback port is supported:
 
-The fulfillment attempt is confirmed but leaves authoritative state `rejected`. The model requests
-compensation; the kernel derives and reveals one safe rollback frontier at a time.
-
-```text
-MODEL -> native tool call
-begin_compensation(reason_code="forward_goal_unreachable",
-                   rationale="Authoritative order evidence reports fulfillment rejected.")
-KERNEL -> observed result
-compensation_started(eligible_tools=["cancel_fulfillment"])
-
-MODEL -> native tool call
-cancel_fulfillment(order_id="order_demo_001")
-KERNEL -> observed result
-effect_confirmed(tool="cancel_fulfillment", eligible_tools=["refund_payment"])
-
-MODEL -> native tool call
-refund_payment(order_id="order_demo_001", customer_id="customer_demo_001",
-               amount_minor=7900, currency="USD")
-KERNEL -> observed result
-effect_confirmed(tool="refund_payment", eligible_tools=["release_inventory"])
-
-MODEL -> native tool call
-release_inventory(order_id="order_demo_001", sku="sku_travel_pack", quantity=1)
-KERNEL -> observed result
-effect_confirmed(tool="release_inventory", eligible_tools=[])
-
-MODEL -> native tool call
-finish_saga(target_status="compensated_verified",
-            rationale="Fresh compensation proof satisfies every obligation.")
-KERNEL -> observed result
-terminal_assigned(status="compensated_verified")
+```bash
+uv run python -m examples.ecommerce.run happy-path \
+  --temporal-address 127.0.0.1:7333
 ```
 
-The sequence `cancel_fulfillment -> refund_payment -> release_inventory` is not prompt authority.
-It is recomputed from confirmed receipts and compensation dependencies after each result.
+For Temporal Cloud or another remote service, use the library's typed `TemporalCloudConfig` and
+`connect_cloud_client` helpers shown in the root quickstart; the local connector refuses plaintext
+remote targets.
 
-For an unknown-outcome reconciliation, the runtime pauses model turns and reconciles the original
-stable operation identity. A confirmed or absent result becomes fresh evidence; an outcome that
-remains unknowable becomes quiescent `HUMAN_REQUIRED`. Human escalation is also appropriate for a
-proven missing authority, inadequate recovery guarantee, or unverifiable compensation—not for an
-ordinary business failure with a safe compensation frontier.
+The automated acceptance tests need no separately installed server. Temporal's time-skipping test
+environment starts a lightweight test service for the duration of each test:
 
-## Ten-minute source map
+```bash
+uv run pytest tests/bdd/steps/test_ecommerce_saga.py -q
+```
 
-| File | One responsibility |
+## What the agent controls
+
+[`saga.yaml`](./saga.yaml) gives the agent only:
+
+- the goal and public order context;
+- the four forward tools it may choose;
+- examples of useful forward decisions;
+- fixed turn and tool-call budgets.
+
+The agent never sees compensation tools as forward choices. It also cannot request compensation or
+human escalation. When forward work fails, the Workflow derives obligations from confirmed receipts
+and executes `cancel_fulfillment → refund_payment → release_inventory`.
+
+This separation is the point of Agentic Saga: planning is flexible; transaction safety is not.
+
+## The four executable stories
+
+1. **Healthy checkout** — each effect happens once and `verify_order` supplies fresh authoritative
+   proof before success.
+2. **Delivery rejected** — scheduling is a confirmed external change, but authoritative proof says
+   the order was rejected. The Workflow compensates all three prior effects in reverse order.
+3. **Payment reply lost** — the charge commits, both Activity attempts lose their reply, and one
+   reconciliation checks the same stable operation ID. The customer is charged once.
+4. **Refund reply lost** — the refund commits but cannot be proven from the Activity response. The
+   Workflow pauses before releasing stock. A stale decision and an unauthorized decision are
+   rejected; a demo verifier accepts one opaque authorization reference and compensation resumes.
+
+Human involvement is therefore narrow: it resolves an uncertain compensation outcome. Ordinary
+business rejection is handled automatically.
+
+## Files to read
+
+| File | Responsibility |
 | --- | --- |
-| `saga.yaml` | Human-readable goal, guardrails, budgets, tool allowlist, and named checks. |
-| `domain.py` | Strict ecommerce commands, provider state, and compact demo result types. |
-| `provider.py` | Separate durable fake provider, idempotency, fencing, fault injection, and counters. |
-| `demo.py` | Registry, application policy/invariants, proposal driver, runtime assembly, and restart. |
-| `run.py` | CLI argument parsing and concise timeline rendering only. |
-| `eval-corpus-v1.json` | Fixed 24-case model-evaluation inputs and deterministic safety oracles. |
-| `evaluation.py` | Strict corpus loading, evidence scoring, provider separation, and release thresholds. |
-| `live_eval.py` | Opt-in execution, redacted atomic artifacts, resume checks, and aggregation. |
-| `eval.py` | Source-checkout CLI for free validation or explicitly authorized live evaluation. |
-| `tests/bdd/features/ecommerce_saga.feature` | Four executable product stories and exact effects. |
+| `saga.yaml` | Agent goal, public context, forward tools, budgets, and examples. |
+| `domain.py` | Strict ecommerce commands and provider state. |
+| `provider.py` | In-memory idempotent provider simulation and tool registry. |
+| `demo.py` | Driver, registry-derived Workflow declarations, worker, and four scenarios. |
+| `run.py` | Real local-Temporal command-line runner. |
+| `export_flight_recorder.py` | Projects Temporal state into checked-in Flight Recorder traces. |
+| `tests/bdd/features/ecommerce_saga.feature` | The four plain-language acceptance stories. |
 
-Read `demo.py` in this order:
+## Flight Recorder
 
-1. `EcommerceContexts` and `EcommerceEvidence` bind policy and proof to provider state.
-2. `ScriptedProposalDriver` demonstrates the agent boundary with no model or network.
-3. `build_registry`, `_policy`, and `_terminal_gate` assemble application-owned capabilities.
-4. `_assembly` wires the public storage, kernel, dispatcher, reconciler, and runtime Lego pieces.
-5. `run_scenario` and `_resume_lost_response` execute or reopen a Saga from durable state.
-6. `_demo_run` exports the real `RunTrace` used by tests and the checked-in Flight Recorder.
-
-## What each scenario proves
-
-- `happy-path`: dynamic read/effect proposals end only after fresh exact-state invariants pass.
-- `business-failure`: verified effects compensate once in `cancel → refund → release` order.
-- `lost-response`: the provider commits a charge, loses the response, and restart reconciliation
-  confirms it with one execute and one business effect.
-- `compensation-failure`: an ambiguous refund cannot unblock later compensation; the Saga becomes
-  quiescent `HUMAN_REQUIRED` with an operator packet.
-
-## Offline evaluation contract
-
-Run the corpus and scoring contract without a model, credential, or network:
+Every run is projected through `agentic_saga.temporal.project_run_trace`. Regenerate all four traces:
 
 ```bash
-uv run pytest tests/live_model/test_corpus_contract.py tests/live_model/test_scoring.py -q
+uv run python -m examples.ecommerce.export_flight_recorder
 ```
 
-The versioned corpus has six straightforward, recoverable, adversarial, and escalation cases.
-These 24 case IDs name evaluation fixtures, not extra demo CLI scenarios. The scorer revalidates a
-real `SagaResult` and `RunTrace`, then checks fresh proof targets, backed compensation, typed
-forbidden effects, human-pause quiescence, durable agent-turn budgets, and trusted pre-redaction
-evidence. Provider exhaustion has a separate machine-readable status and never lowers model-quality
-denominators. Adversarial cases contain typed hostile evidence and must remain 100% safe; exact
-kernel rejection is reported separately only for cases that explicitly require a named rejection.
-Five escalation cases require a human pause, while the budget-stop case requires a proof-backed
-clean abort because no external effect exists. Each case's `max_agent_turns` is also its real runtime
-and model-context turn limit; elapsed and token budgets retain the manifest's 30-second and
-1,000-token allowance per turn, including after a durable reopen.
+The JSON files in `flight-recorder/traces/` drive the existing replay UI. They contain public,
+redacted workflow evidence: effects, reconciliation, proof, compensation, human resolution, and
+terminal state.
 
-## Opt-in live evaluation
+## Model-backed evaluation
 
-First validate all 24 cases for free. This loads the strict corpus and makes no driver or network
-call:
+The deterministic `CheckoutAgent` is the transaction proof: it uses the exact `AgentDriver`
+contract a model uses, without cost or network variability. The optional evaluation modules and
+corpus remain the place to measure model planning quality. A model may choose a poor proposal; the
+same Workflow eligibility, budget, proof, and compensation rules still apply.
 
-```bash
-uv run python -m examples.ecommerce.eval
-```
-
-Live use costs money. It requires both an OpenRouter key and explicit consent:
-
-```bash
-cp .env.example .env
-chmod 600 .env
-# Edit .env and set OPENROUTER_API_KEY to your own key.
-RUN_LIVE_MODEL_EVALS=1 uv run python -m examples.ecommerce.eval --live \
-  --samples 3 --output .artifacts/eval
-```
-
-The evaluator loads `.env` only for an explicit `--live` run. The file is ignored by Git, and
-process environment values take precedence.
-
-Rerun the same command and output directory to resume verified samples. Each sample is committed
-before aggregation and carries a self-digest verified before reuse. Inspect
-`.artifacts/eval/traces`, `.artifacts/eval/samples`, and `.artifacts/eval/report.json`. This is
-tamper-evident integrity and corruption detection, not authenticity against an attacker who can
-rewrite both an artifact and its digest. The alternate warehouse case starts with the preferred
-warehouse unavailable and asks the agent to discover and reserve an allowed alternate without a
-second charge.
-
-The scripted demo is transactional proof; this optional run is model-quality evidence.
-A provider failure is reported separately and cannot improve the model score.
-We make no universal exactly-once claim: this example proves deduplication only for its provider
-contract. The configured model route and measured latency are recorded. Returned model/provider
-identity, token usage, and cost remain `null` because the current public adapter does not expose
-trustworthy telemetry.
-
-The manifest's compact trajectories are part of the validated context supplied to the model. They
-show observation-to-intent examples for forward success, stale-evidence refresh, already-satisfied
-effects, requesting kernel-owned compensation, waiting for runtime reconciliation, authority and
-recovery-horizon escalation, and a proof-backed clean abort. During compensation, each example uses
-only the one rollback action currently advertised by the kernel; it never invents or pre-orders a
-future rollback. These examples guide planning, while deterministic policy remains the safety
-boundary when a model chooses badly.
-
-This example deliberately contains no workflow server, UI, ecommerce branch in the generic
-package, or second Saga engine. The provider is a deterministic simulation, not a production
-commerce integration. The optional Pydantic Deep/OpenRouter adapter is not needed for the free
-offline proof.
+The provider is intentionally an in-memory simulation. Production adapters should call their real
+systems with the supplied stable operation ID, retain idempotency records for the recovery horizon,
+and implement authoritative reconciliation.

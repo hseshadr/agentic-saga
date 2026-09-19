@@ -14,7 +14,6 @@ export interface ProofEvaluation {
 const terminalStates = new Set<SagaStatus>([
   "aborted_clean",
   "compensated_verified",
-  "resolved_with_exception",
   "succeeded_verified",
 ]);
 

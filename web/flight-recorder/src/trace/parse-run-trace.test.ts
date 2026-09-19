@@ -21,11 +21,12 @@ function traceWithInput(source: string, digest: string): unknown {
 }
 
 describe("parseRunTrace", () => {
-  it("accepts a real kernel-exported RunTrace 1.0", () => {
-    const result = parseRunTrace(validTrace());
+  it("accepts a real Temporal-exported RunTrace 1.0", () => {
+    const fixture = validTrace();
+    const result = parseRunTrace(fixture);
 
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.trace.events).toHaveLength(37);
+    if (result.ok) expect(result.trace.events).toHaveLength(events(fixture).length);
   });
 
   it("rejects unsupported versions and extra aliases without throwing", () => {
@@ -38,6 +39,28 @@ describe("parseRunTrace", () => {
     expect(parseRunTrace({ ...validTrace(), runId: "alias" })).toEqual(
       expect.objectContaining({ ok: false }),
     );
+  });
+
+  it.each(["kernel", "policy"])("rejects retired %s authority metadata", (authority) => {
+    const trace = validTrace();
+    const first = events(trace)[0];
+    if (first) first.authority = authority;
+
+    expect(parseRunTrace(trace)).toEqual(expect.objectContaining({ ok: false }));
+  });
+
+  it.each([
+    "created",
+    "recovery_plan_required",
+    "retry_wait",
+    "reconciling_unknown",
+    "resolved_with_exception",
+  ])("rejects retired %s Saga state metadata", (status) => {
+    const trace = validTrace();
+    const first = events(trace)[0];
+    if (first) first.after_status = status;
+
+    expect(parseRunTrace(trace)).toEqual(expect.objectContaining({ ok: false }));
   });
 
   it("rejects a non-contiguous causal sequence", () => {
@@ -119,7 +142,7 @@ describe("parseRunTrace", () => {
   it("rejects a broken status chain or terminal header", () => {
     const trace = validTrace();
     const second = events(trace)[1];
-    if (second) second.before_status = "running";
+    if (second) second.before_status = "human_required";
     expect(parseRunTrace(trace)).toEqual({
       message: "RunTrace statuses must form one causal chain.",
       ok: false,
@@ -153,7 +176,7 @@ describe("parseRunTrace", () => {
     });
   });
 
-  it("matches the kernel's Unicode code-point ordering for canonical hashes", () => {
+  it("matches the recorder contract's Unicode code-point ordering for canonical hashes", () => {
     const trace = validTrace();
     const bound = events(trace).find((event) => event.redacted_input !== null);
     if (!bound) throw new Error("fixture must include hashed input");
@@ -302,7 +325,7 @@ describe("parseRunTrace", () => {
     });
     const trace = validTrace();
     const first = events(trace)[0];
-    if (first) first.before_status = "created";
+    if (first) first.before_status = "running";
     expect(parseRunTrace(trace)).toEqual({
       message: "RunTrace statuses must form one causal chain.",
       ok: false,

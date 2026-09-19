@@ -20,7 +20,11 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Typing :: Typed",
 ]
-dependencies = ["pydantic>=2.10,<3", "ruamel.yaml>=0.19,<0.20"]
+dependencies = [
+  "pydantic>=2.10,<3",
+  "ruamel.yaml>=0.19,<0.20",
+  "temporalio>=1.20,<2",
+]
 
 [project.urls]
 Homepage = "https://github.com/hseshadr/agentic-saga"
@@ -88,10 +92,9 @@ include = [
   "/PROVENANCE.md",
   "/docs/agent-adapter.md",
   "/docs/architecture",
-  "/docs/architecture.html",
   "/docs/context-manifest.md",
   "/docs/flight-recorder.md",
-  "/docs/kernel-safety-contract.md",
+  "/docs/temporal-safety-contract.md",
   "/docs/operations.md",
   "/examples/ecommerce",
   "/examples/ticket-booking/saga.yaml",
@@ -131,6 +134,7 @@ markers = [
   "live_model: requires network access, explicit consent, and a provider API key",
   "network: requires network access and an explicit opt-in",
   "offline: requires no network access or credentials",
+  "temporal: requires only the local Temporal test server",
 ]
 testpaths = ["tests"]
 
@@ -141,29 +145,17 @@ source = ["agentic_saga"]
 [tool.mutmut]
 source_paths = ["src/agentic_saga"]
 only_mutate = [
-  "src/agentic_saga/kernel/identity.py",
-  "src/agentic_saga/kernel/invariants.py",
-  "src/agentic_saga/kernel/policy.py",
-  "src/agentic_saga/kernel/reducer.py",
-  "src/agentic_saga/kernel/runtime.py",
-  "src/agentic_saga/kernel/compensation.py",
-  "src/agentic_saga/execution/dispatcher.py",
-  "src/agentic_saga/execution/reconciliation.py",
-  "src/agentic_saga/execution/runtime.py",
-  "src/agentic_saga/execution/unwind.py",
+  "src/agentic_saga/contracts/outcomes.py",
   "src/agentic_saga/contracts/redaction.py",
-  "src/agentic_saga/storage/sqlite.py",
+  "src/agentic_saga/temporal/activities.py",
+  "src/agentic_saga/temporal/journal.py",
+  "src/agentic_saga/temporal/workflow.py",
 ]
 pytest_add_cli_args_test_selection = [
-  "tests/unit/kernel",
-  "tests/unit/execution",
+  "tests/unit/contracts/test_outcomes.py",
+  "tests/unit/contracts/test_tools.py",
   "tests/unit/evidence/test_redaction.py",
-  "tests/integration/kernel",
-  "tests/integration/execution",
-  "tests/integration/storage",
-  "tests/crash",
-  "tests/concurrency",
-  "tests/property",
+  "tests/unit/temporal",
 ]
 mutate_only_covered_lines = true
 timeout_multiplier = 4.0
@@ -176,15 +168,19 @@ format-check = "ruff format --check src tests examples scripts"
 typecheck = "mypy --strict src tests examples"
 typecheck-release = { cmd = "mypy --strict --explicit-package-bases scripts/measure_release.py scripts/release_contract.py scripts/release_runner.py scripts/quality_proof.py", env = { MYPYPATH = "src" } }
 complexity = "xenon --max-absolute A --max-modules A --max-average A src examples scripts/measure_release.py scripts/release_contract.py scripts/release_runner.py scripts/quality_proof.py"
-test = "pytest -m 'not live_model and not network' --cov=src/agentic_saga --cov-branch --cov-fail-under=90"
+test = "pytest -m 'not live_model and not network and not temporal' --cov=src/agentic_saga --cov-branch --cov-fail-under=90"
+test-temporal = "pytest -m temporal --force-enable-socket --cov=src/agentic_saga --cov-branch --cov-append"
 core-coverage = "python -m scripts.release_runner --check-python-coverage .coverage.json"
 release-script-test = { cmd = "pytest -o addopts='' --strict-config --strict-markers --disable-socket --allow-unix-socket tests/test_measure_release.py tests/test_release_measurement_contract.py --cov=scripts.measure_release --cov=scripts.release_contract --cov=scripts.release_runner --cov=scripts.quality_proof --cov-branch --cov-report=json:.coverage-release-scripts.json --cov-fail-under=90", env = { COVERAGE_FILE = ".coverage-release-scripts" } }
 release-script-coverage = "python -m scripts.release_runner --check-release-coverage .coverage-release-scripts.json"
 test-network = "pytest -m 'network' --force-enable-socket"
-mutation = "python scripts/run_kernel_mutation_gate.py"
-gate = ["lint-check", "format-check", "typecheck", "typecheck-release", "complexity", "test", "core-coverage", "release-script-test", "release-script-coverage"]
+mutation = "python scripts/run_mutation_gate.py"
+gate = ["lint-check", "format-check", "typecheck", "typecheck-release", "complexity", "test", "test-temporal", "core-coverage", "release-script-test", "release-script-coverage"]
 artifacts = "bash scripts/build_release_artifacts.sh dist/release"
 release-candidate = "bash scripts/verify_release_candidate.sh dist/release"
+
+[tool.poe.env]
+COVERAGE_FILE = ".coverage-core"
 
 [tool.poe.tasks.lint]
 shell = "ruff check --fix . && ruff format ."

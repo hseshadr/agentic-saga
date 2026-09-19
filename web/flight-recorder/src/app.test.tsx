@@ -33,9 +33,9 @@ describe("App", () => {
     render(<App repository={repository} />);
 
     expect(screen.getByRole("status")).toHaveTextContent("Loading recorded evidence");
-    expect(await screen.findByText("Succeeded verified")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /compensation cannot be verified/i }));
-    expect((await screen.findAllByText("Human required")).length).toBeGreaterThan(0);
+    expect(await screen.findByText("Completed safely")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /refund cannot be verified/i }));
+    expect(await screen.findByText("Waiting for a human")).toBeInTheDocument();
     expect(fetcher).toHaveBeenCalledTimes(3);
   });
 

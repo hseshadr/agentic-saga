@@ -30,7 +30,6 @@ EXPECTED_TRACES = {
 }
 REQUIRED_SDIST_DOCUMENTS = {
     "CHANGELOG.md",
-    "docs/architecture.html",
     "docs/architecture/agentic-saga.architecture.json",
     "docs/architecture/index.html",
     "docs/flight-recorder.md",
@@ -38,6 +37,16 @@ REQUIRED_SDIST_DOCUMENTS = {
 }
 _MARKDOWN_INLINE_LINK = re.compile(r"!?\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))")
 _MARKDOWN_REFERENCE_LINK = re.compile(r"^\s*\[[^\]]+\]:\s*(?:<([^>]+)>|([^\s]+))", re.MULTILINE)
+_RUNTIME_EXPORT_COMMAND = (
+    "uv",
+    "export",
+    "--locked",
+    "--offline",
+    "--no-dev",
+    "--no-emit-project",
+    "--format",
+    "requirements.txt",
+)
 
 
 class _HtmlLinkParser(HTMLParser):
@@ -211,6 +220,28 @@ def _direct_build(output: Path) -> tuple[Path, Path]:
     return _single_artifacts(output)
 
 
+def _build_working_tree_candidate(output: Path) -> None:
+    """Isolate installed-wheel checks from the separately tested exact-commit builder."""
+    output.mkdir(parents=True)
+    requirements = output / "runtime-requirements.txt"
+    _export_runtime_requirements(requirements)
+    wheel, sdist = _direct_build(output)
+    (output / "SOURCE_COMMIT").write_text(f"{_head_commit()}\n")
+    _write_candidate_manifest(output, (wheel, sdist, requirements))
+    _build_runtime_wheelhouse(output)
+
+
+def _export_runtime_requirements(requirements: Path) -> None:
+    command = [*_RUNTIME_EXPORT_COMMAND, "-o", str(requirements)]
+    result = _run_process(command, ROOT, os.environ)
+    assert result.returncode == 0, result.stderr
+
+
+def _write_candidate_manifest(output: Path, artifacts: tuple[Path, ...]) -> None:
+    rows = (f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n" for path in artifacts)
+    (output / "SHA256SUMS").write_text("".join(rows))
+
+
 def _package_files(root: Path) -> dict[str, bytes]:
     return {
         path.relative_to(root).as_posix(): path.read_bytes()
@@ -331,7 +362,6 @@ def test_build_configuration_includes_trust_files() -> None:
     assert '"/THIRD_PARTY_NOTICES.md"' in pyproject
     assert '"/CHANGELOG.md"' in pyproject
     assert '"/docs/operations.md"' in pyproject
-    assert '"/docs/architecture.html"' in pyproject
     assert '"/docs/architecture"' in pyproject
     assert '"/docs/flight-recorder.md"' in pyproject
 
@@ -632,7 +662,7 @@ def test_should_reject_direct_and_ancestor_symlink_release_paths(tmp_path: Path)
         direct, nested = _release_path_links(output, tmp_path)
 
         # When either release script receives either symlinked path.
-        for script in (RUNTIME_WHEELHOUSE_SCRIPT, VERIFY_SCRIPT):
+        for script in (BUILD_SCRIPT, RUNTIME_WHEELHOUSE_SCRIPT, VERIFY_SCRIPT):
             for unsafe_path in (direct, nested):
                 result = _run_script(script, unsafe_path)
 
@@ -649,7 +679,7 @@ def test_should_reuse_valid_artifacts_without_invoking_uv_build(tmp_path: Path) 
     # Given a complete valid artifact set and a uv wrapper that blocks builds.
     output = _dist_output(tmp_path, "reuse-without-build")
     try:
-        _build(output)
+        _build_working_tree_candidate(output)
         blocking_bin = _build_blocking_uv(tmp_path)
 
         # When candidate verification receives the existing artifact set.
@@ -665,10 +695,10 @@ def test_should_reuse_valid_artifacts_without_invoking_uv_build(tmp_path: Path) 
         shutil.rmtree(output, ignore_errors=True)
 
 
-def test_verify_accepts_intact_committed_artifacts_offline(tmp_path: Path) -> None:
+def test_verify_accepts_intact_working_tree_artifacts_offline(tmp_path: Path) -> None:
     output = _dist_output(tmp_path, "intact")
     try:
-        _build(output)
+        _build_working_tree_candidate(output)
         result = _run_script(
             VERIFY_SCRIPT,
             output,
@@ -721,7 +751,7 @@ def test_verify_rejects_mismatched_recorded_commit_without_rebuilding(tmp_path: 
 def test_verify_installs_cli_with_network_disabled(tmp_path: Path) -> None:
     output = _dist_output(tmp_path, "verify")
     try:
-        _build(output)
+        _build_working_tree_candidate(output)
         result = _run_script(
             VERIFY_SCRIPT,
             output,

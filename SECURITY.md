@@ -1,89 +1,119 @@
 # Security policy
 
-TL;DR: v0.1 protects typed Saga authority and local evidence under a cooperative-host,
-single-host contract. Treat model/provider/persisted input as untrusted data, isolate hostile code
-outside the process, and report suspected vulnerabilities privately.
+TL;DR: Agentic Saga keeps orchestration deterministic, but Temporal records Workflow and Activity
+payloads durably. The default contracts are for public-safe data. Never put credentials or private
+customer data into them. A production system that must carry private payloads needs client-side
+payload encryption backed by its KMS, tightly scoped Temporal Namespace access, and application
+authentication for every human action.
 
 ## Supported version
 
 Security support covers the `0.1.x` line.
 
-## Reporting a vulnerability
+## Report a vulnerability
 
-Please report suspected vulnerabilities privately to
-[harish.seshadri@gmail.com](mailto:harish.seshadri@gmail.com). Do not open a public vulnerability issue;
-private reporting gives us an opportunity to investigate and coordinate a fix before details are
-disclosed.
+Email [harish.seshadri@gmail.com](mailto:harish.seshadri@gmail.com). Do not open a public issue for
+a suspected vulnerability. We aim to acknowledge a report within 72 hours.
 
-We will aim to acknowledge a report within 72 hours. Include enough detail to reproduce the issue,
-the affected version or commit, and relevant logs with secrets and personal data removed. Do not
-send live credentials, private prompts, raw receipts, or unredacted provider data.
+Include the affected version or commit, reproduction steps, and sanitized logs. Never send an API
+key, access token, raw prompt, private receipt, or unredacted customer payload.
 
-## Scope and limitations
+## Security boundary
 
-V0.1 is a single-host reference backend and loopback-only read-only viewer. It does not claim
-universal exactly-once delivery, atomic cross-service commit, high availability, multi-host writer
-safety, arbitrary-tool safety, or containment of hostile installed Python/native code. The
-documented guarantees apply only to implemented typed interfaces and their stated storage,
-filesystem, adapter, provider-idempotency, and cooperative-code assumptions.
+Agentic Saga provides typed orchestration rules on top of Temporal. It does not sandbox installed
+Python code, make an external API transactional, or turn at-least-once Activity execution into
+universal exactly-once delivery.
 
-All generic JSON accepted by core contracts is strict and capped at depth 16, 4,096 nodes, 256
-items in any container, 16 KiB per UTF-8 string, and 64 KiB encoded. These are ingress bounds, not a
-database quota; applications should impose smaller domain/provider limits and monitor durable
-storage.
+Treat agent decisions, provider responses, Workflow history, human-resolution requests, manifest
+YAML, trace JSON, CLI arguments, and loopback HTTP requests as untrusted. Application Activities,
+tool adapters, and agent drivers run with the Worker's process authority. Isolate hostile or
+third-party code in a separate process, container, account, or service.
 
-### Data classification and redaction
+## Public-safe payload contract
 
-Each exact `SagaDefinition` owns one immutable `RedactionPolicy`. Composition carries that same
-policy through policy constraints, observations, read/effect/reconciliation outcomes, durable
-public evidence, and historical trace export. The replacement marker is always `[REDACTED]`.
+Temporal Event History can contain Workflow inputs, Activity inputs and results, failure details,
+and Update arguments. Search Attributes and Memos have their own visibility paths. Assume all of
+them are durable records.
 
-The built-in policy detects credential-shaped keys and selected payment secrets. It is a minimum
-floor, not a general personal-data classifier. Before accepting real data, the application must add
-every ordinary PII key it allows—such as names, email addresses, postal addresses, phone numbers,
-and account identifiers—to `sensitive_keys`. An unlisted ordinary field is treated as public. The
-optional `saga.yaml` is public authoring context and uses the built-in credential checks before a
-`SagaDefinition` exists; never put PII, credentials, receipts, or private provider data in it.
+The built-in `connect_client` helper and Pydantic data converter are for public-safe payloads:
 
-### SQLite and local files
+- use opaque business identifiers instead of names, emails, addresses, or account numbers;
+- store references to secrets and documents, not the secret or document itself;
+- resolve provider credentials inside Activities from a secret manager;
+- reduce provider receipts to the minimum fields needed for reconciliation or compensation;
+- turn raw exceptions into bounded, typed, non-sensitive failures before they leave an Activity;
+- never put secrets or sensitive data in Search Attributes; and
+- apply the same minimization to logs, traces, Queries, and the Flight Recorder.
 
-`SQLiteKernelStore` is POSIX-only. Its immediate parent must exist, be owned by the effective user,
-and have no group/world write bits. Database, `-wal`/`-shm`, temporary backup, final backup, and
-restored leaves are regular current-user files hardened to mode `0600`; no-follow and identity
-checks reject supported symlink/substitution races. Backup and restore accept fresh destinations
-only and never overwrite an existing path.
+Redaction is defense in depth for projections. It does not erase values already written to
+Temporal history.
 
-This is a cooperative-host boundary. It assumes a truthful local filesystem with SQLite locking,
-atomic publication, flush, and sync semantics. ACLs, root, or a hostile process with the same UID
-can exceed mode-bit protection; network filesystems and shared multi-host volumes are unsupported.
-The operator owns directory permissions, encryption at rest, quotas, backup retention, and secure
-deletion of the database plus every sidecar and copy.
+## Private production payloads
 
-### Loopback Flight Recorder
+If private data must cross the Temporal boundary, the application must construct its Client and
+Workers with the same client-side encrypted Data Converter and Payload Codec. Manage encryption
+keys in an external KMS, rotate them through an explicit policy, and keep old key versions
+available for every retained history that still needs replay or decryption. Temporal's default
+converter does not encrypt application payloads. See the official
+[Python data-handling guide](https://docs.temporal.io/develop/python/data-handling).
 
-The recorder is not an authenticated multi-user service. It binds only `127.0.0.1` and serves only
-`GET` and `HEAD`. Every request must use the exact `Host: 127.0.0.1:<actual-port>`. `Origin` may be
-absent; when present, it must equal that exact loopback origin. `Sec-Fetch-Site` may also be absent;
-when present, it must be `same-origin` or `none`. The server allows at most eight active handlers,
-gives accepted clients one second to finish request headers, and rejects paths over 240 characters,
-more than 40 headers, more than 16 KiB of header name/value bytes, and files over 8 MiB. It rejects
-symlinked content and unknown MIME types.
+Encryption is not an access-control substitute. Production also requires:
 
-These controls limit accidental exposure and resource abuse inside a cooperative local account;
-same-UID/root access remains outside the boundary. Trace digests detect corruption, not an attacker
-who can replace both trace and digest. The exporter and its exact Saga redaction policy are the
-privacy boundary; the browser is not a secret scrubber.
+- a dedicated Temporal Namespace with least-privilege roles for Workers, Clients, operators, and
+  visibility users;
+- namespace-scoped API keys or mTLS identities, stored outside Workflow history;
+- retention matched to deletion and legal obligations;
+- audit-log monitoring and credential rotation; and
+- a separately secured Codec Server only if authorized operators need decrypted payloads in the
+  Temporal Web UI.
 
-### Model-provider spend
+Temporal documents Namespace isolation, scoped authentication, roles, and client-side encryption
+in its [Cloud security model](https://docs.temporal.io/evaluate/cloud/security). Self-hosted
+operators must provide equivalent authentication, authorization, encryption, audit, backup, and
+network controls.
 
-The kernel records deterministic turn, tool-call, output-token, and agent-call-time allocations.
-It does not meter money, input tokens, actual provider usage, or end-to-end elapsed time and cannot
-enforce a provider spend cap. The maintained OpenRouter adapter uses the per-turn token allocation
-as a maximum-output setting and the elapsed allocation as the call deadline. Operators must set
-provider-account spend and rate limits before an explicitly authorized live evaluation. Ordinary
-tests, demos, and release measurement make no live model call.
+## Model and OpenRouter boundary
 
-Read the [operations and release contract](docs/operations.md) for the complete threat model,
-privacy and egress inventory, accepted residual risks, resource bounds, recovery procedure, and
-operator responsibilities. Read the [kernel safety contract](docs/kernel-safety-contract.md) for
-the exact claim-to-test evidence.
+Ordinary tests and the recorded demo make no model call. A live model path is opt-in.
+
+```bash
+cp .env.example .env
+chmod 600 .env
+# Edit .env and set OPENROUTER_API_KEY to your own key.
+```
+
+`.env` is ignored by Git; `.env.example` contains no secret. Never put `OPENROUTER_API_KEY` in a
+manifest, Workflow input, Activity argument, trace, log, or test fixture. The library does not
+enforce provider spend. Configure provider-side budget and rate limits before a live run.
+
+## Activity delivery and external effects
+
+Temporal may retry an Activity after the provider completed an effect but its response was lost.
+Every side-effecting tool needs a stable idempotency key, a typed receipt, reconciliation for an
+unknown outcome, bounded timeouts/retries, and retryable versus non-retryable failure classes.
+
+Do not blindly retry or compensate an unknown effect. Reconcile first. If the provider cannot prove
+what happened, pause and require an authenticated human decision.
+
+## Human actions
+
+A Workflow Query is read-only. A human decision enters through a typed, validated Workflow Update.
+The surrounding application must authenticate the person, authorize access to that Saga, bind the
+decision to the current event sequence and operation, and reject stale or replayed decisions.
+Temporal messaging is not the application's identity provider.
+
+## Workflow safety
+
+Workflow code must remain deterministic. Network calls, filesystem access, model calls, secret
+lookups, and provider I/O belong in Activities. Replay representative production histories before
+deploying changed Workflow code, and use a compatible Worker/versioning strategy for retained
+executions.
+
+## Local Flight Recorder
+
+The Flight Recorder is a loopback-only, read-only viewer, not an authenticated multi-user service.
+It binds to `127.0.0.1` and serves packaged, redacted evidence. Same-user or root access is outside
+its boundary. Exported traces persist until the operator deletes every copy.
+
+Read the [operations contract](docs/operations.md) and
+[Temporal safety contract](docs/temporal-safety-contract.md) before production use.

@@ -14,6 +14,7 @@ export interface ReplayActions {
   readonly previous: () => void;
   readonly restart: () => void;
   readonly seek: (cursor: number) => void;
+  readonly watch: () => void;
 }
 
 export interface ReplayOptions {
@@ -50,7 +51,7 @@ export function useReplay(options: ReplayOptions): {
     setCursor(Math.max(0, Math.min(Math.trunc(value), end)));
   };
   const state = { atEnd: cursor >= end, atStart: cursor === 0, cursor, isPlaying };
-  const actions = replayActions(cursor, end, reducedMotion, seek, setIsPlaying);
+  const actions = replayActions(cursor, end, reducedMotion, seek, setCursor, setIsPlaying);
   return { actions, state };
 }
 
@@ -64,6 +65,7 @@ function replayActions(
   end: number,
   reducedMotion: boolean,
   seek: (cursor: number) => void,
+  setCursor: (cursor: number) => void,
   setPlaying: (playing: boolean) => void,
 ): ReplayActions {
   return {
@@ -75,5 +77,9 @@ function replayActions(
     previous: () => seek(cursor - 1),
     restart: () => seek(0),
     seek,
+    watch: () => {
+      setCursor(0);
+      setPlaying(!reducedMotion && end > 0);
+    },
   };
 }

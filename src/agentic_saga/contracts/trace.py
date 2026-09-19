@@ -37,7 +37,6 @@ _TERMINAL = frozenset(
         SagaStatus.SUCCEEDED_VERIFIED,
         SagaStatus.COMPENSATED_VERIFIED,
         SagaStatus.ABORTED_CLEAN,
-        SagaStatus.RESOLVED_WITH_EXCEPTION,
     }
 )
 
@@ -46,8 +45,7 @@ class TraceAuthority(StrEnum):
     """Identify the authority responsible for each exported trace event."""
 
     AGENT = "agent"
-    POLICY = "policy"
-    KERNEL = "kernel"
+    WORKFLOW = "workflow"
     EFFECT = "effect"
     COMPENSATION = "compensation"
     PROOF = "proof"

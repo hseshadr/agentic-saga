@@ -87,8 +87,8 @@ class _Autonomy(_ManifestModel):
 
 
 class _Budgets(_ManifestModel):
-    turn_limit: int = Field(strict=True, ge=1, le=10_000)
-    tool_call_limit: int = Field(strict=True, ge=1, le=10_000)
+    turn_limit: int = Field(strict=True, ge=1, le=100)
+    tool_call_limit: int = Field(strict=True, ge=1, le=100)
     elapsed_ms_limit: int = Field(strict=True, ge=1, le=86_400_000)
     token_limit: int = Field(strict=True, ge=1, le=100_000_000)
 

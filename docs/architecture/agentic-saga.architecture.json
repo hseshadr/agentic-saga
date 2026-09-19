@@ -2,175 +2,186 @@
   "schema_version": 1,
   "diagram_type": "architecture",
   "meta": {
-    "title": "Agentic Saga — Smart Orchestration, Deterministic Safety",
+    "title": "Agentic Saga — Temporal Safety Around Smart Decisions",
     "quality_profile": "showcase",
-    "viewBox": [1100, 520],
+    "viewBox": [1050, 570],
     "views": [
       {
-        "id": "agent-loop",
-        "label": "Agent decision loop",
-        "focus": ["goal", "deep-agent", "jev", "jev-providers", "proposal-boundary", "kernel", "policy"],
-        "note": "Pydantic Deep via OpenRouter constructs a proposal; Jev selects among public candidates. Deterministic code decides what is legal."
+        "id": "decision-loop",
+        "label": "Bounded agent decision",
+        "focus": ["workflow", "agent-activity", "decision-adapters", "model-providers"],
+        "note": "The model sees public evidence and eligible forward tools; its result is only a typed proposal."
       },
       {
-        "id": "durable-effects",
-        "label": "Durable effects",
-        "focus": ["kernel", "ledger", "dispatcher", "business-tools"],
-        "note": "Every external effect is recorded before execution, then reconciled from durable evidence."
+        "id": "durable-effect",
+        "label": "Durable business effect",
+        "focus": ["client", "temporal", "workflow", "business-activity", "business-systems"],
+        "note": "Temporal records progress while stable operation identity makes at-least-once delivery recoverable."
       },
       {
-        "id": "recovery",
-        "label": "Compensation and escalation",
-        "focus": ["kernel", "compensation", "dispatcher", "human"],
-        "note": "The kernel derives rollback order; humans enter only when autonomous proof is insufficient."
+        "id": "compensation",
+        "label": "Compensation and human stop",
+        "focus": ["workflow", "business-activity", "business-systems", "human-verifier", "operator-system"],
+        "note": "The Workflow derives reverse compensation; a verified human enters only when recovery is unresolved."
       },
       {
-        "id": "proof",
-        "label": "Release evidence",
-        "focus": ["deep-agent", "jev", "jev-providers", "proposal-boundary", "kernel", "ledger"],
-        "note": "Redacted ledger traces prove the selected tool surface, effects, reconciliation, and terminal result."
+        "id": "explain",
+        "label": "Redacted explanation",
+        "focus": ["workflow", "trace-projector", "flight-recorder"],
+        "note": "A strict projector turns public Workflow state into a read-only animated trace."
       }
     ]
   },
   "components": [
     {
-      "id": "goal",
+      "id": "client",
       "type": "external",
-      "label": "Goal + Saga Context",
-      "sublabel": "domain-neutral YAML / public evidence",
-      "pos": [20, 100],
-      "size": [170, 64]
+      "label": "Application Client",
+      "sublabel": "goal · public Saga context",
+      "pos": [15, 260],
+      "size": [145, 66]
     },
     {
-      "id": "deep-agent",
+      "id": "temporal",
+      "type": "cloud",
+      "label": "Temporal Service",
+      "sublabel": "history · retries · timers · tasks",
+      "tag": "durable engine",
+      "pos": [210, 260],
+      "size": [155, 66]
+    },
+    {
+      "id": "workflow",
       "type": "backend",
-      "label": "Pydantic Deep Adapter",
-      "sublabel": "generative proposal · OpenRouter",
-      "pos": [230, 30],
-      "size": [180, 64]
+      "label": "Deterministic Workflow",
+      "sublabel": "eligibility · budgets · proof · rollback",
+      "tag": "transaction authority",
+      "pos": [415, 260],
+      "size": [175, 66]
     },
     {
-      "id": "jev",
+      "id": "agent-activity",
       "type": "backend",
-      "label": "Jev Decision Adapter",
-      "sublabel": "local validation · bounded choice",
-      "pos": [230, 170],
-      "size": [180, 64]
+      "label": "Agent Decision Activity",
+      "sublabel": "bounded public observation",
+      "pos": [415, 55],
+      "size": [175, 66]
     },
     {
-      "id": "jev-providers",
-      "type": "external",
-      "label": "Jev Provider Routes",
-      "sublabel": "TypeSafe direct · OpenRouter α",
-      "tag": "public egress",
-      "pos": [20, 235],
-      "size": [170, 64]
-    },
-    {
-      "id": "proposal-boundary",
+      "id": "decision-adapters",
       "type": "security",
-      "label": "Proposal Boundary",
-      "sublabel": "allowlist · identity · freshness",
-      "tag": "no direct effects",
-      "pos": [450, 100],
-      "size": [180, 64]
+      "label": "Decision Adapters",
+      "sublabel": "Pydantic Deep · Jev",
+      "tag": "proposal only",
+      "pos": [645, 55],
+      "size": [165, 66]
     },
     {
-      "id": "kernel",
+      "id": "model-providers",
+      "type": "external",
+      "label": "Model Providers",
+      "sublabel": "OpenRouter · TypeSafe AI",
+      "tag": "optional egress",
+      "pos": [860, 55],
+      "size": [155, 66]
+    },
+    {
+      "id": "business-activity",
       "type": "backend",
-      "label": "Deterministic Saga Kernel",
-      "sublabel": "state · budgets · idempotency · leases",
-      "tag": "sole authority",
-      "pos": [670, 100],
-      "size": [190, 64]
+      "label": "Business Activity Bridge",
+      "sublabel": "validate · execute · reconcile",
+      "pos": [645, 260],
+      "size": [165, 66]
     },
     {
-      "id": "policy",
+      "id": "business-systems",
+      "type": "external",
+      "label": "Business Systems",
+      "sublabel": "payments · inventory · any domain",
+      "tag": "idempotent provider",
+      "pos": [860, 260],
+      "size": [155, 66]
+    },
+    {
+      "id": "human-verifier",
       "type": "security",
-      "label": "Policy + Invariant Gates",
-      "sublabel": "eligible tools · terminal proof",
-      "pos": [230, 350],
-      "size": [180, 64]
+      "label": "Human Verification Activity",
+      "sublabel": "authenticate · authorize · bind",
+      "pos": [415, 465],
+      "size": [175, 66]
     },
     {
-      "id": "ledger",
-      "type": "database",
-      "label": "Append-only Ledger",
-      "sublabel": "SQLite events · outbox · projections",
-      "tag": "intent before effect",
-      "pos": [900, 100],
-      "size": [170, 64]
-    },
-    {
-      "id": "dispatcher",
-      "type": "backend",
-      "label": "Dispatcher + Reconciler",
-      "sublabel": "bounded delivery · unknown outcomes",
-      "pos": [670, 350],
-      "size": [190, 64]
-    },
-    {
-      "id": "business-tools",
+      "id": "operator-system",
       "type": "external",
-      "label": "Business Tool Adapters",
-      "sublabel": "payments · tickets · any domain",
-      "pos": [900, 350],
-      "size": [170, 64]
+      "label": "Operator Identity",
+      "sublabel": "opaque authorization reference",
+      "pos": [210, 465],
+      "size": [155, 66]
     },
     {
-      "id": "compensation",
+      "id": "trace-projector",
       "type": "backend",
-      "label": "Compensation Planner",
-      "sublabel": "kernel-derived reverse dependency order",
-      "pos": [450, 350],
-      "size": [180, 64]
+      "label": "Trace Projector",
+      "sublabel": "strict public RunTrace",
+      "pos": [645, 465],
+      "size": [165, 66]
     },
     {
-      "id": "human",
-      "type": "external",
-      "label": "Human Resolution",
-      "sublabel": "only unresolved authority or evidence",
-      "pos": [20, 350],
-      "size": [170, 64]
+      "id": "flight-recorder",
+      "type": "frontend",
+      "label": "Flight Recorder",
+      "sublabel": "animated read-only evidence",
+      "pos": [860, 465],
+      "size": [155, 66]
     }
   ],
   "boundaries": [
     {
       "kind": "security-group",
-      "label": "Agentic Saga application process",
-      "wraps": ["deep-agent", "jev", "proposal-boundary", "kernel", "policy", "ledger", "dispatcher", "compensation"]
+      "label": "Agentic Saga Worker process",
+      "wraps": ["workflow", "agent-activity", "decision-adapters", "business-activity", "human-verifier", "trace-projector"]
     }
   ],
   "connections": [
-    {"id": "goal-to-agent", "from": "goal", "to": "deep-agent", "label": "public context + schemas", "variant": "emphasis", "labelAt": [100, 26]},
-    {"id": "goal-to-jev", "from": "goal", "to": "jev", "label": "public state + complete candidates", "variant": "emphasis", "labelAt": [305, 155]},
-    {"id": "jev-to-providers", "from": "jev", "to": "jev-providers", "label": "TLS request · bounded result", "variant": "dashed", "labelAt": [118, 218]},
-    {"id": "agent-to-proposal", "from": "deep-agent", "to": "proposal-boundary", "label": "constructed native proposal", "variant": "emphasis", "labelAt": [560, 26]},
-    {"id": "jev-to-proposal", "from": "jev", "to": "proposal-boundary", "label": "selected candidate only", "variant": "emphasis", "labelAt": [430, 248]},
-    {"id": "proposal-to-kernel", "from": "proposal-boundary", "to": "kernel", "label": "typed intent only", "variant": "security", "labelAt": [650, 96]},
-    {"id": "kernel-to-policy", "from": "kernel", "to": "policy", "label": "authorize + prove", "variant": "security", "fromSide": "left", "toSide": "right", "via": [[650, 132], [650, 270], [430, 270], [430, 382]], "labelAt": [540, 266]},
-    {"id": "kernel-to-ledger", "from": "kernel", "to": "ledger", "label": "atomic append", "variant": "emphasis", "labelAt": [880, 96]},
-    {"id": "ledger-to-dispatcher", "from": "ledger", "to": "dispatcher", "label": "durable pending intent", "labelAt": [880, 270]},
-    {"id": "dispatcher-to-tools", "from": "dispatcher", "to": "business-tools", "label": "idempotent execute + receipt", "labelAt": [880, 428]},
-    {"id": "kernel-to-compensation", "from": "kernel", "to": "compensation", "label": "derive rollback order", "labelAt": [650, 290]},
-    {"id": "compensation-to-dispatcher", "from": "compensation", "to": "dispatcher", "label": "compensation intent", "labelAt": [650, 428]},
-    {"id": "policy-to-human", "from": "policy", "to": "human", "label": "unresolved evidence / authority", "variant": "dashed", "labelAt": [210, 428]}
+    {"id": "client-to-temporal", "from": "client", "to": "temporal", "label": "Start · Query · Update", "variant": "emphasis", "labelDy": -27},
+    {"id": "temporal-to-workflow", "from": "temporal", "to": "workflow", "label": "tasks + replay", "variant": "emphasis", "labelDy": 57},
+    {"id": "workflow-to-agent", "from": "workflow", "to": "agent-activity", "label": "eligible tools + evidence", "variant": "dashed"},
+    {"id": "agent-to-adapters", "from": "agent-activity", "to": "decision-adapters", "label": "one bounded choice", "variant": "security", "labelDy": 57},
+    {"id": "adapters-to-models", "from": "decision-adapters", "to": "model-providers", "label": "typed HTTPS request", "variant": "dashed", "labelDy": -27},
+    {"id": "workflow-to-business", "from": "workflow", "to": "business-activity", "label": "typed Activity request", "variant": "emphasis", "labelDy": -20},
+    {"id": "business-to-systems", "from": "business-activity", "to": "business-systems", "label": "stable ID + command", "variant": "emphasis", "labelDy": 57},
+    {"id": "workflow-to-human", "from": "workflow", "to": "human-verifier", "label": "unresolved compensation", "variant": "security", "labelDy": 24},
+    {"id": "human-to-operator", "from": "human-verifier", "to": "operator-system", "label": "verify authorization", "variant": "security", "labelDy": -27},
+    {"id": "workflow-to-trace", "from": "workflow", "to": "trace-projector", "label": "public state", "variant": "dashed"},
+    {"id": "trace-to-recorder", "from": "trace-projector", "to": "flight-recorder", "label": "redacted trace", "variant": "dashed", "labelDy": 57}
   ],
   "cards": [
     {
       "dot": "violet",
       "title": "Agent decides",
-      "items": ["Pydantic Deep constructs one eligible native proposal", "Jev selects one host-built complete candidate", "Neither adapter receives direct effect authority"]
+      "items": [
+        "Chooses one currently eligible forward tool",
+        "May finish only when verified success is advertised",
+        "Never executes, compensates, or self-escalates"
+      ]
     },
     {
       "dot": "emerald",
-      "title": "Kernel guarantees",
-      "items": ["Records intent before every external effect", "Owns idempotency, leases, policy, and terminal proof", "Derives compensation order from confirmed obligations"]
+      "title": "Temporal guarantees",
+      "items": [
+        "Durable history, retries, timers, Query, and Update",
+        "Deterministic prerequisites, budgets, proof, and rollback",
+        "Automatic reverse compensation before human review"
+      ]
     },
     {
       "dot": "amber",
-      "title": "Failure is explicit",
-      "items": ["Unknown outcomes reconcile before another decision", "Rejected terminal targets require new evidence", "Human escalation is a proven final fallback"]
+      "title": "Provider contract",
+      "items": [
+        "At-least-once Activities use stable operation identity",
+        "Lost responses reconcile before progress",
+        "Private history requires a KMS-backed payload codec"
+      ]
     }
   ]
 }

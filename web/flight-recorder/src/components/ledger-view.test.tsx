@@ -25,9 +25,16 @@ describe("LedgerView", () => {
     await user.selectOptions(screen.getByLabelText("State"), "compensating");
     await user.type(screen.getByLabelText("Search recorded fields"), "refund_payment");
     const ledger = screen.getByRole("table", { name: "Recorded ledger" });
-    expect(within(ledger).getAllByRole("row")).toHaveLength(4);
-    await user.click(within(ledger).getByRole("button", { name: "Inspect event 28" }));
-    expect(select).toHaveBeenCalledWith(events()[27]?.event.event_id);
+    const refund = events().find(
+      ({ event }) =>
+        event.event_type === "compensation_outcome_recorded" &&
+        event.tool_name === "refund_payment",
+    );
+    if (!refund) throw new Error("fixture must contain a refund outcome");
+    await user.click(
+      within(ledger).getByRole("button", { name: `Inspect event ${refund.event.saga_seq}` }),
+    );
+    expect(select).toHaveBeenCalledWith(refund.event.event_id);
   });
 
   it("paginates a large trace without rendering an unbounded ledger", async () => {

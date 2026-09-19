@@ -15,6 +15,9 @@ export function ReplayControls(props: ReplayControlsProps) {
   useReplayKeys(actions, state.isPlaying);
   return (
     <section aria-label="Replay controls" className={styles.replayControls}>
+      <button disabled={reducedMotion} onClick={actions.watch} type="button">
+        Watch from start
+      </button>
       <button disabled={state.atStart} onClick={actions.previous} type="button">
         Previous event
       </button>

@@ -6,9 +6,11 @@ from typing import cast
 import pytest
 from pydantic import ValidationError
 
+import agentic_saga.agents as agents_api
+import agentic_saga.agents.proposals as proposal_contracts
 from agentic_saga.agents.choice import ChoiceAgentDriver, DecisionSelection, ProposalCandidate
 from agentic_saga.agents.deepagents import AgentFailureCategory, AgentPlanningError
-from agentic_saga.contracts.actions import BeginCompensation, Finish, ToolCall
+from agentic_saga.contracts.actions import Finish, ToolCall
 from agentic_saga.contracts.runtime import SagaObservation, ToolDescriptor
 from tests.unit.agents.test_deepagents import _context, _descriptor, _observation
 
@@ -16,6 +18,13 @@ type CandidateFactory = Callable[
     [SagaObservation, Sequence[ToolDescriptor]],
     Awaitable[Sequence[ProposalCandidate]],
 ]
+
+
+def test_agent_controls_are_not_public_proposal_intents() -> None:
+    assert not hasattr(proposal_contracts, "BeginCompensationIntent")
+    assert not hasattr(proposal_contracts, "EscalateIntent")
+    assert "BeginCompensationIntent" not in agents_api.__all__
+    assert "EscalateIntent" not in agents_api.__all__
 
 
 def _candidate(
@@ -120,10 +129,10 @@ async def test_should_send_only_bounded_public_state_and_select_one_candidate() 
         "choice_00000002",
         proposal={
             "kind": "finish",
-            "target_status": "aborted_clean",
-            "rationale": "No external obligation exists.",
+            "target_status": "succeeded_verified",
+            "rationale": "Required evidence proves success.",
         },
-        criteria="Abort cleanly because no effect exists.",
+        criteria="Finish because required evidence proves success.",
     )
 
     async def choose(state: dict[str, object], criteria: dict[str, object]) -> DecisionSelection:
@@ -144,7 +153,7 @@ async def test_should_send_only_bounded_public_state_and_select_one_candidate() 
     proposal = await driver.next_action(_observation(), (_descriptor("inspect"),))
 
     assert isinstance(proposal, Finish)
-    assert proposal.target_status == "aborted_clean"
+    assert proposal.target_status == "succeeded_verified"
     assert set(seen) == {"state", "criteria"}
     criteria = cast(Mapping[str, object], seen["criteria"])
     assert set(criteria) == {"choice_00000001", "choice_00000002"}
@@ -201,50 +210,26 @@ async def test_should_reject_unavailable_tool_and_control_candidates() -> None:
         "choice_00000002",
         proposal={
             "kind": "finish",
-            "target_status": "compensated_verified",
+            "target_status": "succeeded_verified",
             "rationale": "Claim an unavailable terminal state.",
         },
     )
 
-    for candidate in (unavailable, finish):
+    for candidate, observation in (
+        (unavailable, _observation()),
+        (finish, _observation(False)),
+    ):
         driver = ChoiceAgentDriver(
             context=_context("inspect"),
             candidate_factory=_factory(candidate),
             decision_call=_never_choose,
         )
         with pytest.raises(AgentPlanningError) as captured:
-            await driver.next_action(_observation(), (_descriptor("inspect"),))
+            await driver.next_action(observation, (_descriptor("inspect"),))
         assert captured.value.category is AgentFailureCategory.INVALID_RESPONSE
 
 
 @pytest.mark.asyncio
-async def test_should_accept_current_compensation_control() -> None:
-    observation = _observation().model_copy(
-        update={
-            "proposal_controls": _observation().proposal_controls.model_copy(
-                update={"begin_compensation": True}
-            )
-        }
-    )
-    candidate = _candidate(
-        proposal={
-            "kind": "begin_compensation",
-            "reason_code": "forward_goal_unreachable",
-            "rationale": "A confirmed effect must now be reversed.",
-        }
-    )
-    driver = ChoiceAgentDriver(
-        context=_context("inspect"),
-        candidate_factory=_factory(candidate),
-        decision_call=_never_choose,
-    )
-
-    proposal = await driver.next_action(observation, (_descriptor("inspect"),))
-
-    assert isinstance(proposal, BeginCompensation)
-    assert proposal.based_on_saga_seq == observation.saga_seq
-
-
 @pytest.mark.asyncio
 async def test_should_reject_private_candidate_material_before_provider_call() -> None:
     private = "Bearer " + "private-provider-value"

@@ -13,6 +13,7 @@ import { OutcomeHeader } from "./outcome-header";
 import { ProofView } from "./proof-view";
 import styles from "./recorder-workbench.module.css";
 import { ReplayControls } from "./replay-controls";
+import { SagaFlow } from "./saga-flow";
 import { StoryView } from "./story-view";
 import { type RecorderView, ViewTabs } from "./view-tabs";
 
@@ -66,10 +67,14 @@ export function RecorderWorkbench(props: RecorderWorkbenchProps) {
 
   return (
     <main className={styles.workbench}>
-      <OutcomeHeader entry={entry} projection={projection} trace={trace} />
+      <OutcomeHeader entry={entry} projection={projection} />
       <p className={styles.authorityChain}>
-        Agent proposes → Policy decides → Saga acts → Invariants prove
+        The agent chooses what to do next. Deterministic safety code decides what may run, records
+        every change, and verifies the outcome.
       </p>
+      {entry.presentation === "ecommerce" ? (
+        <SagaFlow isPlaying={replay.state.isPlaying} projection={projection} />
+      ) : null}
       <div className={styles.workspace}>
         <RunTrajectory entry={entry} index={index} onSelect={onSelectRun} />
         <section aria-label="Flight recorder workspace" className={styles.centerPanel}>
@@ -189,8 +194,8 @@ interface TrajectoryProps {
 export function RunTrajectory({ entry, index, onSelect }: TrajectoryProps) {
   return (
     <nav aria-label="Run trajectory" className={styles.trajectory}>
-      <h2>Trajectory</h2>
-      <p>Stored runs. Opening a trace never changes Saga state.</p>
+      <h2>Choose a scenario</h2>
+      <p>Compare the recorded outcomes in this catalog.</p>
       <ul>
         {index.runs.map((run) => (
           <li key={run.id}>

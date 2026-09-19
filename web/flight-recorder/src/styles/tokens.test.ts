@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { globSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -7,6 +7,9 @@ const componentCss = readFileSync(
   resolve(process.cwd(), "src/components/recorder-workbench.module.css"),
   "utf8",
 );
+const allCss = globSync("src/**/*.css")
+  .map((path) => readFileSync(resolve(process.cwd(), path), "utf8"))
+  .join("\n");
 
 function color(name: string): string {
   const match = tokenCss.match(new RegExp(`--${name}:\\s*(#[0-9a-f]{6})`));
@@ -44,7 +47,7 @@ describe("visual tokens", () => {
   });
 
   it("uses no gradients or network assets", () => {
-    expect(`${tokenCss}${componentCss}`).not.toMatch(/gradient|url\s*\(/i);
+    expect(allCss).not.toMatch(/gradient|url\s*\(/i);
   });
 
   it("keeps non-causal proof text comfortably above AA", () => {

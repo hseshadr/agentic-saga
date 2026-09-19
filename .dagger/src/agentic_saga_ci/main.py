@@ -6,10 +6,10 @@ import asyncio
 import re
 from collections.abc import Awaitable
 from dataclasses import dataclass
-from typing import Final
+from typing import Annotated, Final
 
 import dagger
-from dagger import check, dag, function, object_type
+from dagger import Ignore, check, dag, function, object_type
 
 PYTHON_IMAGES: Final = (
     (
@@ -58,6 +58,49 @@ NODE_PATHS: Final = (
 SHA256_PATTERN: Final = r"[0-9a-f]{64}"
 ARTIFACT_NAME_PATTERN: Final = r"[A-Za-z0-9_.+-]+"
 MANIFEST_ENTRY_COUNT: Final = 3
+SOURCE_IGNORE_PATTERNS: Final = [
+    ".git",
+    ".env",
+    "**/.env",
+    ".env.*",
+    "**/.env.*",
+    "!.env.example",
+    "!**/.env.example",
+    "**/.netrc",
+    "**/.npmrc",
+    "**/.pypirc",
+    "**/*.key",
+    "**/*.jks",
+    "**/*.p12",
+    "**/*.pfx",
+    "**/*.pem",
+    "**/*.tfstate",
+    "**/*.tfvars",
+    "**/*credentials*",
+    "**/*secret*",
+    ".artifacts",
+    ".dagger/.venv",
+    ".dagger/sdk",
+    ".coverage*",
+    "**/.coverage*",
+    ".hypothesis",
+    "**/.hypothesis",
+    ".mypy_cache",
+    "**/.mypy_cache",
+    ".pytest_cache",
+    "**/.pytest_cache",
+    ".ruff_cache",
+    "**/.ruff_cache",
+    "**/__pycache__",
+    "**/node_modules",
+    "**/coverage",
+    "**/test-results",
+    "*.tsbuildinfo",
+    "**/*.tsbuildinfo",
+    ".venv",
+    "dist",
+    "web/flight-recorder/dist",
+]
 
 
 @dataclass(frozen=True)
@@ -335,11 +378,11 @@ class AgenticSaga:
     @check
     async def ci(
         self,
-        source: dagger.Directory,
+        source: Annotated[dagger.Directory, Ignore(SOURCE_IGNORE_PATTERNS)],
         commit_sha: str,
         git_auth_header: dagger.Secret | None = None,
     ) -> str:
-        """Run guarded dual-runtime, frontend, and measured release gates."""
+        """Run guarded Temporal, frontend, and measured release gates."""
         verified = await _release_source(source, commit_sha, git_auth_header)
         artifacts, frontend = await _shared_outputs(verified)
         await _runtime_matrix(verified, artifacts, frontend)
@@ -349,11 +392,12 @@ class AgenticSaga:
     @function
     async def security(
         self,
-        source: dagger.Directory,
+        source: Annotated[dagger.Directory, Ignore(SOURCE_IGNORE_PATTERNS)],
         commit_sha: str,
         git_auth_header: dagger.Secret | None = None,
     ) -> str:
         """Run guarded locked Python and frontend dependency audits."""
-        await _dependency_audit(source, commit_sha, git_auth_header)
-        await _node(source).with_exec(["pnpm", "audit"]).sync()
+        verified = await _release_source(source, commit_sha, git_auth_header)
+        await _dependency_audit(verified, commit_sha, git_auth_header)
+        await _node(verified).with_exec(["pnpm", "audit"]).sync()
         return "Agentic Saga dependency audits passed"

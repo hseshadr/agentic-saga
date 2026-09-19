@@ -14,6 +14,9 @@ type RedactedJson = JsonScalar | list[RedactedJson] | dict[str, RedactedJson]
 _JSON_ADAPTER: TypeAdapter[JsonValue] = TypeAdapter(JsonValue)
 _BEARER = re.compile(r"^\s*bearer\s+\S+", re.IGNORECASE)
 _CARD = re.compile(r"^(?:\d[ -]?){12,18}\d$")
+_HIGH_CONFIDENCE_CREDENTIAL = re.compile(
+    r"(?:sk-or-v1-[A-Za-z0-9_-]{32,}|(?:AKIA|ASIA)[A-Z0-9]{16}|gh[pousr]_[A-Za-z0-9]{20,})"
+)
 _KEY_PART = re.compile(r"[A-Za-z0-9]+")
 _CAMEL_TOKEN = re.compile(r"[A-Z]+(?=[A-Z][a-z]|[0-9]|$)|[A-Z]?[a-z]+|[0-9]+")
 _SECRET_REFERENCE = re.compile(r"^[a-z][a-z0-9+.-]*://[^\s]+/v[1-9][0-9]*$")
@@ -230,7 +233,11 @@ def _redact_string(value: str, policy: RedactionPolicy) -> str:
 
 
 def _is_sensitive_string(value: str) -> bool:
-    return _BEARER.match(value) is not None or _is_card_number(value)
+    return (
+        _BEARER.match(value) is not None
+        or _HIGH_CONFIDENCE_CREDENTIAL.fullmatch(value.strip()) is not None
+        or _is_card_number(value)
+    )
 
 
 def _is_card_number(value: str) -> bool:

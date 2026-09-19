@@ -13,6 +13,7 @@ export const scenarioIndexEntrySchema = z
     name: z.string().min(1).max(120),
     summary: z.string().min(1).max(500),
     mode: z.enum(["scripted", "live"]),
+    presentation: z.enum(["ecommerce"]).optional(),
     trace_ref: safeTraceRefSchema,
     trace_sha256: digestSchema,
   })

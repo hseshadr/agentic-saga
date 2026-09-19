@@ -23,9 +23,12 @@ describe("RecorderWorkbench", () => {
   it("renders a useful signal board from real compensation evidence", () => {
     render(<RecorderWorkbench {...fixtureProps()} onSelectRun={vi.fn()} />);
 
-    expect(screen.getByRole("heading", { name: "Saga Flight Recorder" })).toBeInTheDocument();
-    expect(screen.getByText("Compensated verified")).toBeInTheDocument();
-    expect(screen.getByText("3 / 3 proofs valid")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Agentic Saga Replay" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: /one order/i })).toBeInTheDocument();
+    expect(screen.getByText("Every completed change was safely undone")).toBeVisible();
+    expect(screen.getByText("Refund payment")).toBeVisible();
+    expect(screen.getByText("Current state").parentElement).toHaveTextContent("Safely undone");
+    expect(screen.getByText("1 / 1 checks valid")).toBeInTheDocument();
     const events = screen.getByRole("list", { name: "Ledger events in causal order" });
     const signals = within(events).getAllByRole("button");
     expect(signals.slice(0, 4).map((signal) => signal.getAttribute("aria-label"))).toEqual([
@@ -35,6 +38,8 @@ describe("RecorderWorkbench", () => {
       expect.stringMatching(/^4\./),
     ]);
     expect(screen.getByRole("heading", { name: /Effect \+ repair/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Workflow guard/ })).toBeInTheDocument();
+    expect(screen.queryByText(/kernel/i)).not.toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Story" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("list", { name: "Causal story" })).toBeVisible();
   });
@@ -45,28 +50,35 @@ describe("RecorderWorkbench", () => {
 
     await user.click(screen.getByRole("button", { name: "Restart replay" }));
 
-    expect(screen.getByText("Created")).toBeVisible();
-    expect(screen.getByText("0 / 0 proofs visible")).toBeVisible();
+    expect(screen.getByText("Running")).toBeVisible();
+    expect(screen.getByText("0 / 0 checks visible")).toBeVisible();
     expect(screen.getByRole("list", { name: "Ledger events in causal order" })).toHaveTextContent(
-      "Saga created",
+      "Saga started",
     );
-    expect(screen.getByRole("list", { name: "Causal story" })).toHaveTextContent("Saga created");
+    expect(screen.getByRole("list", { name: "Causal story" })).toHaveTextContent("Saga started");
     expect(screen.queryByText("Compensated verified")).not.toBeInTheDocument();
   });
 
   it("preserves selected recorded evidence across local views", async () => {
     const user = userEvent.setup();
-    render(<RecorderWorkbench {...fixtureProps()} onSelectRun={vi.fn()} />);
-    const signal = screen.getByRole("button", { name: /^28\. Compensation intent recorded/ });
+    const props = fixtureProps();
+    render(<RecorderWorkbench {...props} onSelectRun={vi.fn()} />);
+    const compensation = props.trace.events.find(
+      ({ event_type }) => event_type === "compensation_outcome_recorded",
+    );
+    if (!compensation) throw new Error("fixture must include compensation evidence");
+    const signal = screen.getByRole("button", {
+      name: new RegExp(`^${compensation.saga_seq}\\. Compensation outcome recorded`),
+    });
     await user.click(signal);
 
     await user.click(screen.getByRole("tab", { name: "Ledger" }));
     expect(screen.getByRole("complementary", { name: "Recorded evidence" })).toHaveTextContent(
-      "Ledger sequence28",
+      `Ledger sequence${compensation.saga_seq}`,
     );
     await user.click(screen.getByRole("tab", { name: "Proof" }));
     expect(screen.getByRole("complementary", { name: "Recorded evidence" })).toHaveTextContent(
-      "Ledger sequence28",
+      `Ledger sequence${compensation.saga_seq}`,
     );
   });
 
@@ -89,10 +101,17 @@ describe("RecorderWorkbench", () => {
 
   it("moves focus to recorded evidence after an explicit inspect action", async () => {
     const user = userEvent.setup();
-    render(<RecorderWorkbench {...fixtureProps()} onSelectRun={vi.fn()} />);
+    const props = fixtureProps();
+    render(<RecorderWorkbench {...props} onSelectRun={vi.fn()} />);
 
     await user.click(screen.getByRole("tab", { name: "Ledger" }));
-    const inspect = screen.getByRole("button", { name: "Inspect event 22" });
+    const compensation = props.trace.events.find(
+      ({ event_type }) => event_type === "compensation_started",
+    );
+    if (!compensation) throw new Error("fixture must include compensation evidence");
+    const inspect = screen.getByRole("button", {
+      name: `Inspect event ${compensation.saga_seq}`,
+    });
     await user.click(inspect);
 
     expect(screen.getByRole("complementary", { name: "Recorded evidence" })).toHaveFocus();
@@ -102,21 +121,22 @@ describe("RecorderWorkbench", () => {
 
   it("pauses replay when the operator changes evidence views", () => {
     vi.useFakeTimers();
-    render(<RecorderWorkbench {...fixtureProps()} onSelectRun={vi.fn()} />);
+    const props = fixtureProps();
+    render(<RecorderWorkbench {...props} onSelectRun={vi.fn()} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Restart replay" }));
     fireEvent.click(screen.getByRole("button", { name: "Play replay" }));
     fireEvent.click(screen.getByRole("tab", { name: "Ledger" }));
     act(() => vi.advanceTimersByTime(1_000));
 
-    expect(screen.getByText("Event 1 of 37")).toBeVisible();
+    expect(screen.getByText(`Event 1 of ${props.trace.events.length}`)).toBeVisible();
     expect(screen.getByRole("button", { name: "Play replay" })).toBeVisible();
   });
 
   it("lets a keyboard user isolate a recorded forward and compensation chain", async () => {
     const user = userEvent.setup();
     render(<RecorderWorkbench {...fixtureProps()} onSelectRun={vi.fn()} />);
-    const repair = screen.getAllByRole("button", { name: /compensation intent recorded/i })[0];
+    const repair = screen.getAllByRole("button", { name: /compensation outcome recorded/i })[0];
     if (!repair) throw new Error("fixture must include compensation evidence");
 
     await user.click(repair);
@@ -126,7 +146,7 @@ describe("RecorderWorkbench", () => {
       "Compensates operation",
     );
     const board = screen.getByRole("region", { name: "Causal flight path" });
-    expect(within(board).getAllByTestId("causal-signal").length).toBeGreaterThan(3);
+    expect(within(board).getAllByTestId("causal-signal").length).toBeGreaterThanOrEqual(2);
     expect(within(board).getAllByTestId("muted-signal").length).toBeGreaterThan(1);
     const unrelated = within(board).getAllByTestId("muted-signal")[0];
     expect(unrelated).toHaveAccessibleName(/outside selected chain/i);
@@ -138,9 +158,23 @@ describe("RecorderWorkbench", () => {
     const onSelectRun = vi.fn();
     render(<RecorderWorkbench {...fixtureProps()} onSelectRun={onSelectRun} />);
 
-    await user.click(screen.getByRole("button", { name: /compensation cannot be verified/i }));
+    await user.click(screen.getByRole("button", { name: /refund cannot be verified/i }));
 
     expect(onSelectRun).toHaveBeenCalledWith("compensation-failure");
+  });
+
+  it("keeps the ecommerce presentation out of generic recorder catalogs", () => {
+    const props = fixtureProps();
+    render(
+      <RecorderWorkbench
+        {...props}
+        entry={{ ...props.entry, presentation: undefined }}
+        onSelectRun={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("region", { name: /one order/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/same order goal/i)).not.toBeInTheDocument();
   });
 
   it("has no detectable accessibility violations in every evidence view", async () => {

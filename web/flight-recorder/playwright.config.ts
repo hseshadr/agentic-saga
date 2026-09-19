@@ -36,7 +36,7 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: "pnpm exec vite --host 127.0.0.1 --port 4178 --strictPort",
+    command: "./node_modules/.bin/vite --host 127.0.0.1 --port 4178 --strictPort",
     reuseExistingServer: false,
     timeout: 30_000,
     url: LOOPBACK_URL,

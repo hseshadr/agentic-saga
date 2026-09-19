@@ -23,6 +23,9 @@ describe("EventDetails", () => {
     expect(inspector).toHaveTextContent("Input hash");
     expect(inspector).toHaveTextContent("Operation");
     expect(inspector).toHaveTextContent("Structured rationale");
+    expect(inspector.querySelectorAll("pre").length).toBeGreaterThan(0);
+    for (const evidence of inspector.querySelectorAll("pre"))
+      expect(evidence).toHaveAttribute("tabindex", "0");
     expect(inspector).not.toHaveTextContent(/chain.of.thought|AI reasoning/i);
   });
 
@@ -36,5 +39,13 @@ describe("EventDetails", () => {
 
     expect(screen.getByText(/<img src=x/)).toBeVisible();
     expect(document.querySelector("img")).toBeNull();
+  });
+
+  it("presents workflow authority metadata as the Temporal workflow guard", () => {
+    render(<EventDetails event={{ ...event(), authority: "workflow" }} />);
+
+    const inspector = screen.getByRole("complementary", { name: "Recorded evidence" });
+    expect(inspector).toHaveTextContent("AuthorityWorkflow guard");
+    expect(inspector).not.toHaveTextContent(/kernel/i);
   });
 });

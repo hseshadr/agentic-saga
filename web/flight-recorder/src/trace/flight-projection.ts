@@ -26,7 +26,7 @@ export interface FlightProjection {
 const laneLabels: Readonly<Record<FlightLaneId, string>> = {
   agent: "Agent",
   effect: "Effect + repair",
-  guard: "Kernel guard",
+  guard: "Workflow guard",
   proof: "Proof",
 };
 
@@ -39,6 +39,11 @@ export function projectFlight(trace: RunTrace): FlightProjection {
     label: laneLabels[id],
   }));
   return { lanes, orderedEvents, proofs: trace.proofs };
+}
+
+export function authorityLabel(authority: TraceEvent["authority"]): string {
+  if (authority === "workflow") return "Workflow guard";
+  return authority.replace(/^./, (letter) => letter.toUpperCase());
 }
 
 export function causalEventIds(projection: FlightProjection, selectedId: string): Set<string> {
@@ -90,7 +95,7 @@ function projectEvent(event: TraceEvent): ProjectedEvent {
   const lane = laneFor(event);
   return {
     event,
-    label: displayLabel(event.event_type),
+    label: displayLabel(event),
     lane,
     laneLabel: laneLabels[lane],
     signal: signalFor(event),
@@ -98,6 +103,7 @@ function projectEvent(event: TraceEvent): ProjectedEvent {
 }
 
 function laneFor(event: TraceEvent): FlightLaneId {
+  if (isHumanStop(event)) return "proof";
   if (event.authority === "agent") return "agent";
   if (event.authority === "effect" || event.authority === "compensation") return "effect";
   if (event.authority === "proof" || event.authority === "human") return "proof";
@@ -105,12 +111,25 @@ function laneFor(event: TraceEvent): FlightLaneId {
 }
 
 function signalFor(event: TraceEvent): SignalKind {
-  if (event.authority === "human") return "fault";
+  if (isHumanStop(event)) return "fault";
   if (event.authority === "compensation" || event.direction === "compensation")
     return "compensation";
   return laneFor(event);
 }
 
-function displayLabel(value: string): string {
-  return value.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase());
+function isHumanStop(event: TraceEvent): boolean {
+  return event.event_type === "human_required" || event.after_status === "human_required";
+}
+
+function displayLabel(event: TraceEvent): string {
+  if (event.event_type === "agent_decision_recorded") {
+    const kind = event.rationale.proposal_kind;
+    if (kind === "finish") return "Agent chose to finish";
+    if (event.tool_name) return `Agent chose to ${plainName(event.tool_name)}`;
+  }
+  return event.event_type.replaceAll("_", " ").replace(/^./, (letter) => letter.toUpperCase());
+}
+
+function plainName(value: string): string {
+  return value.replaceAll("_", " ");
 }
