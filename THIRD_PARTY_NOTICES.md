@@ -10,6 +10,18 @@ projects. Agentic Saga disables Pydantic Deep's general-purpose filesystem, exec
 planning, memory, skills, subagent, team, checkpoint, forking, context-discovery, and cost-tracking
 capabilities; it uses the typed model/tool protocol for deferred proposals only.
 
+The optional TypeSafe AI Jev integration installs, but does not bundle,
+`typesafe-sdk==0.7.0`, an MIT-licensed upstream project. Agentic Saga uses its asynchronous System
+One Choice API only; the SDK receives the full public observation, eligible descriptors, and
+complete candidate criteria, proposal arguments, and rationale. It never receives a registered
+business callable or authority to execute an effect.
+
+The optional OpenRouter Decisions transport installs, but does not bundle, `openrouter==1.2.1`, an
+Apache-2.0-licensed upstream project whose installed distribution includes its license. It sends
+the same public Jev decision payload to OpenRouter's native Decisions API with zero SDK retries and
+provider-routing preferences that require ZDR and deny data collection; it never falls back to chat
+completions.
+
 ## React family
 
 Components: `react 19.2.8`, `react-dom 19.2.8`, and `scheduler 0.27.0`
