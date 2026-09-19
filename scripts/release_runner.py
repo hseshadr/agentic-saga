@@ -307,7 +307,7 @@ def _recorder_ready(cli: Path) -> bool:
         text=True,
     )
     try:
-        return _read_ready_line(process).startswith("Agentic Saga demo: http://127.0.0.1:")
+        return _read_ready_line(process).startswith("Agentic Saga recorder: http://127.0.0.1:")
     finally:
         _stop_process(process)
 

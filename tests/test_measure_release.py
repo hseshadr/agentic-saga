@@ -342,7 +342,7 @@ def test_recorder_readiness_is_bounded_and_process_is_stopped(tmp_path: Path) ->
     cli.write_text(
         "#!/usr/bin/env python3\n"
         "import time\n"
-        "print('Agentic Saga demo: http://127.0.0.1:1234', flush=True)\n"
+        "print('Agentic Saga recorder: http://127.0.0.1:1234', flush=True)\n"
         "time.sleep(10)\n"
     )
     cli.chmod(0o755)
