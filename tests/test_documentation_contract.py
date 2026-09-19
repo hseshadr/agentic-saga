@@ -111,7 +111,9 @@ def test_agent_docs_explain_the_native_pydantic_deep_boundary() -> None:
         '`tool_choice="required"`',
         "zero or multiple deferred calls are rejected before execution",
         "`parallel_tool_calls` and `seed` are not sent",
-        "openai/gpt-oss-20b",
+        "openai/gpt-oss-120b",
+        "fixed release corpus",
+        "not a universal reliability claim",
         "general-purpose capabilities are disabled",
     )
 

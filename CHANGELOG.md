@@ -77,11 +77,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SagaGoal` as separate transaction input to `runtime.start(...)`.
 - Classified rejected provider requests separately from invalid model output, and converted proposal
   identity conflicts into durable, redacted agent-turn failures followed by deterministic unwind.
-- Returned the maintained OpenRouter route to `openai/gpt-oss-20b` for the native deferred-tool
-  evaluation. The adapter requires one tool call locally and makes no release-quality claim until
-  the fixed live-model corpus passes.
-- Removed unsupported OpenRouter `seed` and `parallel_tool_calls` request parameters after endpoint
-  probing showed the 20B route accepts the base native-tools request but not that parameter
-  combination. Zero or multiple calls still fail closed before execution.
+- Selected pinned `openai/gpt-oss-120b` as the maintained OpenRouter route after it produced the
+  stronger observed completion on the fixed native deferred-tool release corpus. This is scoped
+  empirical evidence, not a universal model-reliability claim.
+- Omitted OpenRouter `seed` and `parallel_tool_calls` request parameters because endpoint support
+  varies. Deterministic single-call enforcement remains local: zero or multiple calls fail closed
+  before execution, so safety does not depend on provider hints.
 - Raised the bounded per-turn OpenRouter deadline to 30 seconds after live evidence showed the
   pinned model could exceed the earlier deadline without a provider or schema failure.

@@ -377,6 +377,10 @@ async def test_system_context_should_teach_generic_compensation_decisions() -> N
     assert "last_action.event_type=terminal_denied" in system_context
     assert "failed forward invariant" in system_context
     assert "call begin_compensation immediately" in system_context
+    assert "rollback tools intentionally appear only after that transition" in system_context
+    assert "Never escalate merely because rollback tools are not yet advertised" in system_context
+    assert "an exact advertised action is available" in system_context
+    assert "never claim that a matching action is unavailable" in system_context
     assert "freshness=fresh" in system_context
     assert "never duplicate an already-satisfied effect" in system_context
     assert "never repeat the rejected effect" in system_context

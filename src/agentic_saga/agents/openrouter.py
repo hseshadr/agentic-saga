@@ -22,7 +22,7 @@ type _ModelId = Annotated[
     StringConstraints(strict=True, pattern=r"^[a-z0-9][a-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._:-]*$"),
 ]
 
-_PRIMARY_MODEL = "openai/gpt-oss-20b"
+_PRIMARY_MODEL = "openai/gpt-oss-120b"
 _MILLISECONDS_PER_SECOND = 1_000
 
 

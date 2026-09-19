@@ -263,9 +263,11 @@ errors.
 
 ## OpenRouter route and limits
 
-The maintained default is the pinned `openai/gpt-oss-20b` model through Pydantic AI's OpenRouter
-provider. The code allows an application to inject another concrete pinned model ID, but this
-repository does not claim that every inexpensive model passes the fixed evaluation corpus.
+The maintained default is the pinned `openai/gpt-oss-120b` open-weight model through Pydantic AI's
+OpenRouter provider. It is the inexpensive route that produced the stronger observed completion on
+this repository's fixed release corpus. That result is not a universal reliability claim. The code
+allows an application to inject another concrete pinned model ID, but any alternative must earn its
+place with fresh evidence on the same corpus.
 
 The design deliberately keeps the model's job small enough for cheaper tool-calling models: choose
 one exact eligible action from current evidence. Safety does not become weaker with a smaller model;
@@ -276,10 +278,8 @@ SDK retries are zero. Pydantic result correction is exactly one, so one durable 
 at most two model requests. The correction handles structural output failure; it never executes a
 business effect because every exposed proposal tool is external and deferred. Temperature is zero,
 reasoning effort is low, and provider support is required for every parameter actually sent.
-`parallel_tool_calls` and `seed` are not sent: the current `openai/gpt-oss-20b` OpenRouter route has
-endpoints for the base native-tools request but no eligible endpoint when
-`parallel_tool_calls=false` is combined with required-parameter routing. Safety therefore does not
-depend on that unsupported provider hint. The adapter requires one deferred proposal call and
+`parallel_tool_calls` and `seed` are not sent because support varies across OpenRouter endpoints.
+Safety does not depend on either provider hint: the adapter requires one deferred proposal call and
 rejects zero or multiple calls before any proposal reaches the kernel. OpenRouter may fail over
 among providers serving the same model, but it cannot silently switch to a different model. Moving
 aliases and OpenRouter variant suffixes are rejected.

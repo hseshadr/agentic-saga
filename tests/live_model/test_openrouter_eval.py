@@ -46,10 +46,10 @@ _IDENTITY = EvalIdentity(
     prompt_sha256="b" * 64,
     manifest_sha256="c" * 64,
     tool_catalog_sha256="d" * 64,
-    configured_model="openai/gpt-oss-20b",
+    configured_model="openai/gpt-oss-120b",
     suite=EvalSuite.RELEASE,
     request_policy=RequestPolicyIdentity(
-        model="openai/gpt-oss-20b",
+        model="openai/gpt-oss-120b",
         per_call_max_output_tokens=256,
         per_call_timeout_ms=15_000,
     ),

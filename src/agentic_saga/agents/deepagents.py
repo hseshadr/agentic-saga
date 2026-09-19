@@ -99,6 +99,11 @@ _AUTHORITY = "\n".join(
             "advertised, call begin_compensation immediately."
         ),
         (
+            "- Whenever begin_compensation is advertised, the kernel has a compensation path; "
+            "rollback tools intentionally appear only after that transition. Never escalate "
+            "merely because rollback tools are not yet advertised."
+        ),
+        (
             "- During compensation, call only the currently advertised compensation tool; "
             "the kernel-owned frontier determines eligibility."
         ),
@@ -108,7 +113,11 @@ _AUTHORITY = "\n".join(
             "external outcome, including when the goal explicitly requires human escalation."
         ),
         "- Unknown outcomes are reconciled by the deterministic runtime before another turn.",
-        "- Select only an exact advertised native tool; never copy an unavailable example name.",
+        (
+            "- Select only an exact advertised native tool; an exact advertised action is "
+            "available, so never claim that a matching action is unavailable or copy an "
+            "unavailable example name."
+        ),
     )
 )
 _BUILTIN_AGENT_OPTIONS: Mapping[str, object] = MappingProxyType(

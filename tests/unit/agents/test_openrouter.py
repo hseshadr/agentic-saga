@@ -11,8 +11,8 @@ from agentic_saga.agents import OpenRouterSettings, build_openrouter_driver
 from agentic_saga.agents import openrouter as adapter_module
 from tests.unit.agents.test_deepagents import _context
 
-_PRIMARY = "openai/gpt-oss-20b"
-_COMPARATOR = "openai/gpt-oss-120b"
+_PRIMARY = "openai/gpt-oss-120b"
+_COMPARATOR = "openai/gpt-oss-20b"
 _ALTERNATE = "qwen/qwen3-30b-a3b-instruct-2507"
 
 
