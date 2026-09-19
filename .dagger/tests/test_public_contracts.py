@@ -423,10 +423,13 @@ def test_should_install_the_project_offline_without_build_isolation() -> None:
 
 def test_should_filter_secret_prone_context_before_external_modules() -> None:
     source = MODULE.read_text()
+    patterns = main.SOURCE_IGNORE_PATTERNS
 
     assert "Annotated[dagger.Directory, Ignore(SOURCE_IGNORE_PATTERNS)]" in source
     assert '".env"' in source
     assert '"**/.env"' in source
+    assert patterns.index(".env.*") < patterns.index("!.env.example")
+    assert patterns.index("**/.env.*") < patterns.index("!**/.env.example")
     release = _function_body(source, "_release_source")
     adapter = _adapter_class(_tree(source))
     method = next(item for item in _public_methods(adapter) if item.name == "security")
@@ -451,6 +454,7 @@ def test_should_filter_generated_local_state_before_exact_source_guard() -> None
         "**/*.tsbuildinfo",
         "**/coverage",
         "**/test-results",
+        "web/flight-recorder/dist",
     }
 
     # When the public source boundary is applied.

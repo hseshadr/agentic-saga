@@ -61,11 +61,11 @@ MANIFEST_ENTRY_COUNT: Final = 3
 SOURCE_IGNORE_PATTERNS: Final = [
     ".git",
     ".env",
-    ".env.local",
-    ".env.*.local",
     "**/.env",
-    "**/.env.local",
-    "**/.env.*.local",
+    ".env.*",
+    "**/.env.*",
+    "!.env.example",
+    "!**/.env.example",
     "**/.netrc",
     "**/.npmrc",
     "**/.pypirc",
@@ -99,6 +99,7 @@ SOURCE_IGNORE_PATTERNS: Final = [
     "**/*.tsbuildinfo",
     ".venv",
     "dist",
+    "web/flight-recorder/dist",
 ]
 
 
