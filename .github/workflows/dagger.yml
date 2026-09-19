@@ -16,8 +16,9 @@ jobs:
           persist-credentials: false
       - uses: dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77 # v8.4.1
         env:
-          DAGGER_GIT_HTTP_AUTH_HEADER: ${{ secrets.DAGGER_GIT_HTTP_AUTH_HEADER }} # zizmor: ignore[secrets-outside-env] Read-only CI uses the precomputed repository secret.
+          DAGGER_GIT_HTTP_AUTH_HEADER: ${{ github.event.repository.private && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && secrets.DAGGER_GIT_HTTP_AUTH_HEADER != '' && secrets.DAGGER_GIT_HTTP_AUTH_HEADER || '' }}
         with:
           version: "0.21.8"
           verb: call
-          args: ci --source=. --commit-sha=${{ github.sha }} --git-auth-header=env:DAGGER_GIT_HTTP_AUTH_HEADER
+          args: >-
+            ci --source=. --commit-sha=${{ github.sha }} ${{ github.event.repository.private && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && secrets.DAGGER_GIT_HTTP_AUTH_HEADER != '' && '--git-auth-header=env:DAGGER_GIT_HTTP_AUTH_HEADER' || '' }}

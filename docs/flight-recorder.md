@@ -121,11 +121,11 @@ unverifiable compensation that stops at `HUMAN_REQUIRED`.
 
 ## Current boundary
 
-Private v0.1 ships the source workbench, bundled static assets, four generated redacted traces, a
+V0.1 ships the source workbench, bundled static assets, four generated redacted traces, a
 strict package-resource loader, exclusive materialization, loopback serving, the `agentic-saga demo`
 entry point, user-controlled Story/Ledger/Proof replay, keyboard and reduced-motion behavior,
-responsive 320px layouts, and source plus packaged-wheel browser gates. The final
-clean-current-commit measurement and matching hosted CI evidence have not yet been recorded.
+responsive 320px layouts, and source plus packaged-wheel browser gates. Every release candidate
+requires a clean exact-commit measurement and matching hosted CI evidence.
 
 It is not a live monitor, workflow editor, operations control plane, general web API, hosted
 service, or authenticity system. It shows captured evidence only. See the

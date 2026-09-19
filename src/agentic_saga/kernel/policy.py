@@ -28,8 +28,12 @@ from agentic_saga.contracts.common import (
     thaw_json_object,
 )
 from agentic_saga.contracts.redaction import RedactionPolicy, contains_sensitive_json, redact_json
+from agentic_saga.contracts.runtime import (
+    ControlProposalCapabilities,
+    SagaStatus,
+    TerminalStatus,
+)
 from agentic_saga.contracts.runtime import ExecutionBudget as _ExecutionBudget
-from agentic_saga.contracts.runtime import SagaStatus
 from agentic_saga.contracts.tools import (
     EffectToolDefinition,
     ReadToolDefinition,
@@ -79,6 +83,7 @@ class PolicyContext(BaseModel):
 type PolicyRule = Callable[[BaseModel, SagaSnapshot, PolicyContext], bool]
 type DuplicateEffectRule = Callable[[ProposedEffectIdentity, SagaSnapshot, PolicyContext], bool]
 type ApprovalVerifier = Callable[[HumanDecision, ToolCall, SagaSnapshot, PolicyContext], bool]
+type CompensationAllowedRule = Callable[[BeginCompensation, SagaSnapshot, PolicyContext], bool]
 type ToolAdvertisementRule = Callable[[str, SagaSnapshot], JsonObject | None]
 
 
@@ -116,6 +121,15 @@ class VersionedPolicyRule[**P, R]:
 def _deny_tool_advertisement(tool_name: str, snapshot: SagaSnapshot) -> JsonObject | None:
     del tool_name, snapshot
     return None
+
+
+def _allow_compensation(
+    proposal: BeginCompensation,
+    snapshot: SagaSnapshot,
+    context: PolicyContext,
+) -> bool:
+    del proposal, snapshot, context
+    return True
 
 
 def _callable_name(value: object) -> str:
@@ -257,7 +271,12 @@ class PolicyRules:
     is_duplicate_effect: DuplicateEffectRule
     approval_required: PolicyRule
     approval_verifier: ApprovalVerifier
-    tool_advertisement: ToolAdvertisementRule = _deny_tool_advertisement
+    compensation_allowed: CompensationAllowedRule = VersionedPolicyRule(
+        _allow_compensation, "builtin-allow-compensation-v1"
+    )
+    tool_advertisement: ToolAdvertisementRule = VersionedPolicyRule(
+        _deny_tool_advertisement, "builtin-deny-tool-advertisement-v1"
+    )
 
 
 class PolicyDecision(BaseModel):
@@ -314,10 +333,10 @@ _ESCALATION_SOURCES = frozenset(
         SagaStatus.COMPENSATING,
     }
 )
-_TERMINAL_TARGETS: Mapping[SagaStatus, frozenset[SagaStatus]] = {
-    SagaStatus.RUNNING: frozenset({SagaStatus.SUCCEEDED_VERIFIED, SagaStatus.ABORTED_CLEAN}),
-    SagaStatus.COMPENSATING: frozenset({SagaStatus.COMPENSATED_VERIFIED}),
-    SagaStatus.HUMAN_REQUIRED: frozenset({SagaStatus.RESOLVED_WITH_EXCEPTION}),
+_TERMINAL_TARGETS: Mapping[SagaStatus, tuple[SagaStatus, ...]] = {
+    SagaStatus.RUNNING: (SagaStatus.SUCCEEDED_VERIFIED, SagaStatus.ABORTED_CLEAN),
+    SagaStatus.COMPENSATING: (SagaStatus.COMPENSATED_VERIFIED,),
+    SagaStatus.HUMAN_REQUIRED: (SagaStatus.RESOLVED_WITH_EXCEPTION,),
 }
 _COMPENSABLE_STATUSES = frozenset(
     {OperationStatus.EFFECT_CONFIRMED, OperationStatus.PARTIAL_EFFECT_CONFIRMED}
@@ -378,11 +397,19 @@ def _target_denied() -> PolicyDecision:
     )
 
 
-def _control_denial(proposal: AgentProposal, snapshot: SagaSnapshot) -> PolicyDecision | None:
+def _control_denial(
+    proposal: AgentProposal,
+    snapshot: SagaSnapshot,
+    context: PolicyContext,
+    compensation_allowed: CompensationAllowedRule,
+) -> PolicyDecision | None:
     if isinstance(proposal, ToolCall):
         return None
     if isinstance(proposal, BeginCompensation):
-        return _compensation_control_denial(snapshot)
+        denial = _compensation_control_denial(snapshot)
+        if denial is not None:
+            return denial
+        return _compensation_guard_denial(proposal, snapshot, context, compensation_allowed)
     if not _control_allowed(proposal, snapshot):
         return _phase_denied()
     return None
@@ -403,11 +430,46 @@ def _has_eligible_compensation(snapshot: SagaSnapshot) -> bool:
     return any(item.status is ObligationStatus.ELIGIBLE for item in snapshot.obligations.values())
 
 
+def _compensation_preview(snapshot: SagaSnapshot) -> BeginCompensation:
+    return BeginCompensation(
+        proposal_id="proposal_control_preview",
+        based_on_saga_seq=snapshot.seq,
+        reason_code="forward_goal_unreachable",
+        rationale="Evaluate the deterministic compensation gate.",
+    )
+
+
+def _advertised_compensation(
+    snapshot: SagaSnapshot,
+    context: PolicyContext | None,
+    rules: PolicyRules,
+) -> bool:
+    if context is None or _compensation_control_denial(snapshot) is not None:
+        return False
+    denial = _compensation_guard_denial(
+        _compensation_preview(snapshot), snapshot, context, rules.compensation_allowed
+    )
+    return denial is None
+
+
 def _control_allowed(proposal: Finish | Escalate, snapshot: SagaSnapshot) -> bool:
     if isinstance(proposal, Escalate):
         return snapshot.status in _ESCALATION_SOURCES
-    targets = _TERMINAL_TARGETS.get(snapshot.status, frozenset())
+    targets = _advertised_terminal_targets(snapshot)
     return SagaStatus(proposal.target_status) in targets
+
+
+def _advertised_terminal_targets(snapshot: SagaSnapshot) -> tuple[SagaStatus, ...]:
+    targets = _TERMINAL_TARGETS.get(snapshot.status, ())
+    if snapshot.last_invariant_passed is not False:
+        return targets
+    if snapshot.last_substantive_progress_seq is None:
+        return ()
+    if snapshot.last_invariant_seq is None:
+        return ()
+    if snapshot.last_substantive_progress_seq <= snapshot.last_invariant_seq:
+        return ()
+    return targets
 
 
 def _callback_denied() -> PolicyDecision:
@@ -424,6 +486,20 @@ def _callback_result[**P](
     if type(result) is not bool:
         raise TypeError("policy callbacks must return a boolean")
     return result
+
+
+def _compensation_guard_denial(
+    proposal: BeginCompensation,
+    snapshot: SagaSnapshot,
+    context: PolicyContext,
+    rule: CompensationAllowedRule,
+) -> PolicyDecision | None:
+    allowed = _callback_result(rule, proposal, snapshot, context)
+    if isinstance(allowed, PolicyDecision):
+        return allowed
+    if not allowed:
+        return _denied("compensation_not_justified", "Compensation is not justified.")
+    return None
 
 
 def _unknown_conflict(snapshot: SagaSnapshot) -> PolicyDecision | None:
@@ -595,6 +671,7 @@ class PolicyEngine:
             "is_duplicate_effect": _callable_identity(self._rules.is_duplicate_effect),
             "approval_required": _callable_identity(self._rules.approval_required),
             "approval_verifier": _callable_identity(self._rules.approval_verifier),
+            "compensation_allowed": _callable_identity(self._rules.compensation_allowed),
             "tool_advertisement": _callable_identity(self._rules.tool_advertisement),
         }
         payload = {
@@ -613,7 +690,7 @@ class PolicyEngine:
         common = _common_denial(proposal, snapshot)
         if common is not None:
             return common
-        control = _control_denial(proposal, snapshot)
+        control = _control_denial(proposal, snapshot, context, self._rules.compensation_allowed)
         if control is not None:
             return control
         if not isinstance(proposal, ToolCall):
@@ -636,6 +713,20 @@ class PolicyEngine:
             return constraints
         except Exception:
             return None
+
+    def advertised_controls(
+        self, snapshot: SagaSnapshot, context: PolicyContext | None
+    ) -> ControlProposalCapabilities:
+        """Return the deterministic control surface for one Saga projection."""
+        targets = _advertised_terminal_targets(snapshot)
+        compensation = _advertised_compensation(snapshot, context, self._rules)
+        return ControlProposalCapabilities(
+            finish_targets=cast(
+                tuple[TerminalStatus, ...], tuple(target.value for target in targets)
+            ),
+            begin_compensation=compensation,
+            escalate_to_human=snapshot.status in _ESCALATION_SOURCES,
+        )
 
     def authorize_read(
         self,
@@ -885,6 +976,7 @@ def human_resolution_digest(decision: HumanDecision) -> str:
 
 
 __all__ = [
+    "CompensationAllowedRule",
     "ConsumedApproval",
     "PolicyContext",
     "PolicyDecision",

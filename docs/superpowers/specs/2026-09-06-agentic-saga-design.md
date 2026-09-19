@@ -1,5 +1,13 @@
 # Agentic Saga — Design Specification
 
+> **Superseded implementation note (2026-09-18):** Earlier references to LangGraph/Deep Agents,
+> LangChain-style structured responses, or a custom JSON action protocol describe the discarded
+> adapter prototype. The maintained optional path pins `pydantic-deep==0.3.43` and
+> `pydantic-ai-slim[openrouter]==2.45.0`, publishes current proposal schemas with a Pydantic AI
+> `ExternalToolset`, and accepts exactly one native `DeferredToolRequests` call. See
+> [`docs/agent-adapter.md`](../../agent-adapter.md). The kernel authority and Saga semantics remain
+> current.
+
 **Status:** Implemented private v0.1 development candidate; not released<br>
 **Date:** 2026-09-06  
 **Audience:** Python and agent-engineering OSS practitioners  
@@ -198,9 +206,12 @@ class AgentDriver(Protocol):
 The current v0.1 adapters are:
 
 - `ScriptedProposalDriver` in the ecommerce example for deterministic tests and the default demo.
-- `DeepAgentsDriver` as an optional planning adapter used by the opt-in evaluation path.
+- `DeepAgentsDriver`, backed by Pydantic Deep native deferred tools, as the optional planning
+  adapter used by the opt-in evaluation path.
 
-Deep Agents and LangGraph are adapters, not the business record and not part of the core public contract. On restart, agent context is rebuilt from the Saga kernel's authoritative projection and previously accepted decisions.
+Pydantic Deep and Pydantic AI are adapters, not the business record and not part of the core public
+contract. On restart, agent context is rebuilt from the Saga kernel's authoritative projection and
+previously accepted decisions.
 
 ### V0.1 trust boundary
 
@@ -534,8 +545,10 @@ Initial configuration:
 
 - Provider: OpenRouter.
 - Default model: `openai/gpt-oss-20b`.
-- Fallback: `qwen/qwen3-30b-a3b-instruct-2507`.
-- Low reasoning, near-zero temperature, sequential tool calls, strict structured output.
+- Same-model provider failover only; no silent cross-model fallback.
+- Low reasoning, zero temperature, no Pydantic Deep harness tools, and a required native tool call.
+- Zero or multiple deferred calls are rejected locally before execution; unsupported
+  `parallel_tool_calls` and `seed` parameters are not sent.
 - No `openrouter/auto`, random free routing, or moving `latest` aliases.
 
 The initial 24-case corpus contains six straightforward goals, six recoverable failures, six adversarial observations, and six escalation cases. Each runs three samples.
@@ -557,9 +570,10 @@ Core runtime targets Python 3.12+ and keeps dependencies narrow:
 
 - Pydantic for strict boundary models.
 - Standard-library SQLite for the reference store.
-- No LangGraph, Deep Agents, or provider package required by core users.
+- No Pydantic Deep, Pydantic AI, or provider package required by core users.
 
-The maintained Deep Agents/OpenRouter integration is isolated in the optional `agent` extra.
+The maintained Pydantic Deep/Pydantic AI/OpenRouter integration is isolated in the optional
+`agent` extra.
 Contributors use the `dev` dependency group for pytest, Hypothesis, coverage, mutation testing,
 Ruff, and mypy.
 
@@ -573,7 +587,7 @@ src/agentic_saga/
   kernel/             # Definitions, ports, policy, reducer, invariants, compensation
   storage/            # SQLite reference implementation
   execution/          # Runtime composition, dispatch, leases, reconciliation, unwind
-  agents/             # Optional Deep Agents/OpenRouter planning adapter
+  agents/             # Optional Pydantic Deep/Pydantic AI/OpenRouter planning adapter
   evidence/           # RunTrace projection/export
   demo/               # Flight Recorder materialization and loopback server
   cli/                # Demo command
@@ -651,7 +665,7 @@ V0.1 must not claim that it:
 ## Definition of Done for V0.1
 
 - A prompt-driven agent completes the ecommerce goal without a hard-coded workflow graph.
-- Deep Agents can orchestrate the same typed tool contract through OpenRouter.
+- Pydantic Deep can orchestrate the same typed native proposal contract through OpenRouter.
 - The deterministic scripted agent runs all scenarios offline.
 - Every mutating tool call is intent-first, idempotent, recorded, and compensation-aware.
 - Happy path, alternate forward recovery, compensation, crash recovery, retry, unsafe proposal, and exhausted recovery are demonstrated.

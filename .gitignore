@@ -1,4 +1,7 @@
 .worktrees/
+.env
+.env.*
+!.env.example
 .dagger/.venv/
 .dagger/sdk/
 .venv/
@@ -21,3 +24,4 @@ web/flight-recorder/coverage/
 test-results/
 mutants/
 .superpowers/
+.artifacts/

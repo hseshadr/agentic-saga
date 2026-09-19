@@ -766,7 +766,7 @@ def test_effective_model_timeout_is_capped_by_the_saga_budget() -> None:
 
     assert result.name == "effective_model_timeout_ms"
     assert result.actual == 6_000
-    assert result.passed
+    assert not result.passed
 
 
 def test_effective_model_timeout_uses_fixed_floor_reservation() -> None:
@@ -790,7 +790,7 @@ def test_manifest_measurement_reads_shape_budgets_and_effective_timeout() -> Non
 
     assert results["manifest_bytes"].passed
     assert results["manifest_depth"].passed
-    assert results["effective_model_timeout_ms"].actual == 6_000
+    assert results["effective_model_timeout_ms"].actual == 30_000
 
 
 def test_manifest_measurement_rejects_non_mapping_documents(
@@ -823,18 +823,19 @@ def test_static_boundary_measurements_use_real_package_limits() -> None:
     sqlite = runner._sqlite_result()
 
     assert assets["reference_trace_count"].actual == 4
-    assert boundaries["optional_model_calls"].actual == 1
-    assert boundaries["model_timeout_ms"].actual == 10_000
+    assert boundaries["native_deferred_calls"].actual == 1
+    assert boundaries["builtin_agent_capabilities"].actual == 0
+    assert boundaries["model_timeout_ms"].actual == 30_000
     assert sqlite.actual == 5_000
 
 
-def test_model_call_probe_requires_exactly_one_configured_limit(
+def test_builtin_capability_probe_detects_an_enabled_deep_agent_feature(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(deepagents_module, "_create_graph", lambda *args: object())
+    options = {**deepagents_module._BUILTIN_AGENT_OPTIONS, "include_execute": True}
+    monkeypatch.setattr(deepagents_module, "_BUILTIN_AGENT_OPTIONS", options)
 
-    with pytest.raises(RuntimeError, match="exactly one model-call limit"):
-        runner._configured_model_call_limit()
+    assert runner._configured_builtin_capabilities() == 1
 
 
 def test_demo_shutdown_escalates_and_closes_pipes() -> None:

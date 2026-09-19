@@ -31,7 +31,11 @@ PLANNING_CAPACITY_CLAUSE = "token and elapsed limits are each at least the turn 
 NO_METERING_CLAUSE = (
     "Token/time limits are not input-token, actual-usage, end-to-end-time, or monetary meters"
 )
-OPTIONAL_MODEL_CLAUSE = "One model call, eight graph steps, zero SDK retries"
+OPTIONAL_MODEL_CLAUSE = (
+    "At most two model requests (one bounded Pydantic correction), eight graph steps, "
+    "zero SDK retries"
+)
+PYDANTIC_DEEP_PIN = "pydantic-deep==0.3.43"
 
 
 def _read(path: str) -> str:
@@ -94,3 +98,91 @@ def test_budget_contract_freezes_exact_semantics() -> None:
     )
     for clause in clauses:
         assert clause in operations
+
+
+def test_agent_docs_explain_the_native_pydantic_deep_boundary() -> None:
+    adapter = _read("docs/agent-adapter.md")
+    reader_paths = (_read("README.md"), _read("QUICKSTART.md"))
+    required = (
+        PYDANTIC_DEEP_PIN,
+        "Pydantic Deep owns the model/tool protocol",
+        "deterministic Saga kernel owns execution",
+        "DeferredToolRequests",
+        '`tool_choice="required"`',
+        "zero or multiple deferred calls are rejected before execution",
+        "`parallel_tool_calls` and `seed` are not sent",
+        "openai/gpt-oss-120b",
+        "fixed release corpus",
+        "not a universal reliability claim",
+        "general-purpose capabilities are disabled",
+    )
+
+    assert all(value in adapter for value in required)
+    assert "`parallel_tool_calls` is `false`" not in adapter
+    assert "Temperature and seed are zero" not in adapter
+    assert all("Pydantic Deep" in text for text in reader_paths)
+
+
+def test_agent_docs_show_native_success_and_compensation_trajectories() -> None:
+    adapter = _read("docs/agent-adapter.md")
+    example = _read("examples/ecommerce/README.md")
+    required = (
+        "MODEL -> native tool call",
+        "KERNEL -> observed result",
+        "cancel_fulfillment -> refund_payment -> release_inventory",
+    )
+    concepts = (
+        "happy path",
+        "failure after charge",
+        "unknown-outcome reconciliation",
+        "human escalation",
+    )
+
+    assert all(value in adapter for value in required)
+    assert all(value in example for value in required)
+    assert all(value in adapter.lower() for value in concepts)
+    assert all(value in example.lower() for value in concepts)
+
+
+def test_agent_docs_do_not_describe_the_retired_langchain_adapter() -> None:
+    paths = (
+        "README.md",
+        "QUICKSTART.md",
+        "docs/agent-adapter.md",
+        "docs/context-manifest.md",
+        "examples/ecommerce/README.md",
+        "CHANGELOG.md",
+    )
+
+    for path in paths:
+        assert "LangChain" not in _read(path), path
+
+
+def test_compensation_examples_use_the_deterministic_reason_code() -> None:
+    paths = (
+        "docs/agent-adapter.md",
+        "examples/ecommerce/README.md",
+        "examples/ecommerce/saga.yaml",
+    )
+
+    for path in paths:
+        text = _read(path)
+        assert 'reason_code="forward_goal_unreachable"' in text, path
+        assert 'reason_code="fulfillment_rejected"' not in text, path
+
+
+def test_historical_agent_designs_point_to_the_superseding_native_adapter() -> None:
+    paths = (
+        "docs/superpowers/plans/2026-09-06-ecommerce-agents-evals.md",
+        "docs/superpowers/specs/2026-09-06-agentic-saga-design.md",
+    )
+    required = (
+        "Superseded implementation note",
+        "pydantic-deep==0.3.43",
+        "DeferredToolRequests",
+        "docs/agent-adapter.md",
+    )
+
+    for path in paths:
+        text = _read(path)
+        assert all(value in text for value in required), path

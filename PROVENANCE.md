@@ -3,7 +3,7 @@
 TL;DR: source commits are authoritative. A release candidate is one immutable wheel and source
 archive built from a clean exact commit, verified offline against hash-pinned inputs, measured
 against the [operations contract](docs/operations.md), and matched to hosted CI. The project is
-private and no package has been published.
+not published to a package registry.
 
 The committed `uv.lock` freezes Python inputs. `web/flight-recorder/pnpm-lock.yaml` freezes
 frontend inputs and `package.json` pins pnpm 11.5.0. The locked `lossless-json` parser preserves
@@ -38,15 +38,14 @@ reference scenarios and the packaged Chromium recorder; and reports sample count
 latencies, bundle/catalog sizes, peak RSS, boundary limits, and a result for every budget. It makes
 no paid model call.
 
-Exact main commit `635974d51f87aa802886914be6a46bfd28518c66` passed hosted
-[Dagger run 34727077866](https://github.com/hseshadr/agentic-saga/actions/runs/34727077866)
-and [security run 34727111885](https://github.com/hseshadr/agentic-saga/actions/runs/34727111885).
-Those runs verified the configured migration graph and dependency/secret controls. A final
-equivalence audit found that the migration graph omitted Python 3.12 and both per-runtime
-measurements, so the historical Dagger run is not full release-matrix evidence. The current graph
-restores those legs; only a green check bound to the current exact head counts as hosted
-release-matrix evidence. A dirty-tree measurement remains diagnostic only. No registry artifacts
-exist yet, and none of these commands publishes one.
+Audited baseline commit `3fcf10ea6a6dbd2799f242758cecbbd6321ff639` passed hosted
+[Dagger run 34807057405](https://github.com/hseshadr/agentic-saga/actions/runs/34807057405)
+and [security run 34859242334](https://github.com/hseshadr/agentic-saga/actions/runs/34859242334).
+The Dagger run covered the complete Python 3.12/3.13 and packaged-browser release matrix and prints
+its validated SHA-256 manifest in the run log. It uploaded no GitHub artifact, so the log is digest
+evidence rather than hosted wheel/sdist distribution. Only green checks bound to the release
+candidate's own exact head count as final evidence. A dirty-tree measurement remains diagnostic
+only. No registry artifacts exist, and none of these commands publishes one.
 
 ## Repository controls
 
@@ -64,6 +63,6 @@ v0.1 is a non-hosted library with a local loopback viewer.
 ## Publication boundary
 
 Publication requires separate, fresh authorization and trusted publishing from the reviewed
-immutable artifact. This private development workflow does not publish to PyPI or another package
+immutable artifact. The source release workflow does not publish to PyPI or another package
 registry. Opening the optional OpenRouter evaluation route also requires separate explicit consent;
 its output is model-quality evidence, not release correctness evidence.

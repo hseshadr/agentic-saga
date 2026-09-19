@@ -17,8 +17,8 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import timedelta
 from pathlib import Path
 from statistics import median
-from types import MappingProxyType, SimpleNamespace
-from typing import TYPE_CHECKING, Final, Literal, Protocol, cast
+from types import MappingProxyType
+from typing import Final, Protocol
 from urllib.request import urlopen
 
 from pydantic import SecretStr
@@ -48,9 +48,6 @@ from scripts.release_contract import (
     frontend_branch_percent,
     release_environment_errors,
 )
-
-if TYPE_CHECKING:
-    from langchain_core.language_models.chat_models import BaseChatModel
 
 ROOT: Final[Path] = Path(__file__).parents[1]
 WEB: Final[Path] = ROOT / "web" / "flight-recorder"
@@ -369,8 +366,8 @@ def _asset_results() -> tuple[BudgetResult, ...]:
 def _boundary_results() -> tuple[BudgetResult, ...]:
     settings = OpenRouterSettings(api_key=SecretStr("offline-measurement"))
     return (
-        evaluate("optional_model_calls", _configured_model_call_limit()),
-        evaluate("agent_graph_steps", deepagents_module._RECURSION_LIMIT),
+        evaluate("native_deferred_calls", deepagents_module._native_deferred_call_limit()),
+        evaluate("builtin_agent_capabilities", _configured_builtin_capabilities()),
         evaluate("sdk_retries", settings.sdk_retries),
         evaluate("model_timeout_ms", settings.timeout_ms),
         evaluate("import_runs", assets_module._MAX_RUNS),
@@ -382,27 +379,8 @@ def _boundary_results() -> tuple[BudgetResult, ...]:
     )
 
 
-def _configured_model_call_limit() -> int:
-    observed: list[int] = []
-    model = cast("BaseChatModel", object())
-    deepagents_module._create_graph(_probe_dependencies(observed), model, "measurement")
-    if len(observed) != 1:
-        raise RuntimeError("agent graph did not configure exactly one model-call limit")
-    return observed[0]
-
-
-def _probe_dependencies(observed: list[int]) -> deepagents_module._DeepAgentDependencies:
-    def limit(*, run_limit: int, exit_behavior: Literal["error"]) -> object:
-        del exit_behavior
-        observed.append(run_limit)
-        return object()
-
-    value = SimpleNamespace(
-        model_call_limit=limit,
-        create_agent=lambda *arguments, **keywords: object(),
-        tool_strategy=lambda schema: schema,
-    )
-    return cast(deepagents_module._DeepAgentDependencies, value)
+def _configured_builtin_capabilities() -> int:
+    return deepagents_module._builtin_agent_capabilities()
 
 
 def _server_boundary_results() -> tuple[BudgetResult, ...]:

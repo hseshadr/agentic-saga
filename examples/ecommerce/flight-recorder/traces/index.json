@@ -7,7 +7,7 @@
       "summary": "The agent proposes inventory reservation, payment capture, and fulfillment; the kernel authorizes each effect and assigns success only after three exact-state invariants pass.",
       "mode": "scripted",
       "trace_ref": "happy-path.json",
-      "trace_sha256": "bac337ec3a1655393747919a77c1b9b2a0223dc93fd20395001d4ed2698c1fec"
+      "trace_sha256": "a7c0c1ec7d36a8594fdf53e9b26eba054add190d098f14c3bfac69f1fe4957ec"
     },
     {
       "id": "lost-response",
@@ -15,7 +15,7 @@
       "summary": "Payment commits but its response is lost; after a durable restart the runtime reconciles the same operation without a duplicate charge, then verifies success.",
       "mode": "scripted",
       "trace_ref": "lost-response.json",
-      "trace_sha256": "7934347a031d8bcc8e8e91a00bdebaf1d2b8198d99f031056678f864aacbc6af"
+      "trace_sha256": "90b4e62adb4b9b7f3dc8fa8f620c3e1a7be2f874e871301bf88e645b2fc20780"
     },
     {
       "id": "business-failure",
@@ -23,7 +23,7 @@
       "summary": "The kernel records the failed charge, then releases inventory and cancels the order in reverse order before verifying the compensated state.",
       "mode": "scripted",
       "trace_ref": "business-failure.json",
-      "trace_sha256": "cea0d07e39edbd8ba6df72081904e0b6f36cbbaa05557a884e676bd14041102b"
+      "trace_sha256": "70c44cf633479e34f772f894191242f2c379f6fc6c202feab78db87cda3a62e8"
     },
     {
       "id": "compensation-failure",
@@ -31,7 +31,7 @@
       "summary": "A failed inventory release cannot be proven safe, so the kernel stops the unwind and records a human-required escalation instead of guessing.",
       "mode": "scripted",
       "trace_ref": "compensation-failure.json",
-      "trace_sha256": "30d2819fbc1aad3b830f7721a30d21b8272f4d7dd5d6b26f41697d135a624525"
+      "trace_sha256": "ede956a83992476553a2e37a30568999f0b5f0263ffba778b3f924dfad8b8edb"
     }
   ]
 }

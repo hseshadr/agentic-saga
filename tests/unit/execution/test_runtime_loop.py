@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -22,6 +22,7 @@ from agentic_saga.contracts.events import (
     EffectIntentRecorded,
     EffectOutcomeRecorded,
     HumanRequired,
+    InvariantEvaluated,
     ProposalRejected,
     ReadObserved,
     ReadStarted,
@@ -32,6 +33,8 @@ from agentic_saga.contracts.events import (
 )
 from agentic_saga.contracts.redaction import RedactionPolicy
 from agentic_saga.contracts.runtime import (
+    AgentDriver,
+    ControlProposalCapabilities,
     ExecutionBudget,
     SagaGoal,
     SagaObservation,
@@ -55,7 +58,9 @@ from agentic_saga.execution.runtime import (
     DefinitionRuntimeMismatch,
     SagaRuntime,
     _await_with_authority,
+    _last_observation,
     _LeaseAuthority,
+    _read_evidence,
     _saga_id,
 )
 from agentic_saga.execution.unwind import EmergencyUnwinder
@@ -77,6 +82,20 @@ from tests.support.durable_tool import DurableFakeTool
 
 NOW = datetime(2026, 9, 7, 12, tzinfo=UTC)
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
+
+
+def _observation_event_metadata(seq: int) -> dict[str, object]:
+    return {
+        "event_id": f"evt_{seq:016d}",
+        "saga_id": "saga_0000000000000001",
+        "saga_seq": seq,
+        "schema_version": "1.0",
+        "definition_version": "runtime-v1",
+        "fence_token": 1,
+        "actor": "kernel",
+        "trace_id": "trace_0000000000000001",
+        "recorded_at": NOW,
+    }
 
 
 def _false(command: BaseModel, snapshot: SagaSnapshot, context: PolicyContext) -> bool:
@@ -191,6 +210,19 @@ class ReadResult(BaseModel):
     state: str
 
 
+class EvidenceCommand(BaseModel):
+    model_config = {"strict": True, "extra": "forbid", "frozen": True}
+
+    public_id: str
+
+
+class EvidenceResult(BaseModel):
+    model_config = {"strict": True, "extra": "forbid", "frozen": True}
+
+    state: str
+    access_token: str
+
+
 @dataclass
 class ReadAdapter:
     calls: int = 0
@@ -202,6 +234,80 @@ class ReadAdapter:
     async def read(self, command: ReadCommand) -> ReadResult:
         self.calls += 1
         return ReadResult(state=f"seen:{command.public_id}")
+
+
+@dataclass
+class EvidenceAdapter:
+    calls: int = 0
+
+    def definition_identity(self) -> JsonObject:
+        return _JSON_OBJECT.validate_python({"adapter_version": "evidence-read-v1"}, strict=True)
+
+    async def read(self, command: EvidenceCommand) -> EvidenceResult:
+        self.calls += 1
+        return EvidenceResult(
+            state=f"seen:{command.public_id}",
+            access_token="Bearer raw-result-secret",  # noqa: S106 - redaction sentinel
+        )
+
+
+@dataclass
+class MultiReadAgent:
+    requests: tuple[tuple[str, JsonObject], ...]
+    observations: list[SagaObservation] = field(default_factory=list)
+
+    async def next_action(
+        self,
+        observation: SagaObservation,
+        available_tools: Sequence[ToolDescriptor],
+    ) -> AgentProposal:
+        del available_tools
+        self.observations.append(observation)
+        index = len(self.observations) - 1
+        if index >= len(self.requests):
+            return Escalate(
+                proposal_id=f"proposal_escalate_evidence_{index:08d}",
+                based_on_saga_seq=observation.saga_seq,
+                reason_code="operator_review",
+                rationale="The requested reads are complete.",
+            )
+        tool_name, arguments = self.requests[index]
+        return ToolCall(
+            proposal_id=f"proposal_read_evidence_{index:08d}",
+            tool_name=tool_name,
+            arguments=arguments,
+            based_on_saga_seq=observation.saga_seq,
+            rationale="Gather one bounded observation.",
+        )
+
+
+@dataclass
+class ReadEffectReadAgent:
+    observations: list[SagaObservation] = field(default_factory=list)
+
+    async def next_action(
+        self,
+        observation: SagaObservation,
+        available_tools: Sequence[ToolDescriptor],
+    ) -> AgentProposal:
+        del available_tools
+        self.observations.append(observation)
+        index = len(self.observations)
+        if index == 4:
+            return Escalate(
+                proposal_id="proposal_evidence_escalate",
+                based_on_saga_seq=observation.saga_seq,
+                reason_code="operator_review",
+                rationale="Freshness behavior has been observed.",
+            )
+        tool_name = "mutate_generic" if index == 2 else "inspect_order"
+        return ToolCall(
+            proposal_id=f"proposal_evidence_step_{index}",
+            tool_name=tool_name,
+            arguments={"public_id": "order_1"},
+            based_on_saga_seq=observation.saga_seq,
+            rationale="Read or change one public resource.",
+        )
 
 
 @dataclass
@@ -274,6 +380,61 @@ class LeaseTakeoverAgent:
             reason_code="operator_review",
             rationale="A second runtime acquired authority after expiry.",
         )
+
+
+@dataclass
+class ReusedProposalIdentityAgent:
+    calls: int = 0
+
+    async def next_action(
+        self,
+        observation: SagaObservation,
+        available_tools: Sequence[ToolDescriptor],
+    ) -> AgentProposal:
+        del available_tools
+        self.calls += 1
+        return ToolCall(
+            proposal_id="proposal_reused_identity",
+            tool_name="mutate_generic",
+            arguments={"public_id": f"resource_{self.calls}"},
+            based_on_saga_seq=observation.saga_seq,
+            rationale="raw-provider-secret" if self.calls > 1 else "First request.",
+        )
+
+
+class CategorizedAgentError(RuntimeError):
+    def __init__(self, category: str) -> None:
+        self.category = category
+        super().__init__("raw-provider-secret")
+
+
+@dataclass(frozen=True)
+class FailingAgent:
+    error: Exception
+
+    async def next_action(
+        self,
+        observation: SagaObservation,
+        available_tools: Sequence[ToolDescriptor],
+    ) -> AgentProposal:
+        del observation, available_tools
+        raise self.error
+
+
+@dataclass
+class TransientInvalidAgent:
+    delegate: AgentDriver
+    calls: int = 0
+
+    async def next_action(
+        self,
+        observation: SagaObservation,
+        available_tools: Sequence[ToolDescriptor],
+    ) -> AgentProposal:
+        self.calls += 1
+        if self.calls == 1:
+            raise CategorizedAgentError("invalid_response")
+        return await self.delegate.next_action(observation, available_tools)
 
 
 def _capabilities(provider: DurableFakeTool) -> ToolCapabilities:
@@ -374,6 +535,15 @@ def _read_registry(adapter: ReadAdapterProtocol[ReadCommand, ReadResult]) -> Too
     return ToolRegistry((ReadToolDefinition("observe_generic", ReadCommand, ReadResult, adapter),))
 
 
+def _evidence_registry(adapter: EvidenceAdapter) -> ToolRegistry:
+    return ToolRegistry(
+        (
+            ReadToolDefinition("inspect_order", EvidenceCommand, EvidenceResult, adapter),
+            ReadToolDefinition("check_inventory", EvidenceCommand, EvidenceResult, adapter),
+        )
+    )
+
+
 def _effect_registry(provider: DurableFakeTool) -> ToolRegistry:
     definition = EffectToolDefinition(
         "mutate_generic",
@@ -385,6 +555,16 @@ def _effect_registry(provider: DurableFakeTool) -> ToolRegistry:
         None,
     )
     return ToolRegistry((definition,))
+
+
+def _read_effect_registry(adapter: EvidenceAdapter, provider: DurableFakeTool) -> ToolRegistry:
+    effect = _effect_registry(provider).definition("mutate_generic")
+    return ToolRegistry(
+        (
+            ReadToolDefinition("inspect_order", EvidenceCommand, EvidenceResult, adapter),
+            effect,
+        )
+    )
 
 
 @pytest.mark.asyncio
@@ -590,6 +770,109 @@ async def test_read_records_intent_and_observation_then_offers_fresh_sequence(
 
 
 @pytest.mark.asyncio
+async def test_later_turn_retains_bounded_chronological_redacted_read_evidence(
+    tmp_path: Path,
+) -> None:
+    adapter = EvidenceAdapter()
+    harness = _harness(tmp_path, _evidence_registry(adapter))
+    agent = MultiReadAgent(
+        (
+            ("inspect_order", {"public_id": "order_1"}),
+            ("check_inventory", {"public_id": "sku_1"}),
+        )
+    )
+
+    result = await harness.runtime.start(
+        definition=harness.definition,
+        goal=SagaGoal(goal_id="goal_read_evidence", text="Inspect safely.", context={}),
+        agent=agent,
+    )
+
+    evidence = agent.observations[-1].read_evidence
+    encoded = str(tuple(item.model_dump(mode="json") for item in evidence))
+    assert result.state is SagaStatus.HUMAN_REQUIRED
+    assert adapter.calls == 2
+    assert [item.tool_name for item in evidence] == ["inspect_order", "check_inventory"]
+    assert [item.command["public_id"] for item in evidence] == ["order_1", "sku_1"]
+    results = tuple(item.result for item in evidence)
+    assert all(result is not None for result in results)
+    assert all(
+        result is not None and result["access_token"] == "[REDACTED]"  # noqa: S105
+        for result in results
+    )
+    assert len(evidence) <= harness.definition.budget.tool_call_limit
+    assert "raw-result-secret" not in encoded
+    assert "redacted_command" not in encoded
+    assert "command_hash" not in encoded
+    latest = _read_evidence(
+        harness.store.read_events(result.saga_id),
+        harness.definition.redaction_policy,
+        1,
+    )
+    assert [item.tool_name for item in latest] == ["check_inventory"]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_reads_remain_chronological_and_budget_bounded(tmp_path: Path) -> None:
+    adapter = EvidenceAdapter()
+    harness = _harness(tmp_path, _evidence_registry(adapter))
+    request = ("inspect_order", {"public_id": "order_1"})
+    agent = MultiReadAgent((request, request))
+
+    result = await harness.runtime.start(
+        definition=harness.definition,
+        goal=SagaGoal(goal_id="goal_duplicate_reads", text="Inspect twice.", context={}),
+        agent=agent,
+    )
+
+    evidence = agent.observations[-1].read_evidence
+    assert [item.tool_name for item in evidence] == ["inspect_order", "inspect_order"]
+    assert len(evidence) == 2
+    assert len(evidence) <= harness.definition.budget.tool_call_limit
+    bounded = _read_evidence(
+        harness.store.read_events(result.saga_id),
+        harness.definition.redaction_policy,
+        1,
+    )
+    assert len(bounded) == 1
+
+
+@pytest.mark.asyncio
+async def test_effect_makes_prior_read_stale_and_post_effect_read_fresh(tmp_path: Path) -> None:
+    adapter = EvidenceAdapter()
+    provider = DurableFakeTool.initialize(tmp_path / "provider.db", "mutate_generic")
+    budget = ExecutionBudget(
+        turn_limit=5,
+        tool_call_limit=4,
+        elapsed_ms_limit=5_000,
+        token_limit=500,
+    )
+    harness = _harness(
+        tmp_path,
+        _read_effect_registry(adapter, provider),
+        execution_budget=budget,
+    )
+    agent = ReadEffectReadAgent()
+
+    result = await harness.runtime.start(
+        definition=harness.definition,
+        goal=SagaGoal(goal_id="goal_evidence_freshness", text="Observe freshness.", context={}),
+        agent=agent,
+    )
+
+    before_effect = agent.observations[1].read_evidence
+    after_effect = agent.observations[2].read_evidence
+    after_refresh = agent.observations[3].read_evidence
+    assert result.state is SagaStatus.HUMAN_REQUIRED
+    assert [(item.observed_at_saga_seq, item.freshness) for item in before_effect] == [(5, "fresh")]
+    assert [(item.observed_at_saga_seq, item.freshness) for item in after_effect] == [(5, "stale")]
+    assert [(item.observed_at_saga_seq, item.freshness) for item in after_refresh] == [
+        (5, "stale"),
+        (12, "fresh"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_stalled_read_records_safe_unavailable_outcome_within_turn_budget(
     tmp_path: Path,
 ) -> None:
@@ -619,6 +902,11 @@ async def test_stalled_read_records_safe_unavailable_outcome_within_turn_budget(
     assert last_action["event_type"] == "read_unavailable"
     assert last_action["reason_code"] == "read_unavailable"
     assert "raw" not in str(last_action)
+    evidence = agent.observations[-1].read_evidence
+    assert len(evidence) == 1
+    assert evidence[0].command == {"public_id": "resource_1"}
+    assert evidence[0].result is None
+    assert evidence[0].unavailable_reason == "read_unavailable"
 
 
 @pytest.mark.asyncio
@@ -690,6 +978,50 @@ async def test_effect_routes_only_through_intent_outbox_and_dispatcher(tmp_path:
 
 
 @pytest.mark.asyncio
+async def test_reused_proposal_identity_fails_turn_and_unwinds_once(tmp_path: Path) -> None:
+    provider = DurableFakeTool.initialize(tmp_path / "provider.db", "mutate_generic")
+    harness = _harness(tmp_path, _effect_registry(provider))
+    agent = ReusedProposalIdentityAgent()
+
+    result = await harness.runtime.start(
+        definition=harness.definition,
+        goal=SagaGoal(goal_id="goal_reused_proposal", text="Mutate safely.", context={}),
+        agent=agent,
+    )
+
+    events = harness.store.read_events(result.saga_id)
+    failures = tuple(item for item in events if isinstance(item, AgentTurnFailed))
+    encoded = str(tuple(item.model_dump(mode="json") for item in events))
+    assert result.state is SagaStatus.HUMAN_REQUIRED
+    assert [item.reason_code for item in failures] == ["proposal_identity_reused"]
+    assert provider.execute_call_count == 1
+    assert sum(isinstance(item, EffectIntentRecorded) for item in events) == 1
+    assert "changed content" not in encoded
+    assert "raw-provider-secret" not in encoded
+
+
+@pytest.mark.asyncio
+async def test_generic_store_conflict_is_not_treated_as_agent_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness = _harness(tmp_path)
+
+    def fail_store(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise StoreConflict("raw-storage-detail")
+
+    monkeypatch.setattr(harness.kernel, "submit_proposal", fail_store)
+    goal = SagaGoal(goal_id="goal_store_conflict", text="Fail closed.", context={})
+    with pytest.raises(StoreConflict, match="raw-storage-detail"):
+        await harness.runtime.start(
+            definition=harness.definition, goal=goal, agent=_agent(["escalate"])
+        )
+
+    events = harness.store.read_events(_saga_id(goal))
+    assert not any(isinstance(item, AgentTurnFailed) for item in events)
+
+
+@pytest.mark.asyncio
 async def test_false_finish_is_durable_then_agent_gets_new_observation(tmp_path: Path) -> None:
     harness = _harness(tmp_path)
     agent = _agent(["finish", "escalate"])
@@ -704,6 +1036,77 @@ async def test_false_finish_is_durable_then_agent_gets_new_observation(tmp_path:
     assert [item.saga_seq for item in agent.observations] == [3, 5]
     events = harness.store.read_events(result.saga_id)
     assert any(isinstance(item, TerminalDenied) for item in events)
+
+
+def test_terminal_denial_observation_keeps_public_failed_invariant_after_retry() -> None:
+    proof = InvariantEvaluated.model_validate(
+        _observation_event_metadata(28)
+        | {
+            "evaluated_at_seq": 27,
+            "target_status": "succeeded_verified",
+            "invariant_version": "runtime-v1",
+            "evidence_digest": "a" * 64,
+            "results": {"order_fulfilled": False, "private_result": "raw-secret"},
+            "all_passed": False,
+        }
+    )
+    denied = TerminalDenied.model_validate(
+        _observation_event_metadata(29)
+        | {
+            "proposal_id": "proposal_terminal_denied",
+            "proposal_hash": "b" * 64,
+            "target_status": "succeeded_verified",
+            "reason_code": "terminal_gate_denied",
+        }
+    )
+    failed = AgentTurnFailed.model_validate(
+        _observation_event_metadata(31)
+        | {"turn_id": "turn_retry_01", "reason_code": "agent_invalid_response"}
+    )
+    policy = RedactionPolicy(sensitive_keys=("private_result",))
+
+    immediate = _last_observation((proof, denied), policy)
+    after_retry = _last_observation((proof, denied, failed), policy)
+
+    assert immediate == after_retry
+    assert immediate is not None
+    assert immediate["event_type"] == "terminal_denied"
+    invariant_evidence = immediate["invariant_evidence"]
+    assert isinstance(invariant_evidence, Mapping)
+    assert invariant_evidence == {
+        "target_status": "succeeded_verified",
+        "evaluated_at_seq": 27,
+        "invariant_version": "runtime-v1",
+        "results": {"order_fulfilled": False, "private_result": "[REDACTED]"},
+        "all_passed": False,
+    }
+    assert "raw-secret" not in str(immediate)
+    assert "evidence_digest" not in invariant_evidence
+
+
+@pytest.mark.asyncio
+async def test_control_surface_is_computed_before_turn_reservation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness = _harness(tmp_path)
+    observed_sequences: list[int] = []
+
+    def controls(snapshot: SagaSnapshot, lease: Lease) -> ControlProposalCapabilities:
+        del lease
+        observed_sequences.append(snapshot.seq)
+        return ControlProposalCapabilities(escalate_to_human=True)
+
+    monkeypatch.setattr(harness.kernel, "advertised_controls", controls)
+    agent = _agent(["escalate"])
+    await harness.runtime.start(
+        definition=harness.definition,
+        goal=SagaGoal(goal_id="goal_pre_reservation_controls", text="Stop safely.", context={}),
+        agent=agent,
+    )
+
+    assert observed_sequences == [2]
+    assert agent.observations[0].saga_seq == 3
+    assert agent.observations[0].proposal_controls.escalate_to_human is True
 
 
 @pytest.mark.asyncio
@@ -776,8 +1179,30 @@ async def test_malformed_agent_output_is_spent_and_never_persisted(tmp_path: Pat
 
     events = harness.store.read_events(result.saga_id)
     assert result.state is SagaStatus.HUMAN_REQUIRED
-    assert any(isinstance(item, AgentTurnFailed) for item in events)
+    failures = tuple(item for item in events if isinstance(item, AgentTurnFailed))
+    assert agent.calls == 3
+    assert len(failures) == 3
+    assert {item.reason_code for item in failures} == {"agent_invalid_response"}
     assert "raw-secret" not in str(tuple(item.model_dump(mode="json") for item in events))
+
+
+@pytest.mark.asyncio
+async def test_invalid_agent_response_retries_as_a_new_durable_turn(tmp_path: Path) -> None:
+    harness = _harness(tmp_path)
+    agent = TransientInvalidAgent(_agent(["escalate"]))
+
+    result = await harness.runtime.start(
+        definition=harness.definition,
+        goal=SagaGoal(goal_id="goal_retry_invalid", text="Recover safely.", context={}),
+        agent=agent,
+    )
+
+    events = harness.store.read_events(result.saga_id)
+    assert result.state is SagaStatus.HUMAN_REQUIRED
+    assert result.human_required_reason == "operator_requested"
+    assert agent.calls == 2
+    assert sum(isinstance(item, AgentTurnReserved) for item in events) == 2
+    assert sum(isinstance(item, AgentTurnFailed) for item in events) == 1
 
 
 @pytest.mark.asyncio
@@ -793,7 +1218,37 @@ async def test_arbitrary_agent_exception_is_normalized_without_detail(tmp_path: 
     events = harness.store.read_events(result.saga_id)
     encoded = str(tuple(item.model_dump(mode="json") for item in events))
     assert result.state is SagaStatus.HUMAN_REQUIRED
+    failure = next(item for item in events if isinstance(item, AgentTurnFailed))
+    assert failure.reason_code == "agent_internal"
     assert "raw-provider-secret" not in encoded
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("category", "reason_code"),
+    [
+        ("invalid_response", "agent_invalid_response"),
+        ("request_rejected", "agent_request_rejected"),
+        ("rate_limit_exhausted", "agent_rate_limit_exhausted"),
+        ("server_error_exhausted", "agent_server_error_exhausted"),
+        ("transport_exhausted", "agent_transport_exhausted"),
+        ("internal", "agent_internal"),
+    ],
+)
+async def test_categorized_agent_failure_records_only_closed_reason(
+    tmp_path: Path, category: str, reason_code: str
+) -> None:
+    harness = _harness(tmp_path)
+    result = await harness.runtime.start(
+        definition=harness.definition,
+        goal=SagaGoal(goal_id=f"goal_{category}", text="Fail safely.", context={}),
+        agent=FailingAgent(CategorizedAgentError(category)),
+    )
+
+    events = harness.store.read_events(result.saga_id)
+    failure = next(item for item in events if isinstance(item, AgentTurnFailed))
+    assert failure.reason_code == reason_code
+    assert "raw-provider-secret" not in str(tuple(item.model_dump(mode="json") for item in events))
 
 
 @pytest.mark.asyncio
@@ -835,7 +1290,8 @@ async def test_cooperative_agent_timeout_records_one_failed_turn(tmp_path: Path)
     assert blocking.calls == 1
     events = harness.store.read_events(result.saga_id)
     assert sum(isinstance(item, AgentTurnReserved) for item in events) == 1
-    assert any(isinstance(item, AgentTurnFailed) for item in events)
+    failure = next(item for item in events if isinstance(item, AgentTurnFailed))
+    assert failure.reason_code == "agent_deadline_exceeded"
 
 
 @pytest.mark.asyncio

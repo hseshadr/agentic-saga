@@ -31,6 +31,8 @@ EXPECTED_TRACES = {
 REQUIRED_SDIST_DOCUMENTS = {
     "CHANGELOG.md",
     "docs/architecture.html",
+    "docs/architecture/agentic-saga.architecture.json",
+    "docs/architecture/index.html",
     "docs/flight-recorder.md",
     "docs/operations.md",
 }
@@ -281,7 +283,14 @@ def _assert_artifacts(output: Path) -> None:
     wheel, sdist = _single_artifacts(output)
     with ZipFile(wheel) as archive:
         assert any(name.endswith("entry_points.txt") for name in archive.namelist())
-    required = {"LICENSE", "SECURITY.md", "PROVENANCE.md", "docs/agent-adapter.md"}
+    required = {
+        ".env.example",
+        "LICENSE",
+        "SECURITY.md",
+        "PROVENANCE.md",
+        "THIRD_PARTY_NOTICES.md",
+        "docs/agent-adapter.md",
+    }
     assert required <= _sdist_names(sdist)
     requirements = (output / "runtime-requirements.txt").read_text()
     assert "pydantic==" in requirements
@@ -315,12 +324,15 @@ def test_release_scripts_are_strict_and_non_publishing() -> None:
 
 def test_build_configuration_includes_trust_files() -> None:
     pyproject = (ROOT / "pyproject.toml").read_text()
+    assert '"/.env.example"' in pyproject
     assert '"/LICENSE"' in pyproject
     assert '"/SECURITY.md"' in pyproject
     assert '"/PROVENANCE.md"' in pyproject
+    assert '"/THIRD_PARTY_NOTICES.md"' in pyproject
     assert '"/CHANGELOG.md"' in pyproject
     assert '"/docs/operations.md"' in pyproject
     assert '"/docs/architecture.html"' in pyproject
+    assert '"/docs/architecture"' in pyproject
     assert '"/docs/flight-recorder.md"' in pyproject
 
 
@@ -334,6 +346,18 @@ def test_wheel_contains_exact_reviewed_static_and_reference_bytes(tmp_path: Path
     assert static == _package_files(PACKAGE_STATIC)
     assert traces == _package_files(SOURCE_TRACES)
     assert set(traces) == EXPECTED_TRACES
+
+
+def test_wheel_carries_bundled_browser_dependency_notices(tmp_path: Path) -> None:
+    wheel, _ = _direct_build(tmp_path / "dist")
+
+    with ZipFile(wheel) as archive:
+        notices = [name for name in archive.namelist() if name.endswith("/THIRD_PARTY_NOTICES.md")]
+        assert len(notices) == 1
+        notice = archive.read(notices[0]).decode()
+
+    assert "react-dom 19.2.8" in notice
+    assert "Permission is hereby granted, free of charge" in notice
 
 
 def test_wheel_marks_agentic_saga_as_a_typed_package(tmp_path: Path) -> None:

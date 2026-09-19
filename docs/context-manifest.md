@@ -40,8 +40,10 @@ runtime reserves the fixed floors `token_limit // turn_limit` and
 to represent no configured or remaining capacity. These values do not measure input tokens, actual
 provider usage, end-to-end Saga time, money, or provider spend.
 
-The optional [Deep Agents/OpenRouter adapter](agent-adapter.md) consumes this resolved context as
-its system context and renders only the currently eligible descriptor subset on each turn.
+The optional [Pydantic Deep/OpenRouter adapter](agent-adapter.md) consumes this resolved context.
+It exposes the currently eligible descriptors as deferred native proposal tools; the deterministic
+kernel remains the source of truth for execution, Saga state, reconciliation, compensation order,
+and terminal proof.
 
 This authoring facade does not install check callables, construct a `SagaDefinition`, or enforce an
 allowlist inside `SagaRuntime`. The application layer must explicitly assemble those returned inputs
@@ -108,8 +110,10 @@ example_paths:
 ```
 
 Instructions, success criteria, escalation guidance, and example paths give the agent useful
-context. Tool/check names, the catalog digest, and budgets are machine-checked. Example paths are
-stories, not executable branches; order and recovery choices remain the agent's responsibility.
+context. Tool/check names, the catalog digest, and budgets are machine-checked. Example paths show
+short native tool-call/result trajectories, not executable branches or a hidden state machine.
+Execution order and recovery remain deterministic kernel responsibilities; the agent chooses one
+currently eligible proposal.
 
 ## Fail-closed boundary
 

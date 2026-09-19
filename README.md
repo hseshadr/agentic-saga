@@ -2,10 +2,10 @@
 
 [![Dagger](https://github.com/hseshadr/agentic-saga/actions/workflows/dagger.yml/badge.svg)](https://github.com/hseshadr/agentic-saga/actions/workflows/dagger.yml)
 
-TL;DR: **Under private development.** Agentic Saga is a generic Python library for agent-directed,
-side-effecting work. A smart agent chooses the next typed action; a deterministic Saga kernel
-authorizes it, records intent before execution, reconciles uncertainty, compensates verified
-effects, and refuses to call an unproven outcome “done.”
+TL;DR: **OSS release candidate.** Agentic Saga is a generic Python library for agent-directed,
+side-effecting work. An LLM chooses the next typed action from the objective and current evidence;
+a deterministic Saga kernel authorizes it, records intent before execution, reconciles
+uncertainty, compensates verified effects, and refuses to call an unproven outcome “done.”
 
 Run the candidate console command from this source checkout and open its read-only Flight Recorder:
 
@@ -33,15 +33,15 @@ quiescent in `HUMAN_REQUIRED`.
 
 ## Architecture
 
-[Open the architecture signal board](docs/architecture.html) for the visual lifecycle and exact
-source/test map.
+[Explore the interactive architecture](docs/architecture/index.html) to see how the agent chooses
+proposals while the deterministic kernel owns effects, evidence, compensation, and escalation.
 
 | Surface | One responsibility |
 | --- | --- |
 | `src/agentic_saga/manifest.py` | Validate domain-neutral `saga.yaml` context and registered names. |
 | `src/agentic_saga/contracts/` | Define strict, serializable values at every public boundary. |
 | `src/agentic_saga/cli/` | Expose the packaged demo command and no kernel authority. |
-| `src/agentic_saga/agents/` | Return one strict proposal; never receive business-tool authority. |
+| `src/agentic_saga/agents/` | Translate one deferred native tool call into a proposal; never receive business-tool authority. |
 | `src/agentic_saga/kernel/` | Own policy, identity, budgets, compensation frontier, and terminal proof. |
 | `src/agentic_saga/execution/` | Dispatch, reconcile, recover, and coordinate leases. |
 | `src/agentic_saga/storage/` | Provide append-only SQLite evidence, replay, backup, and restore. |
@@ -57,12 +57,12 @@ invariants.
 ## Lean release proof
 
 TL;DR: every pull request and the exact commit merged to `main` receive the complete release
-proof behind the single protected **Dagger** check. The graph resolves authenticated source once,
+proof behind the single protected **Dagger** check. The graph resolves exact source once,
 builds the first-party wheel and sdist once, proves the frontend once, and then validates those
 same immutable inputs on Python 3.12 and 3.13 before one result is reported.
 
 ```text
-authenticated exact source (once)
+exact source (once)
                 |
        +--------+--------+
        |                 |
@@ -83,14 +83,11 @@ Python 3.12 validation  Python 3.13 validation
 Each Python lane runs its quality proof, uses its own runtime-specific dependency wheelhouse, and
 installs the already-built first-party wheel offline. The quality handoff is identity-bound: it
 rejects changed source, lockfiles, coverage evidence, runtime, or results rather than treating a
-previous green run as a shortcut. After both lanes pass, the check emits the wheel, sdist, and
-runtime-requirements SHA-256 manifest as hosted evidence. The separate Dagger security audit
-remains required on its own schedule.
-
-Hosted performance evidence is still pending. A cold Dagger job of at most 20 minutes and a warm
-job of at most 12 minutes are targets, not measurements or a claim that this pipeline is faster.
-Only run URLs for the same pull-request SHA—and separately for the exact merged `main` SHA—can
-establish that proof.
+previous green run as a shortcut. After both lanes pass, the check prints the validated SHA-256
+manifest in the run log; it does not claim that GitHub-hosted wheel or sdist artifacts were
+uploaded. The separate Dagger security audit remains required on its own schedule. Trusted runs
+use private-history authentication while the repository is private; public fork pull requests use
+credentialless public-history resolution and receive no repository secret.
 
 ## Compose the supported runtime
 
@@ -119,15 +116,16 @@ result = await runtime.start(definition=definition, goal=goal, agent=agent)
 composition setting. See the complete working assembly in
 [`examples/ecommerce/demo.py`](examples/ecommerce/demo.py).
 
-## Shipped private v0.1 behavior
+## v0.1 behavior
 
 - Generic typed contracts and a single-host SQLite reference kernel with deterministic policy,
   intent-before-effect dispatch, recovery, reconciliation, compensation, human escalation, backup,
   restore, and redacted evidence export.
 - Strict, bounded, deliberately public `saga.yaml` loading with authoritative registered
   descriptors and named checks.
-- Optional Deep Agents + OpenRouter planning adapter that returns one strict proposal while the
-  kernel retains every side-effect decision.
+- Optional Pydantic Deep + Pydantic AI/OpenRouter adapter that exposes only currently eligible
+  native proposal tools. Pydantic Deep owns the model/tool protocol; the deterministic kernel owns
+  execution, state, compensation order, and terminal proof.
 - Four executable `pytest-bdd` ecommerce paths: verified success, reverse compensation, lost-response
   restart reconciliation, and unverifiable compensation requiring a human.
 - A versioned 24-case deterministic evaluation corpus plus a separately opt-in, credential-gated
@@ -135,12 +133,11 @@ composition setting. See the complete working assembly in
 - A keyboard-operable Flight Recorder implementation with four distribution-bound captured traces,
   bounded strict loading, user-controlled replay, and Story, Ledger, and Proof views.
 - An offline release-measurement harness, dual-Python hosted workflow, exact package-content checks,
-  and packaged-browser gate. Exact main commit
-  `635974d51f87aa802886914be6a46bfd28518c66` passed the hosted
-  [migration Dagger gate](https://github.com/hseshadr/agentic-saga/actions/runs/34727077866) and
-  [security gate](https://github.com/hseshadr/agentic-saga/actions/runs/34727111885). A final
-  equivalence audit found that the migration gate omitted part of the former two-runtime matrix,
-  so that historical run is not full release-matrix evidence. The current graph restores it.
+  and packaged-browser gate. Audited baseline commit
+  `3fcf10ea6a6dbd2799f242758cecbbd6321ff639` passed the full hosted
+  [Dagger gate](https://github.com/hseshadr/agentic-saga/actions/runs/34807057405) and
+  [security gate](https://github.com/hseshadr/agentic-saga/actions/runs/34859242334). Every release
+  candidate still requires fresh checks bound to its own exact commit.
 
 ## Prove it locally
 
@@ -159,7 +156,7 @@ check bound to the current exact head counts as hosted release-matrix evidence.
 
 ## Boundaries
 
-This is a private, unpublished, non-hosted, single-host v0.1. The example provider is deterministic
+This is a non-hosted, single-host v0.1 source library. The example provider is deterministic
 simulation, not a production commerce integration. The library does not provide universal
 exactly-once effects, atomic cross-service commit, high availability, serializable cross-Saga
 isolation, or containment for hostile installed Python/native code. Pre-release storage has no
@@ -187,4 +184,6 @@ Start with the [Quickstart](QUICKSTART.md). Before integrating a real provider, 
 [Kernel safety contract](docs/kernel-safety-contract.md),
 [operations and release contract](docs/operations.md),
 [Saga Context Manifest guide](docs/context-manifest.md), and
-[agent adapter guide](docs/agent-adapter.md).
+[agent adapter guide](docs/agent-adapter.md), which includes native happy-path and compensation
+trajectories. The packaged Flight Recorder's bundled dependencies
+and complete licenses are listed in [third-party notices](THIRD_PARTY_NOTICES.md).

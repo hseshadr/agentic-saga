@@ -3,10 +3,17 @@ name: ecommerce_order
 version: "1.0"
 objective: Fulfill the requested order or restore a verified safe business state.
 instructions:
-  - Inspect authoritative order, inventory, payment, and fulfillment evidence before acting.
+  - inspect_order proves the authoritative order identity, customer authorization, amount, currency, payment state, and fulfillment state.
+  - check_inventory proves quantity and version at a named warehouse; it does not prove that inventory is reserved.
+  - Reuse fresh read evidence until an effect, rejection, version conflict, or unknown outcome invalidates what that evidence proved; then refresh only the affected evidence and never repeat an unchanged rejected proposal.
+  - When last_action reports proposal_rejected, do not repeat an effect; if its descriptor names policy_constraints.rejection_refresh_tool, call that exact eligible read before retrying.
+  - Before the first mutation, use the remaining turn budget to ensure there is room for required evidence, effects, and terminal proof; otherwise request aborted_clean while no effect and no operator decision exists.
   - Choose one eligible tool at a time and reassess after every observed result.
-  - Prefer a valid forward recovery when it can still satisfy the customer goal safely.
-  - Compensate every confirmed effect that must not remain when the goal cannot be completed.
+  - The forward path is inspect current state, prove inventory, reserve inventory, charge payment, schedule fulfillment, then request succeeded_verified only when current invariant evidence proves the goal.
+  - A confirmed forward effect is success evidence, not failure. Never request begin_compensation from stale or missing evidence or speculation; refresh facts needed for the next forward step and compensate only when current evidence or last_action proves the forward goal cannot safely complete.
+  - Prefer a valid forward recovery when it can still satisfy the customer goal safely; when it cannot, request begin_compensation and let the kernel derive the eligible rollback frontier and ordering from durable receipts and dependencies.
+  - Reconcile an unknown effect outcome before continuing or requesting compensation; escalate only if reconciliation cannot establish a safe fact.
+  - "Finish target semantics are exact: succeeded_verified proves the goal, compensated_verified proves every required rollback, aborted_clean proves no external effect exists and no operator decision remains, and resolved_with_exception requires an explicitly accepted exception."
 success_criteria:
   - The order is fulfilled with one captured payment and the required inventory allocation.
   - Current invariant evidence proves the completed state.
@@ -16,12 +23,12 @@ autonomy:
     - Act autonomously only while named policies authorize the proposal and evidence is current.
     - Escalate rather than guessing when reconciliation cannot establish an external outcome.
 budgets:
-  turn_limit: 20
+  turn_limit: 12
   tool_call_limit: 16
-  elapsed_ms_limit: 120000
+  elapsed_ms_limit: 360000
   token_limit: 12000
 tools:
-  catalog_sha256: "8d9ed4f7a836eb3b68dfe28711fe73f5ea23ccf56d2c2a7ece52bbef85e02ce8"
+  catalog_sha256: "e1f956aeb10bce0f2d8a89b2ec33233ebd234b75e1d54da8cf23f91b6af8c2ef"
   allowed:
     - cancel_fulfillment
     - charge_payment
@@ -52,13 +59,62 @@ escalation:
   instructions:
     - Summarize the unresolved decision and cite only durable redacted evidence for an operator.
 example_paths:
-  - name: inventory unavailable after payment
+  - name: fulfillment rejected after confirmed reserve and charge
     kind: compensation_path
     narrative:
-      - A confirmed charge creates a compensation obligation if no safe inventory option remains.
-      - Refund confirmed payment and release any confirmed reservation, then prove the safe state.
+      - 'Observation: durable receipts prove reserve_inventory, charge_payment, and schedule_fulfillment; fresh inspect_order evidence reports fulfillment rejected.'
+      - 'Typed intent: MODEL -> native tool call begin_compensation(reason_code="forward_goal_unreachable", rationale="Authoritative order evidence reports fulfillment rejected.")'
+      - 'KERNEL -> observed result compensation_started(eligible_tools=["cancel_fulfillment"]). Kernel-owned transition, never an agent-ordered rollback: receipts and dependencies derive the frontier.'
+      - 'Typed intent: MODEL -> native tool call cancel_fulfillment(order_id="order_demo_001"). KERNEL -> observed result effect_confirmed(tool="cancel_fulfillment", eligible_tools=["refund_payment"]).'
+      - 'Typed intent: MODEL -> native tool call refund_payment(order_id="order_demo_001", customer_id="customer_demo_001", amount_minor=7900, currency="USD"). KERNEL -> observed result effect_confirmed(tool="refund_payment", eligible_tools=["release_inventory"]).'
+      - 'Typed intent: MODEL -> native tool call release_inventory(order_id="order_demo_001", sku="sku_travel_pack", quantity=1). KERNEL -> observed result effect_confirmed(tool="release_inventory", eligible_tools=[]).'
+      - 'Typed intent: MODEL -> native tool call finish_saga(target_status="compensated_verified", rationale="Fresh compensation proof satisfies every obligation."). KERNEL -> observed result terminal_assigned(status="compensated_verified").'
+  - name: no-effect clean abort
+    kind: happy_path
+    narrative:
+      - 'Observation: authoritative evidence proves the goal cannot proceed and no external effect exists. Typed intent: MODEL -> native tool call finish_saga(target_status="aborted_clean", rationale="Fresh evidence proves a clean abort.").'
+      - 'KERNEL -> observed result terminal_assigned(status="aborted_clean") only after clean-abort invariants pass.'
+      - Never use aborted_clean to bypass a confirmed or unknown effect.
   - name: order fulfilled normally
     kind: happy_path
     narrative:
-      - Current evidence can support inventory reservation, payment, and fulfillment proposals.
-      - Finish only after all success checks pass against authoritative state.
+      - 'Observation: inspect_order proves the authorized order and check_inventory proves stock version 1. Typed intent: MODEL -> native tool call reserve_inventory(order_id="order_demo_001", sku="sku_travel_pack", quantity=1, expected_version=1).'
+      - 'KERNEL -> observed result effect_confirmed(tool="reserve_inventory"); its reservation receipt is success evidence, not failure, and prior reads are stale. Typed intent: refresh inspect_order before charge_payment, then call charge_payment only from fresh evidence.'
+      - 'KERNEL -> observed result effect_confirmed(tool="charge_payment") and prior reads are stale. Typed intent: refresh inspect_order before schedule_fulfillment, then call schedule_fulfillment only from fresh evidence.'
+      - 'KERNEL -> observed result effect_confirmed(tool="schedule_fulfillment") and prior reads are stale. Typed intent: refresh inspect_order before terminal proof; if scheduled call finish_saga, but if rejected call begin_compensation.'
+      - 'Observation: current success checks prove reservation, captured payment, and scheduled fulfillment. Typed intent: MODEL -> native tool call finish_saga(target_status="succeeded_verified", rationale="Fresh invariant evidence proves the goal."). KERNEL -> observed result terminal_assigned(status="succeeded_verified").'
+  - name: unknown effect outcome
+    kind: compensation_path
+    narrative:
+      - 'Observation: an effect outcome is unknown. Runtime step before another agent turn: use the registered adapter to reconcile; do not ask the model to guess, repeat, compensate, or escalate.'
+      - 'No MODEL -> native tool call occurs while the outcome remains unknown. KERNEL -> observed result records confirmed or absent evidence before planning resumes.'
+      - 'If unknown-outcome reconciliation remains unresolved, the deterministic runtime automatically parks the Saga for human escalation with durable evidence; the model does not request that escalation.'
+  - name: alternate inventory recovery
+    kind: happy_path
+    narrative:
+      - 'Observation: check_inventory identifies allowed alternate inventory with sufficient stock and a current version. Typed intent: MODEL -> native tool call reserve_inventory with arguments copied from that result. KERNEL -> observed result records the confirmed reservation before the ordinary path continues.'
+  - name: stale version recovery
+    kind: happy_path
+    narrative:
+      - 'Observation: last_action reports proposal_rejected for reserve_inventory, and policy_constraints.rejection_refresh_tool is check_inventory. Typed intent: MODEL -> native tool call check_inventory once; do not repeat the rejected reserve unchanged.'
+      - 'KERNEL -> observed result supplies a fresh version. Typed intent: MODEL -> native tool call reserve_inventory once with arguments copied from that evidence.'
+  - name: already-satisfied effects
+    kind: happy_path
+    narrative:
+      - 'Observation: authoritative reads prove reservation, payment, or fulfillment is already satisfied. Typed intent: MODEL -> native tool call the first unmet eligible action; never duplicate a satisfied effect. KERNEL -> observed result becomes the next source of truth.'
+  - name: insufficient planning budget
+    kind: happy_path
+    narrative:
+      - 'Observation: no external effect or unresolved operator decision exists, and remaining_budget cannot cover the evidence, effects, and proof still required. Typed intent: MODEL -> native tool call finish_saga(target_status="aborted_clean", rationale="The remaining planning budget cannot safely complete the goal before mutation.").'
+      - 'KERNEL -> observed result terminal_assigned(status="aborted_clean") only after clean-abort proof passes.'
+      - Never create partial external work merely to consume the final planning turn.
+  - name: missing authority escalation
+    kind: compensation_path
+    narrative:
+      - 'Observation: trusted goal context explicitly requires human escalation and proves required customer authority is unavailable. Typed intent: MODEL -> native tool call escalate_to_human(reason_code="customer_authority_missing", rationale="A human must resolve the unavailable authority.").'
+      - 'KERNEL -> observed result records quiescent HUMAN_REQUIRED with a redacted evidence packet.'
+  - name: inadequate recovery horizon
+    kind: compensation_path
+    narrative:
+      - 'Observation: every forward descriptor reports recovery_retention_sufficient false because one required effect cannot retain idempotency through the recovery horizon. Typed intent: MODEL -> native tool call escalate_to_human(reason_code="recovery_horizon_unsafe", rationale="A human must resolve the inadequate recovery guarantee before mutation.").'
+      - 'KERNEL -> observed result records quiescent HUMAN_REQUIRED before any mutation.'

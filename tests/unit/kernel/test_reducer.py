@@ -8,6 +8,7 @@ from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from agentic_saga.contracts.common import Direction, JsonObject, sha256_json
 from agentic_saga.contracts.events import (
+    AgentTurnReserved,
     ApprovalConsumed,
     CompensationIntentRecorded,
     CompensationStarted,
@@ -19,6 +20,8 @@ from agentic_saga.contracts.events import (
     HumanResolutionRecorded,
     InvariantEvaluated,
     LedgerEvent,
+    ProposalRejected,
+    ReadObserved,
     ReconciliationRecorded,
     RecoveryPlanAccepted,
     RecoveryPlanRejected,
@@ -26,6 +29,7 @@ from agentic_saga.contracts.events import (
     SagaCreated,
     SagaStarted,
     TerminalAssigned,
+    TerminalDenied,
 )
 from agentic_saga.contracts.outcomes import (
     EffectConfirmed,
@@ -273,6 +277,47 @@ def human_resolution(seq: int = 4, verified: bool = True) -> HumanResolutionReco
 def terminal_assigned(seq: int, status: SagaStatus) -> TerminalAssigned:
     payload = _metadata(seq) | {"event_type": "terminal_assigned", "status": status}
     return TerminalAssigned.model_validate(payload)
+
+
+def terminal_denied(seq: int) -> TerminalDenied:
+    payload = _metadata(seq) | {
+        "proposal_id": "proposal_01",
+        "proposal_hash": HASH,
+        "target_status": SagaStatus.SUCCEEDED_VERIFIED,
+        "reason_code": "terminal_gate_denied",
+    }
+    return TerminalDenied.model_validate(payload)
+
+
+def turn_reserved(seq: int) -> AgentTurnReserved:
+    payload = _metadata(seq) | {
+        "turn_id": "turn_01",
+        "turn_index": 1,
+        "reserved_elapsed_ms": 100,
+        "reserved_tokens": 100,
+    }
+    return AgentTurnReserved.model_validate(payload)
+
+
+def proposal_rejected(seq: int) -> ProposalRejected:
+    payload = _metadata(seq) | {
+        "proposal_id": "proposal_02",
+        "proposal_hash": HASH,
+        "reason_code": "saga_phase_denied",
+    }
+    return ProposalRejected.model_validate(payload)
+
+
+def read_observed(seq: int) -> ReadObserved:
+    result = {"state": "ready"}
+    payload = _metadata(seq) | {
+        "turn_id": "turn_read_01",
+        "proposal_id": "proposal_read_01",
+        "tool_name": "inspect_order",
+        "redacted_result": result,
+        "result_hash": sha256_json(result),
+    }
+    return ReadObserved.model_validate(payload)
 
 
 def running_snapshot() -> SagaSnapshot:
@@ -1190,6 +1235,30 @@ def test_should_persist_exact_invariant_proof_markers() -> None:
     assert proved.last_invariant_target is SagaStatus.SUCCEEDED_VERIFIED
     assert proved.last_invariant_version == "checkout-invariants-v1"
     assert proved.last_invariant_evidence_digest == HASH
+
+
+def test_should_advance_progress_only_for_substantive_events() -> None:
+    failed = invariant_evaluated(3, evaluated_at_seq=2).model_copy(update={"all_passed": False})
+    proved = reduce_event(running_snapshot(), failed)
+    denied = reduce_event(proved, terminal_denied(4))
+    observed = reduce_event(denied, read_observed(5))
+    reserved = reduce_event(denied, turn_reserved(5))
+    rejected = reduce_event(reserved, proposal_rejected(6))
+    intended = reduce_event(rejected, effect_intent(seq=7))
+    dispatched = reduce_event(intended, dispatch_started(seq=8))
+
+    assert proved.last_substantive_progress_seq == 2
+    assert denied.last_substantive_progress_seq == 2
+    assert observed.last_substantive_progress_seq == 5
+    assert reserved.last_substantive_progress_seq == 2
+    assert rejected.last_substantive_progress_seq == 2
+    assert intended.last_substantive_progress_seq == 2
+    assert dispatched.last_substantive_progress_seq == 2
+
+    outcome = EffectConfirmed(receipt={"payment_id": "payment-1"})
+    progressed = reduce_event(dispatched, effect_outcome(9, outcome))
+
+    assert progressed.last_substantive_progress_seq == 9
 
 
 def test_should_serialize_exact_invariant_proof_fields() -> None:

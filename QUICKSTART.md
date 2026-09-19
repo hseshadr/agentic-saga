@@ -1,6 +1,6 @@
 # Quickstart
 
-TL;DR: clone the private repository, then run the candidate console command against one
+TL;DR: clone the repository, then run the candidate console command against one
 deterministic compensation trace in the local Flight Recorder. No model key or external runtime
 service is required.
 
@@ -111,22 +111,29 @@ The first command installs development and optional-agent dependencies. The qual
 implemented measurement harness are offline and credential-free. The measurement command runs both
 quality gates, builds and installs a wheel from locked inputs, exercises the packaged recorder, and
 enforces the published budgets. It reports `overall: FAIL` for an invalid release environment; a
-dirty-tree result is diagnostic only. A clean-current-commit report and matching hosted CI run still
-must be recorded before release. The
+dirty-tree result is diagnostic only. Every release candidate requires a clean exact-commit report
+and matching hosted CI run. The
 [operations and release contract](docs/operations.md) lists every threshold and required artifact.
 
-## Optional planning adapter
+## Optional Pydantic Deep planning adapter
 
-Install and construct the Deep Agents/OpenRouter integration without making a model call:
+Install the exactly pinned optional integration and construct it without making a model call:
 
 ```bash
 uv sync --extra agent --group dev
 uv run pytest tests/unit/agents -q
 ```
 
-The adapter receives public resolved context and returns one strict proposal. It receives no
-business-tool callable, receipt, credential, or kernel authority. See the
-[agent adapter guide](docs/agent-adapter.md).
+The `agent` extra pins `pydantic-deep==0.3.43` and
+`pydantic-ai-slim[openrouter]==2.45.0`. Pydantic Deep owns the model/tool protocol: it receives one
+strict native toolset containing only the actions currently eligible. The deterministic Saga
+kernel owns execution, durable state, unknown-outcome reconciliation, compensation order, and
+terminal proof. No business-tool callable, receipt, credential, idempotency key, or kernel
+authority reaches the model harness.
+
+See the [agent adapter guide](docs/agent-adapter.md) for the complete native happy path,
+failure-after-charge compensation path, disabled Pydantic Deep capabilities, and human-escalation
+boundary.
 
 Validate the fixed 24-case evaluation corpus without a model:
 
@@ -138,10 +145,15 @@ Live evaluation costs money and requires a key plus explicit consent. It is sepa
 ordinary tests, and release measurement:
 
 ```bash
-export OPENROUTER_API_KEY=your_key
+cp .env.example .env
+chmod 600 .env
+# Edit .env and set OPENROUTER_API_KEY to your own key.
 RUN_LIVE_MODEL_EVALS=1 uv run python -m examples.ecommerce.eval --live \
   --samples 3 --output .artifacts/eval
 ```
+
+`.env` is local-only and ignored by Git. `.env.example` is the committed, secret-free template.
+Process environment values take precedence over the local file.
 
 The library does not meter money or cap provider spend. Its token limit caps output allocation for
 the maintained adapter, and its elapsed limit caps agent-call time; neither is actual provider

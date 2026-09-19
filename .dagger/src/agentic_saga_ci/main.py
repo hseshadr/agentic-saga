@@ -95,7 +95,11 @@ async def _bounded_gather[ResultT](
         raise
 
 
-async def _guard(source: dagger.Directory, commit_sha: str, git_auth_header: dagger.Secret) -> None:
+async def _guard(
+    source: dagger.Directory,
+    commit_sha: str,
+    git_auth_header: dagger.Secret | None,
+) -> None:
     guard = dag.foundation().guard(
         source=source,
         repository=REPOSITORY,
@@ -106,7 +110,9 @@ async def _guard(source: dagger.Directory, commit_sha: str, git_auth_header: dag
 
 
 async def _release_source(
-    source: dagger.Directory, commit_sha: str, git_auth_header: dagger.Secret
+    source: dagger.Directory,
+    commit_sha: str,
+    git_auth_header: dagger.Secret | None,
 ) -> dagger.Directory:
     await _guard(source, commit_sha, git_auth_header)
     repository = dag.git(REPOSITORY_URL, http_auth_header=git_auth_header)
@@ -114,7 +120,9 @@ async def _release_source(
 
 
 async def _dependency_audit(
-    source: dagger.Directory, commit_sha: str, git_auth_header: dagger.Secret
+    source: dagger.Directory,
+    commit_sha: str,
+    git_auth_header: dagger.Secret | None,
 ) -> None:
     audit = dag.python_package().dependency_audit(
         source=source,
@@ -329,7 +337,7 @@ class AgenticSaga:
         self,
         source: dagger.Directory,
         commit_sha: str,
-        git_auth_header: dagger.Secret,
+        git_auth_header: dagger.Secret | None = None,
     ) -> str:
         """Run guarded dual-runtime, frontend, and measured release gates."""
         verified = await _release_source(source, commit_sha, git_auth_header)
@@ -343,7 +351,7 @@ class AgenticSaga:
         self,
         source: dagger.Directory,
         commit_sha: str,
-        git_auth_header: dagger.Secret,
+        git_auth_header: dagger.Secret | None = None,
     ) -> str:
         """Run guarded locked Python and frontend dependency audits."""
         await _dependency_audit(source, commit_sha, git_auth_header)

@@ -68,7 +68,17 @@ VALID_MANIFEST = "\n".join(
 PUBLIC_INPUTS = (
     ("source", "dagger.Directory"),
     ("commit_sha", "str"),
-    ("git_auth_header", "dagger.Secret"),
+    ("git_auth_header", "dagger.Secret | None"),
+)
+AUTH_ARGUMENT = "--git-auth-header=env:DAGGER_GIT_HTTP_AUTH_HEADER"
+AUTH_PREDICATE = (
+    "github.event.repository.private && (github.event_name != 'pull_request' || "
+    "github.event.pull_request.head.repo.full_name == github.repository) && "
+    "secrets.DAGGER_GIT_HTTP_AUTH_HEADER != ''"
+)
+SAFE_AUTH_ARGUMENT_EXPRESSION = f"${{{{ {AUTH_PREDICATE} && '{AUTH_ARGUMENT}' || '' }}}}"
+SAFE_AUTH_ENV_EXPRESSION = (
+    f"${{{{ {AUTH_PREDICATE} && secrets.DAGGER_GIT_HTTP_AUTH_HEADER || '' }}}}"
 )
 GENERATED_PATHS = (".dagger/sdk/generated.py", ".dagger/.venv/pyvenv.cfg")
 GENERATED_PREFIXES = (".dagger/sdk/", ".dagger/.venv/")
@@ -209,8 +219,8 @@ def _assert_frontend_runtime_contract(source: str) -> None:
 def _assert_public_schema(source: str) -> None:
     actual = tuple(_signature(method) for method in _public_methods(_adapter_class(_tree(source))))
     expected = (
-        ("ci", (), PUBLIC_INPUTS, None, (), None, (0, 0), "str"),
-        ("security", (), PUBLIC_INPUTS, None, (), None, (0, 0), "str"),
+        ("ci", (), PUBLIC_INPUTS, None, (), None, (1, 0), "str"),
+        ("security", (), PUBLIC_INPUTS, None, (), None, (1, 0), "str"),
     )
     assert actual == expected, "only ci and security may be public Dagger functions"
 
@@ -223,7 +233,7 @@ def _assert_ci_resolves_exact_source(source: str) -> None:
         for node in ast.walk(ci)
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
     ]
-    assert calls.count("_release_source") == 1, "CI must resolve authenticated exact source once"
+    assert calls.count("_release_source") == 1, "CI must resolve canonical exact source once"
 
 
 def _assert_immutable_runtime_contract(source: str) -> None:
@@ -280,8 +290,7 @@ def _assert_workflow_boundary(name: str, workflow: str) -> None:
         if step.get("uses") == f"dagger/dagger-for-github@{DAGGER_ACTION_SHA}"
     ]
     expected_args = (
-        f"{argument} --source=. --commit-sha=${{{{ github.sha }}}} "
-        "--git-auth-header=env:DAGGER_GIT_HTTP_AUTH_HEADER"
+        f"{argument} --source=. --commit-sha=${{{{ github.sha }}}} {SAFE_AUTH_ARGUMENT_EXPRESSION}"
     )
     arguments = [
         cast(dict[str, str], step["with"])["args"]
@@ -290,6 +299,7 @@ def _assert_workflow_boundary(name: str, workflow: str) -> None:
     ]
     assert len(checkout) == 1
     assert len(dagger_steps) == 1
+    assert dagger_steps[0]["env"] == {"DAGGER_GIT_HTTP_AUTH_HEADER": SAFE_AUTH_ENV_EXPRESSION}
     assert arguments == [expected_args], "workflow must contain one sole Dagger invocation"
     assert dagger_steps[0]["with"] == {"version": "0.21.8", "verb": "call", "args": expected_args}
 
@@ -349,7 +359,7 @@ def test_should_reject_an_unapproved_public_dagger_function() -> None:
 def test_should_require_one_exact_source_resolution_call() -> None:
     # Given the real public CI entry point.
     # When its narrow source-resolution call graph is checked.
-    # Then it resolves authenticated exact source once.
+    # Then it resolves canonical exact source once.
     _assert_ci_resolves_exact_source(MODULE.read_text())
 
 
@@ -550,6 +560,43 @@ def test_should_preserve_thin_pinned_workflow_ingress(name: str) -> None:
 
 
 @pytest.mark.parametrize(
+    ("private", "event_name", "head_repository", "secret_available", "expected"),
+    (
+        (True, "push", None, True, True),
+        (True, "pull_request", "hseshadr/agentic-saga", True, True),
+        (True, "pull_request", "contributor/agentic-saga", True, False),
+        (True, "schedule", None, True, True),
+        (True, "workflow_dispatch", None, True, True),
+        (True, "push", None, False, False),
+        (True, "pull_request", "hseshadr/agentic-saga", False, False),
+        (False, "push", None, True, False),
+        (False, "pull_request", "hseshadr/agentic-saga", True, False),
+        (False, "pull_request", "contributor/agentic-saga", True, False),
+        (False, "schedule", None, True, False),
+        (False, "workflow_dispatch", None, True, False),
+    ),
+)
+def test_should_select_auth_only_for_private_trusted_events(
+    private: bool,
+    event_name: str,
+    head_repository: str | None,
+    secret_available: bool,
+    expected: bool,
+) -> None:
+    # Given the repository visibility and event identity used by the exact workflow expression.
+    trusted = event_name != "pull_request" or head_repository == main.REPOSITORY
+
+    # When the authentication selection contract is evaluated.
+    selected = private and trusted and secret_available
+    secret = "masked-secret" if secret_available else ""
+    environment = secret if selected else ""
+
+    # Then public, external-fork, and no-secret events receive neither auth surface.
+    assert selected is expected
+    assert environment == (secret if expected else "")
+
+
+@pytest.mark.parametrize(
     ("original", "replacement"),
     ((CHECKOUT_SHA, "v4"), (DAGGER_ACTION_SHA, "v8.4.1")),
 )
@@ -668,14 +715,14 @@ def _assert_shared_build_contract(module: ModuleType, monkeypatch: pytest.Monkey
 
 
 def test_should_reject_missing_exact_source_resolution() -> None:
-    # Given a copied adapter that bypasses authenticated source resolution.
+    # Given a copied adapter that bypasses canonical source resolution.
     source = MODULE.read_text().replace(
         "verified = await _release_source(source, commit_sha, git_auth_header)", "verified = source"
     )
 
     # When the sole permitted call-graph boundary is checked.
-    # Then CI cannot skip authenticated exact-source resolution.
-    with pytest.raises(AssertionError, match="authenticated exact source"):
+    # Then CI cannot skip canonical exact-source resolution.
+    with pytest.raises(AssertionError, match="canonical exact source"):
         _assert_ci_resolves_exact_source(source)
 
 
@@ -732,14 +779,16 @@ def test_should_fail_closed_for_an_invalid_shared_artifact_manifest(manifest: st
         main._validated_manifest(manifest)
 
 
+@pytest.mark.parametrize("auth_header", (None, f"Basic {uuid.uuid4().hex}"))
 def test_should_orchestrate_ci_with_plain_async_collaborators(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, auth_header: str | None
 ) -> None:
     # Given concrete source and output identities supplied by async collaborators.
     source, verified, artifacts, frontend = object(), object(), object(), object()
     events: list[str] = []
 
-    async def resolve(*_: object) -> object:
+    async def resolve(received: object, commit_sha: str, auth: object) -> object:
+        assert (received, commit_sha, auth) == (source, "a" * 40, auth_header)
         events.append("resolve")
         return verified
 
@@ -763,12 +812,11 @@ def test_should_orchestrate_ci_with_plain_async_collaborators(
     monkeypatch.setattr(main, "_artifact_manifest", manifest, raising=False)
 
     # When public CI is awaited.
-    auth_header = f"Basic {uuid.uuid4().hex}"
     result = asyncio.run(main.AgenticSaga().ci(source, "a" * 40, auth_header))
 
     # Then the resolved source flows into both later orchestration phases.
     assert result == f"Agentic Saga canonical Dagger gate passed\nSHA256SUMS\n{VALID_MANIFEST}"
-    assert auth_header not in result
+    assert auth_header is None or auth_header not in result
     assert events == ["resolve", "shared", "matrix", "manifest"]
 
 

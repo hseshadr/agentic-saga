@@ -24,6 +24,12 @@ type _BoundedText = Annotated[str, StringConstraints(strict=True, min_length=1, 
 type _ReasonCode = Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]{0,99}$")]
 type _RuleId = Annotated[str, StringConstraints(strict=True, min_length=1, max_length=200)]
 type _Version = Annotated[str, StringConstraints(strict=True, min_length=1, max_length=200)]
+type TerminalStatus = Literal[
+    "succeeded_verified",
+    "compensated_verified",
+    "aborted_clean",
+    "resolved_with_exception",
+]
 _JSON_OBJECT: TypeAdapter[JsonObject] = TypeAdapter(JsonObject)
 
 
@@ -130,6 +136,42 @@ class ToolDescriptor(BaseModel):
         return _read_descriptor(definition)
 
 
+class ReadEvidence(BaseModel):
+    """Retain one bounded, public read command and its durable outcome."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    tool_name: _BoundedName
+    command: JsonObject
+    observed_at_saga_seq: int = Field(strict=True, ge=1)
+    freshness: Literal["fresh", "stale"]
+    result: JsonObject | None = None
+    unavailable_reason: _ReasonCode | None = None
+
+    @model_validator(mode="after")
+    def require_exactly_one_outcome(self) -> Self:
+        if (self.result is None) == (self.unavailable_reason is None):
+            raise ValueError("read evidence must contain exactly one durable outcome")
+        return self
+
+
+class ControlProposalCapabilities(BaseModel):
+    """Expose only control proposals the deterministic kernel can currently accept."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    finish_targets: tuple[TerminalStatus, ...] = ()
+    begin_compensation: bool = False
+    escalate_to_human: bool = False
+
+    @field_validator("finish_targets")
+    @classmethod
+    def require_unique_targets(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if len(value) != len(set(value)):
+            raise ValueError("finish targets must be unique")
+        return value
+
+
 class SagaObservation(BaseModel):
     """Present the agent with the current projection and remaining turn budget."""
 
@@ -142,6 +184,10 @@ class SagaObservation(BaseModel):
     last_action: JsonObject | None
     projection: JsonObject
     remaining_budget: ExecutionBudget
+    read_evidence: tuple[ReadEvidence, ...] = ()
+    proposal_controls: ControlProposalCapabilities = Field(
+        default_factory=ControlProposalCapabilities
+    )
 
 
 class SagaResult(BaseModel):
@@ -177,7 +223,7 @@ def _read_descriptor[CommandT: BaseModel, ResultT: BaseModel](
     return ToolDescriptor(
         name=definition.name,
         kind="read",
-        description="Read current authoritative state.",
+        description=definition.description,
         input_schema=_schema(definition.input_model),
         reversibility=None,
     )
@@ -189,7 +235,7 @@ def _effect_descriptor[CommandT: BaseModel](
     return ToolDescriptor(
         name=definition.name,
         kind="effect",
-        description="Request one durable external effect.",
+        description=definition.description,
         input_schema=_schema(definition.input_model),
         reversibility=definition.capabilities.reversibility,
     )
@@ -197,11 +243,14 @@ def _effect_descriptor[CommandT: BaseModel](
 
 __all__ = [
     "AgentDriver",
+    "ControlProposalCapabilities",
     "ExecutionBudget",
+    "ReadEvidence",
     "SagaGoal",
     "SagaObservation",
     "SagaResult",
     "SagaStatus",
     "TerminalRequirement",
+    "TerminalStatus",
     "ToolDescriptor",
 ]
