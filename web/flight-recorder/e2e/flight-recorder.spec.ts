@@ -28,7 +28,11 @@ async function selectRun(page: Page, index: number, outcome: string): Promise<vo
 async function expectBusinessFailureEvidence(page: Page): Promise<void> {
   await page.getByRole("button", { name: /^22\. Compensation started/ }).click();
   await expect(page.getByRole("complementary", { name: "Recorded evidence" })).toContainText(
-    "fulfillment_rejected",
+    "forward_goal_unreachable",
+  );
+  await page.getByRole("button", { name: /^20\. Read observed/ }).click();
+  await expect(page.getByRole("complementary", { name: "Recorded evidence" })).toContainText(
+    '"fulfillment": "rejected"',
   );
   await page.getByRole("tab", { name: "Ledger" }).click();
   await page.getByLabel("Search recorded fields").fill("charge_payment");
