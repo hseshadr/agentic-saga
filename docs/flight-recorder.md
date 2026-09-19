@@ -1,6 +1,6 @@
 # Saga Flight Recorder
 
-TL;DR: the console command turns one real, redacted `RunTrace` 1.0 into a read-only causal signal
+TL;DR: the console command turns redacted `RunTrace` 1.0 recordings into a read-only causal signal
 board on `127.0.0.1`. It never calls a model, executes a tool, resumes a Saga, or changes Saga
 state.
 
@@ -11,10 +11,24 @@ uv run --no-dev agentic-saga demo --scenario business-failure --open
 ```
 
 The first dependency installation may access a package registry. The demo itself needs no
-credential, model, or external runtime service. It materializes only the selected
-distribution-bound trace, prints and flushes the actual loopback URL, waits for Ctrl-C, closes the
-server, and removes its temporary site. Choose `happy-path`, `lost-response`, or
-`compensation-failure` for another captured outcome. Omit `--open` when you want only the URL.
+credential, model, or external runtime service. It materializes all four distribution-bound traces,
+prints and flushes the actual loopback URL, waits for Ctrl-C, closes the server, and removes its
+temporary site. `--scenario` selects the initial recording; all scenarios remain available in the
+page. Omit `--open` when you want only the URL. The CLI explains that only the web server remains
+active, and the page identifies the recordings as scripted without JEV or model calls.
+
+With a local Temporal server running, `uv run python -m examples.ecommerce.run all --open` executes
+all four scenarios and serves their fresh results. The compensation-failure example includes
+simulated authorized human resolution and ends with verified rollback; the packaged recording
+stops at human review to demonstrate that unresolved state.
+
+The browser checks the catalog every three seconds and shows its last successful check. New
+recordings replace older results automatically; unchanged recordings preserve your scenario and
+replay position. If the server becomes unavailable, the last loaded recording stays visible with
+a reconnecting status. Changes to the served JavaScript or CSS trigger an automatic page reload.
+The CLI serves current packaged UI assets, so a frontend build followed by `assets:sync` is visible
+without restarting the recorder server. An older tab without update detection needs one reload
+to load this capability. These checks read available recordings; they do not execute new workflows.
 
 Frontend contributors can run the source workbench and its complete browser proof:
 
@@ -26,11 +40,24 @@ npx --yes pnpm@11.5.0 gate
 
 ## What the first screen proves
 
-The top strip names the scenario, plain-language outcome, and verified safety-check count. Built-in
+The top strip names the scenario and its recorded outcome independently of the replay cursor,
+with separate order and recovery results. Replay controls identify paused, playing, and completed
+playback; **Show outcome** returns to the final recorded event. Built-in
 ecommerce traces also show the business flow: check stock, reserve the item, charge payment,
 arrange delivery, and verify the order. If a later step fails, a separate lane shows cancel,
 refund, and release progress in the safe reverse order. This business view is enabled by explicit
 catalog metadata; generic trace catalogs continue to receive the generic recorder.
+
+The use-case summary validates all four ecommerce recordings and shows green checks only when
+recorded evidence satisfies the scenario's expected safety behavior. This is separate from order
+success: a rejected order can pass its recovery scenario. The bundled uncertain-refund example
+can pass its safe-stop check while still requiring human review; the fresh resolved example must
+also prove the matching human resolution and completed recovery. Checks remain stable during
+replay and are recalculated when a recording changes. Missing or unreadable evidence is not passed.
+
+The story is a table with **Step**, **Action**, **Responsible**, **Result**, and **Evidence** columns.
+Results describe each event (completed, failed, uncertain, verified, or recorded), rather than
+repeating historical workflow states. Later recovery does not rewrite an earlier failed check.
 
 The trajectory lists stored runs. The center board keeps every durable event in history order across
 Agent, Workflow guard, Effect + repair, and Proof lanes. The right inspector shows only recorded,
@@ -57,8 +84,9 @@ stepping remains available. Changing evidence views pauses playback; changing ru
 local replay at that run’s recorded outcome.
 
 This is a dynamic replay of captured evidence, not a claim that the backend is executing live. The
-projection reads only events at or before the visible cursor, so future success, failure, recovery,
-and proof do not leak into an earlier frame.
+event projection reads only events at or before the visible cursor. The separately labeled
+recorded outcome remains visible as context while the business flow and evidence show the selected
+point in history.
 
 - **Story** translates recorded event types into fixed plain-language descriptions.
 - **Ledger** filters only safe identifiers and receipt references, and renders at most 25 rows per

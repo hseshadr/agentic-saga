@@ -1,12 +1,16 @@
 .replayControls {
   display: grid;
-  grid-template-columns: repeat(4, max-content) minmax(120px, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   align-items: center;
   padding: 10px 14px;
   border-bottom: 1px solid var(--steel-dark);
   background: var(--deck-blue);
   color: #fff;
+}
+
+.replayState {
+  font-size: 0.85rem;
 }
 
 .replayControls button,
@@ -82,7 +86,6 @@
   font-size: 0.85rem;
 }
 
-.story,
 .proofList {
   padding: 0;
   margin: 18px 0 0;
@@ -90,47 +93,71 @@
 }
 
 .story {
-  border-top: 1px solid var(--steel-dark);
-}
-
-.story li {
-  border-bottom: 1px solid var(--steel);
-}
-
-.storySignal {
-  display: grid;
-  grid-template-columns: minmax(190px, 1.1fr) 95px minmax(240px, 1.6fr) 145px;
-  gap: 12px;
-  align-items: baseline;
   width: 100%;
-  padding: 11px 8px;
-  border: 0;
-  border-left: 4px solid transparent;
-  background: transparent;
-  color: var(--deck-blue);
-  text-align: left;
-  cursor: pointer;
-}
-
-.storySignal:hover,
-.storySignal:focus-visible {
-  border-left-color: var(--authorized);
+  margin-top: 18px;
+  border-collapse: collapse;
   background: var(--paper-raised);
+  font-size: 0.78rem;
 }
 
-.storyLane,
-.storyStatus {
+.story th,
+.story td {
+  padding: 12px 10px;
+  border-bottom: 1px solid var(--steel);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.story th {
+  border-bottom: 2px solid var(--deck-blue);
   color: var(--muted-ink);
   font-size: 0.72rem;
 }
 
-.storySummary {
+.story button {
+  min-height: 34px;
+  padding: 5px 9px;
+  border: 1px solid var(--authorized);
+  background: transparent;
+  color: var(--authorized);
+  cursor: pointer;
+}
+
+.story tr:focus-within {
+  background: var(--paper);
+}
+
+.storyResult {
+  display: grid;
+  gap: 5px;
   line-height: 1.45;
 }
 
 .storyStatus {
-  justify-self: end;
+  justify-self: start;
+  padding: 1px 5px;
+  border: 1px solid var(--steel-dark);
+  color: var(--muted-ink);
+  font-size: 0.68rem;
   font-weight: 650;
+}
+
+.storyStatus[data-result="Completed"],
+.storyStatus[data-result="Verified"] {
+  border-color: var(--proof);
+  color: var(--proof);
+}
+
+.storyStatus[data-result="Failed"],
+.storyStatus[data-result="Needs review"] {
+  border-color: var(--stop);
+  color: var(--stop);
+}
+
+.storyStatus[data-result="Uncertain"] {
+  border-color: var(--warning);
+  color: var(--deck-blue);
 }
 
 .filters {
@@ -336,13 +363,42 @@
   }
 
   .filters,
-  .proofRecord,
-  .storySignal {
+  .proofRecord {
     grid-template-columns: 1fr;
   }
 
-  .storyStatus {
-    justify-self: start;
+  .story,
+  .story tbody,
+  .story tr {
+    display: block;
+    width: 100%;
+  }
+
+  .story thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .story tr {
+    padding: 8px 0;
+    border-bottom: 2px solid var(--steel-dark);
+  }
+
+  .story td {
+    display: grid;
+    grid-template-columns: 90px minmax(0, 1fr);
+    gap: 8px;
+    padding: 6px 10px;
+    border: 0;
+  }
+
+  .story td::before {
+    content: attr(data-label);
+    color: var(--muted-ink);
+    font-size: 0.72rem;
   }
 
   .tableFrame {

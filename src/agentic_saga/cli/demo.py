@@ -4,10 +4,12 @@ import argparse
 import sys
 import webbrowser
 from dataclasses import dataclass
+from importlib import resources
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Final, Protocol
 
+from agentic_saga.contracts.trace import RunTrace
 from agentic_saga.demo.assets import MaterializationError, materialize_recorder_site
 from agentic_saga.demo.reference import (
     DEFAULT_REFERENCE_SCENARIO,
@@ -40,9 +42,12 @@ def configure_demo_parser(
     subparsers: argparse._SubParsersAction[argparse.ArgumentParser],
 ) -> argparse.ArgumentParser:
     """Register the deterministic packaged recorder command."""
-    parser = subparsers.add_parser("demo", help="serve a captured Saga trace")
+    parser = subparsers.add_parser("demo", help="browse all four captured ecommerce scenarios")
     parser.add_argument(
-        "--scenario", choices=REFERENCE_SCENARIOS, default=DEFAULT_REFERENCE_SCENARIO
+        "--scenario",
+        choices=REFERENCE_SCENARIOS,
+        default=DEFAULT_REFERENCE_SCENARIO,
+        help="initial scenario to display; all four remain available",
     )
     parser.add_argument("--open", action="store_true", dest="open_browser")
     parser.add_argument("--port", type=_port, default=0)
@@ -65,7 +70,7 @@ def run_demo(
     output: _Writer | None = None,
     errors: _Writer | None = None,
 ) -> int:
-    """Serve one captured reference trace until interrupted."""
+    """Serve all captured reference traces until interrupted."""
     output_stream, error_stream = _demo_streams(output, errors)
     try:
         return _serve_demo(arguments, output_stream, error_stream)
@@ -89,16 +94,29 @@ def _demo_streams(output: _Writer | None, errors: _Writer | None) -> tuple[_Writ
 
 
 def _serve_demo(arguments: DemoArguments, output: _Writer, errors: _Writer) -> int:
-    with TemporaryDirectory(prefix="agentic-saga-") as workspace:
+    with (
+        TemporaryDirectory(prefix="agentic-saga-") as workspace,
+        resources.as_file(resources.files("agentic_saga.demo").joinpath("static")) as static,
+    ):
         destination = Path(workspace).resolve(strict=True) / "site"
-        trace = load_reference_trace(arguments.scenario)
+        traces: dict[str, RunTrace] = {
+            scenario: load_reference_trace(scenario) for scenario in REFERENCE_SCENARIOS
+        }
         materialize_recorder_site(
             destination,
-            {arguments.scenario: trace},
+            traces,
             presentation="ecommerce",
+            default_run_id=arguments.scenario,
+            recording_mode="scripted",
         )
-        with serve_recorder(destination, port=arguments.port) as server:
+        with serve_recorder(destination, port=arguments.port, static_directory=static) as server:
             _write_line(output, f"Agentic Saga recorder: {server.url}")
+            _write_line(
+                output,
+                f"All {len(traces)} scenario recordings are complete and available in the UI.",
+            )
+            _write_line(output, "Recorded scripted demo: no live model calls or JEV adapter.")
+            _write_line(output, "The web server stays open for browsing. Press Ctrl+C to stop it.")
             _open_browser(arguments.open_browser, server, errors)
             server.wait()
     return 0

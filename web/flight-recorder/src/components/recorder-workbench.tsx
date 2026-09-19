@@ -4,6 +4,7 @@ import { projectReplay } from "../replay/project-replay";
 import { useReducedMotion } from "../replay/use-reduced-motion";
 import { useReplay } from "../replay/use-replay";
 import type { ScenarioIndex, ScenarioIndexEntry } from "../scenarios/schema";
+import { assessmentKey, type ScenarioAssessments } from "../scenarios/use-scenario-assessments";
 import { causalEventIds } from "../trace/flight-projection";
 import type { RunTrace, TraceEvent } from "../trace/schema";
 import { EventDetails } from "./event-details";
@@ -14,10 +15,12 @@ import { ProofView } from "./proof-view";
 import styles from "./recorder-workbench.module.css";
 import { ReplayControls } from "./replay-controls";
 import { SagaFlow } from "./saga-flow";
+import { ScenarioBadge, ScenarioResults } from "./scenario-results";
 import { StoryView } from "./story-view";
 import { type RecorderView, ViewTabs } from "./view-tabs";
 
 export interface RecorderWorkbenchProps {
+  readonly assessments?: ScenarioAssessments;
   readonly entry: ScenarioIndexEntry;
   readonly index: ScenarioIndex;
   readonly onSelectRun: (runId: string) => void;
@@ -30,7 +33,7 @@ interface FocusReturn {
 }
 
 export function RecorderWorkbench(props: RecorderWorkbenchProps) {
-  const { entry, index, onSelectRun, trace } = props;
+  const { assessments = {}, entry, index, onSelectRun, trace } = props;
   const reducedMotion = useReducedMotion();
   const pauseAfter = useMemo(() => replayWaypoints(trace), [trace]);
   const replay = useReplay({
@@ -43,6 +46,7 @@ export function RecorderWorkbench(props: RecorderWorkbenchProps) {
     () => projectReplay(trace, replay.state.cursor),
     [replay.state.cursor, trace],
   );
+  const recordedOutcome = useMemo(() => projectReplay(trace, trace.events.length - 1), [trace]);
   const [selectedEventId, setSelectedEventId] = useState(projection.currentEvent.event_id);
   const [activeView, setActiveView] = useState<RecorderView>("story");
   const [returnTarget, setReturnTarget] = useState<FocusReturn | null>(null);
@@ -67,16 +71,22 @@ export function RecorderWorkbench(props: RecorderWorkbenchProps) {
 
   return (
     <main className={styles.workbench}>
-      <OutcomeHeader entry={entry} projection={projection} />
+      <OutcomeHeader entry={entry} projection={recordedOutcome} />
       <p className={styles.authorityChain}>
-        The agent chooses what to do next. Deterministic safety code decides what may run, records
-        every change, and verifies the outcome.
+        {provenanceDescription(entry.mode)} Replay only reads recorded evidence. The local server
+        stays open to serve this page.
       </p>
+      <ScenarioResults assessments={assessments} index={index} />
       {entry.presentation === "ecommerce" ? (
         <SagaFlow isPlaying={replay.state.isPlaying} projection={projection} />
       ) : null}
       <div className={styles.workspace}>
-        <RunTrajectory entry={entry} index={index} onSelect={onSelectRun} />
+        <RunTrajectory
+          assessments={assessments}
+          entry={entry}
+          index={index}
+          onSelect={onSelectRun}
+        />
         <section aria-label="Flight recorder workspace" className={styles.centerPanel}>
           <ReplayControls
             actions={replay.actions}
@@ -186,16 +196,17 @@ function EvidenceViews(props: {
 }
 
 interface TrajectoryProps {
+  readonly assessments?: ScenarioAssessments;
   readonly entry: ScenarioIndexEntry;
   readonly index: ScenarioIndex;
   readonly onSelect: (runId: string) => void;
 }
 
-export function RunTrajectory({ entry, index, onSelect }: TrajectoryProps) {
+export function RunTrajectory({ assessments = {}, entry, index, onSelect }: TrajectoryProps) {
   return (
     <nav aria-label="Run trajectory" className={styles.trajectory}>
       <h2>Choose a scenario</h2>
-      <p>Compare the recorded outcomes in this catalog.</p>
+      <p>{index.runs.length} recorded scenarios. Select one to inspect its outcome and replay.</p>
       <ul>
         {index.runs.map((run) => (
           <li key={run.id}>
@@ -204,12 +215,27 @@ export function RunTrajectory({ entry, index, onSelect }: TrajectoryProps) {
               onClick={() => onSelect(run.id)}
               type="button"
             >
+              <ScenarioBadge entry={run} assessments={assessments} />
               <strong>{run.name}</strong>
-              <span>{run.summary}</span>
+              <span>{assessments[assessmentKey(run)]?.detail ?? run.summary}</span>
+              <small>{recordingLabel(run.mode)}</small>
             </button>
           </li>
         ))}
       </ul>
     </nav>
   );
+}
+
+function recordingLabel(mode: ScenarioIndexEntry["mode"]): string {
+  if (mode === "scripted") return "Scripted recording";
+  if (mode === "live") return "Live agent recording";
+  return "Agent provenance not recorded";
+}
+
+function provenanceDescription(mode: ScenarioIndexEntry["mode"]): string {
+  if (mode === "scripted") return "Scripted recording · No live model calls · JEV is not used.";
+  if (mode === "live")
+    return "Recording from a live agent run · Model provider is not recorded in this catalog.";
+  return "Agent provenance not recorded. Model use and provider are unknown.";
 }

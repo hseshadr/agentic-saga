@@ -460,20 +460,10 @@ def _create_agent(
     return agent
 
 
-def _native_deferred_call_limit() -> int:
-    return _NATIVE_DEFERRED_CALL_LIMIT
-
-
 def native_model_request_limit() -> Literal[2]:
     """Return the hard maximum provider requests within one durable agent turn."""
 
     return 2
-
-
-def native_result_retry_limit() -> Literal[1]:
-    """Return the bounded Pydantic result-correction count."""
-
-    return 1
 
 
 def _usage_limits(dependencies: _PydanticDependencies) -> object:
@@ -489,14 +479,6 @@ def _deferred_output_validator(
         raise dependencies.model_retry("Call exactly one advertised native proposal tool.")
 
     return validate
-
-
-def _builtin_agent_capabilities() -> int:
-    return sum(_builtin_option_enabled(value) for value in _BUILTIN_AGENT_OPTIONS.values())
-
-
-def _builtin_option_enabled(value: object) -> bool:
-    return value is not False and value is not None and value != ()
 
 
 def _proposal_toolset(

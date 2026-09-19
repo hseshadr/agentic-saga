@@ -72,19 +72,44 @@ export class ScenarioRepository {
     }
   }
 
+  async loadBuildVersion(signal?: AbortSignal): Promise<LoadResult<string>> {
+    try {
+      const response = await this.#fetcher.call(globalThis, new URL("../", this.#baseUrl), {
+        cache: "no-store",
+        ...(signal ? { signal } : {}),
+      });
+      if (!response.ok || !response.headers.get("content-type")?.includes("text/html"))
+        return failure("Recorder build could not be checked.");
+      requireDeclaredLength(response, MAX_INDEX_BYTES);
+      const bytes = await readBoundedBody(response, MAX_INDEX_BYTES);
+      const document = new DOMParser().parseFromString(decoder.decode(bytes), "text/html");
+      return { ok: true, value: documentBuildVersion(document) };
+    } catch {
+      return failure("Recorder build could not be checked.");
+    }
+  }
+
   async #load(
     url: URL,
     limit: number,
     loadFailure: string,
     signal?: AbortSignal,
   ): Promise<Uint8Array> {
-    const init = signal ? { signal } : undefined;
+    const init: RequestInit = { cache: "no-store", ...(signal ? { signal } : {}) };
     const response = await this.#fetcher.call(globalThis, url, init);
     if (!response.ok) throw new SafeLoadError(loadFailure);
     requireJsonResponse(response);
     requireDeclaredLength(response, limit);
     return readBoundedBody(response, limit);
   }
+}
+
+export function documentBuildVersion(document: Document): string {
+  return JSON.stringify(
+    [...document.querySelectorAll('script[type="module"][src], link[rel="stylesheet"][href]')]
+      .map((element) => element.getAttribute("src") ?? element.getAttribute("href"))
+      .sort(),
+  );
 }
 
 function requireJsonResponse(response: Response): void {

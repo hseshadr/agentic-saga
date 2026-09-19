@@ -54,6 +54,15 @@ describe("parseScenarioIndex", () => {
     ).toEqual(expect.objectContaining({ ok: false }));
   });
 
+  it("accepts an included default run and rejects an unknown default", () => {
+    expect(parseScenarioIndex({ ...validIndex(), default_run_id: "business-failure" }).ok).toBe(
+      true,
+    );
+    expect(parseScenarioIndex({ ...validIndex(), default_run_id: "missing" })).toEqual(
+      expect.objectContaining({ ok: false }),
+    );
+  });
+
   it("accepts only the known optional presentation", () => {
     const ecommerce = validIndex();
     firstRun(ecommerce).presentation = "ecommerce";
@@ -62,6 +71,12 @@ describe("parseScenarioIndex", () => {
     const unknown = validIndex();
     firstRun(unknown).presentation = "banking";
     expect(parseScenarioIndex(unknown)).toEqual(expect.objectContaining({ ok: false }));
+  });
+
+  it("accepts explicitly unknown agent provenance", () => {
+    const index = validIndex();
+    firstRun(index).mode = "unknown";
+    expect(parseScenarioIndex(index)).toEqual(expect.objectContaining({ ok: true }));
   });
 
   it.each([

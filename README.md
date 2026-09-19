@@ -100,15 +100,18 @@ uv run --no-dev agentic-saga demo --scenario business-failure --open
 ```
 
 Choose **Watch from start**. The UI reveals the forward path and reverse compensation at a pace a
-person can follow. Try every captured outcome:
+person can follow. All four scenarios are available in the same page; `--scenario` selects the
+initial recording. The recorded outcome stays visible while you inspect earlier events.
+
+These recordings use the deterministic checkout agent, without JEV or model calls. The recorder
+is read-only. Its server stays open until Ctrl+C so you can inspect the results.
+Open tabs check for updated recordings and UI builds automatically, with a visible freshness status.
+
+With a local Temporal server running, execute all four scenarios and open their fresh results:
 
 ```bash
-uv run --no-dev agentic-saga demo --scenario happy-path --open
-uv run --no-dev agentic-saga demo --scenario lost-response --open
-uv run --no-dev agentic-saga demo --scenario compensation-failure --open
+uv run python -m examples.ecommerce.run all --open
 ```
-
-The recorder is read-only. It cannot call a business tool or alter a Saga.
 
 ## Run the real workflow locally
 

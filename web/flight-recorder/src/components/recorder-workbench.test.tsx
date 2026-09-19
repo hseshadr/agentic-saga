@@ -4,30 +4,83 @@ import axe from "axe-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { parseScenarioIndex } from "../scenarios/repository";
 import { loadIndexFixture } from "../test/load-index-fixture";
-import { loadTraceFixture } from "../test/load-trace-fixture";
+import { loadTraceFixture, type TraceFixtureName } from "../test/load-trace-fixture";
 import { parseRunTrace } from "../trace/parse-run-trace";
 import { RecorderWorkbench } from "./recorder-workbench";
 
 afterEach(() => vi.useRealTimers());
 
-function fixtureProps() {
+function fixtureProps(name: TraceFixtureName = "business-failure") {
   const index = parseScenarioIndex(loadIndexFixture());
-  const trace = parseRunTrace(loadTraceFixture());
+  const trace = parseRunTrace(loadTraceFixture(name));
   if (!index.ok || !trace.ok) throw new Error("real fixture must satisfy browser contracts");
-  const entry = index.value.runs.find(({ id }) => id === "business-failure");
+  const entry = index.value.runs.find(({ id }) => id === name);
   if (!entry) throw new Error("real fixture must contain one indexed run");
   return { entry, index: index.value, trace: trace.trace };
 }
 
 describe("RecorderWorkbench", () => {
+  it.each([
+    ["happy-path", "Order succeeded. Final state verified.", "Completed safely"],
+    ["lost-response", "Order succeeded. Final state verified.", "Completed safely"],
+    [
+      "compensation-failure",
+      "Order did not complete. Recovery is unresolved and needs human review.",
+      "Needs human review",
+    ],
+  ] as const)("explains the recorded business outcome for %s", (name, summary, outcome) => {
+    render(<RecorderWorkbench {...fixtureProps(name)} onSelectRun={vi.fn()} />);
+
+    expect(screen.getByText(summary)).toBeVisible();
+    expect(screen.getByText("Recorded outcome").parentElement).toHaveTextContent(outcome);
+    expect(screen.getByText("Replay complete")).toBeVisible();
+  });
+
+  it("identifies live-agent recordings without claiming a provider the catalog does not record", () => {
+    const props = fixtureProps();
+    render(
+      <RecorderWorkbench
+        {...props}
+        entry={{ ...props.entry, mode: "live" }}
+        onSelectRun={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/Recording from a live agent run/)).toBeVisible();
+    expect(screen.getByText(/Model provider is not recorded/)).toBeVisible();
+    expect(screen.queryByText(/JEV is not used/)).not.toBeInTheDocument();
+  });
+
+  it("does not invent model provenance for imported recordings", () => {
+    const props = fixtureProps();
+    const entry = { ...props.entry, mode: "unknown" as const };
+    render(
+      <RecorderWorkbench
+        {...props}
+        entry={entry}
+        index={{ ...props.index, runs: [entry] }}
+        onSelectRun={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText(/Agent provenance not recorded\. Model use/)).toBeVisible();
+    expect(screen.getByText("Agent provenance not recorded")).toBeVisible();
+    expect(screen.queryByText(/JEV is not used|Scripted recording|No live model calls/)).toBeNull();
+  });
+
   it("renders a useful signal board from real compensation evidence", () => {
     render(<RecorderWorkbench {...fixtureProps()} onSelectRun={vi.fn()} />);
 
     expect(screen.getByRole("heading", { name: "Agentic Saga Replay" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: /one order/i })).toBeInTheDocument();
     expect(screen.getByText("Every completed change was safely undone")).toBeVisible();
-    expect(screen.getByText("Refund payment")).toBeVisible();
-    expect(screen.getByText("Current state").parentElement).toHaveTextContent("Safely undone");
+    expect(
+      within(screen.getByRole("region", { name: /one order/i })).getByText("Refund payment"),
+    ).toBeVisible();
+    expect(screen.getByText("Recorded outcome").parentElement).toHaveTextContent("Safely undone");
+    expect(screen.getByText(/Order failed. Recovery succeeded/)).toBeVisible();
+    expect(screen.getByText(/JEV is not used/)).toBeVisible();
+    expect(screen.getByText("Replay complete")).toBeVisible();
     expect(screen.getByText("1 / 1 checks valid")).toBeInTheDocument();
     const events = screen.getByRole("list", { name: "Ledger events in causal order" });
     const signals = within(events).getAllByRole("button");
@@ -41,22 +94,28 @@ describe("RecorderWorkbench", () => {
     expect(screen.getByRole("heading", { name: /Workflow guard/ })).toBeInTheDocument();
     expect(screen.queryByText(/kernel/i)).not.toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Story" })).toHaveAttribute("aria-selected", "true");
-    expect(screen.getByRole("list", { name: "Causal story" })).toBeVisible();
+    expect(screen.getByRole("table", { name: "Causal story" })).toBeVisible();
   });
 
-  it("replays one causal projection without revealing future outcome or proof", async () => {
+  it("keeps the recorded outcome stable while replaying historical evidence", async () => {
     const user = userEvent.setup();
     render(<RecorderWorkbench {...fixtureProps()} onSelectRun={vi.fn()} />);
 
     await user.click(screen.getByRole("button", { name: "Restart replay" }));
 
-    expect(screen.getByText("Running")).toBeVisible();
-    expect(screen.getByText("0 / 0 checks visible")).toBeVisible();
+    expect(screen.getByText("Recorded outcome").parentElement).toHaveTextContent("Safely undone");
+    expect(screen.getByText("1 / 1 checks valid")).toBeVisible();
+    expect(screen.getByText("Replay paused")).toBeVisible();
+    expect(screen.queryByText("Running")).not.toBeInTheDocument();
     expect(screen.getByRole("list", { name: "Ledger events in causal order" })).toHaveTextContent(
       "Saga started",
     );
-    expect(screen.getByRole("list", { name: "Causal story" })).toHaveTextContent("Saga started");
+    expect(screen.getByRole("table", { name: "Causal story" })).toHaveTextContent("Saga started");
     expect(screen.queryByText("Compensated verified")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Show outcome" }));
+    expect(screen.getByText("Replay complete")).toBeVisible();
+    expect(screen.getByText("Every completed change was safely undone")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Show outcome" })).toBeDisabled();
   });
 
   it("preserves selected recorded evidence across local views", async () => {

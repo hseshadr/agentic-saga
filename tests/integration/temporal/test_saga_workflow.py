@@ -20,6 +20,7 @@ from temporalio.worker import Worker
 from agentic_saga.contracts.actions import AgentProposal, Finish, ToolCall
 from agentic_saga.contracts.common import JsonObject
 from agentic_saga.contracts.runtime import SagaGoal, SagaStatus
+from agentic_saga.temporal import project_run_trace
 from agentic_saga.temporal.contracts import (
     AgentDecisionRequest,
     AgentDecisionResult,
@@ -347,6 +348,53 @@ async def test_stale_agent_proposal_is_rejected_before_dispatch(
     assert activities.calls == []
 
 
+async def test_failed_compensation_blocks_remaining_recovery_and_proof_until_resolved(
+    temporal_environment: WorkflowEnvironment,
+) -> None:
+    activities = ScenarioActivities(
+        decisions=deque(("reserve", "charge", "ship")),
+        outcomes={
+            "reserve": ToolActivityResult.succeeded({"reservation": "r1"}),
+            "charge": ToolActivityResult.succeeded({"charge": "c1"}),
+            "ship": ToolActivityResult.failed("carrier_rejected"),
+            "refund": ToolActivityResult.failed("provider_confirmed_no_effect"),
+            "release": ToolActivityResult.succeeded({"release": "x1"}),
+        },
+    )
+    workflow_input = _input(
+        _effect("reserve", "release"),
+        _effect("charge", "refund"),
+        _effect("ship", "cancel_ship"),
+    )
+
+    async with _running(temporal_environment, activities, workflow_input) as handle:
+        state = await _wait_for_human(handle)
+        assert state.human_required_reason == "provider_confirmed_no_effect"
+        assert [item.state for item in state.compensations] == ["pending", "unresolved"]
+        assert not any(event.kind == "compensation_verified" for event in state.events)
+        assert [call.tool_name() for call in activities.calls] == [
+            "reserve",
+            "charge",
+            "ship",
+            "refund",
+        ]
+        resolution = HumanCompensationResolution(
+            operation_id=state.compensations[-1].compensation_identity.operation_id,
+            based_on_event_seq=len(state.events),
+            authorization_reference="authz_1234567890abcdef",
+            receipt={"operator_confirmation": "refund_completed"},
+        )
+        await handle.execute_update(AgenticSagaWorkflow.resolve_compensation, resolution)
+        result = await handle.result()
+
+    assert result.status is SagaStatus.COMPENSATED_VERIFIED
+    assert all(item.state == "succeeded" for item in result.compensations)
+    assert activities.calls[-1].tool_name() == "release"
+    kinds = [event.kind for event in result.events]
+    assert kinds.index("human_resolved") < kinds.index("compensation_verified")
+    assert len(activities.verification_calls) == 1
+
+
 async def test_unadvertised_agent_tool_is_rejected_before_dispatch(
     temporal_environment: WorkflowEnvironment,
 ) -> None:
@@ -445,6 +493,12 @@ async def test_read_or_proof_tool_creates_no_compensation_obligation(
 
     assert result.status is SagaStatus.SUCCEEDED_VERIFIED
     assert result.compensations == ()
+    trace = project_run_trace(result, definition_version="read-test-v1")
+    observed = next(event for event in trace.events if event.event_type == "read_observed")
+    assert observed.tool_name == "verify"
+    assert observed.event_type == "read_observed"
+    assert observed.redacted_output is not None
+    assert observed.redacted_output["kind"] == "read_observed"
 
 
 async def test_next_agent_turn_receives_prior_public_result_evidence(

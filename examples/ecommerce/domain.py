@@ -6,9 +6,6 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from agentic_saga.contracts.runtime import SagaResult
-from agentic_saga.contracts.trace import RunTrace, TraceEvent
-
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
@@ -148,81 +145,3 @@ class ProviderCount:
     executes: int
     effects: int
     reconciliations: int
-
-
-@dataclass(frozen=True)
-class EscalationPacket:
-    saga_id: str
-    reason_code: str
-    last_sequence: int
-    unresolved_operation_ids: tuple[str, ...]
-    recommended_action: str
-
-
-@dataclass(frozen=True)
-class DemoRun:
-    scenario: ScenarioName
-    result: SagaResult
-    trace: RunTrace
-    proposals: tuple[str, ...]
-    compensation_tools: tuple[str, ...]
-    counts: tuple[ProviderCount, ...]
-    restarted: bool
-    escalation: EscalationPacket | None
-
-    @property
-    def timeline_kinds(self) -> tuple[str, ...]:
-        return tuple(item.event_type for item in self.trace.events)
-
-    def count(self, tool: str) -> ProviderCount:
-        match = next((item for item in self.counts if item.tool == tool), None)
-        if match is None:
-            return ProviderCount(tool, 0, 0, 0)
-        return match
-
-    def evidence_order_is_valid(self) -> bool:
-        return _evidence_order_is_valid(self.trace.events)
-
-
-def _evidence_order_is_valid(events: tuple[TraceEvent, ...]) -> bool:
-    return _effects_are_paired(events) and _proof_follows_effects(events)
-
-
-def _proof_follows_effects(events: tuple[TraceEvent, ...]) -> bool:
-    outcomes = _event_sequences(events, "effect_outcome_recorded")
-    if not outcomes:
-        return False
-    proof = _first_sequence(events, "invariant_evaluated")
-    terminal = _first_sequence(events, "terminal_assigned")
-    return max(outcomes) < proof < terminal
-
-
-def _event_sequences(events: tuple[TraceEvent, ...], event_type: str) -> tuple[int, ...]:
-    return tuple(item.saga_seq for item in events if item.event_type == event_type)
-
-
-def _first_sequence(events: tuple[TraceEvent, ...], event_type: str) -> int:
-    return next(item.saga_seq for item in events if item.event_type == event_type)
-
-
-def _effects_are_paired(events: tuple[TraceEvent, ...]) -> bool:
-    intents = _operation_sequences(events, "intent_recorded")
-    outcomes = _operation_sequences(events, "effect_outcome_recorded")
-    intent_map = dict(intents)
-    outcome_map = dict(outcomes)
-    unique = len(intents) == len(intent_map) and len(outcomes) == len(outcome_map)
-    return (
-        unique
-        and intent_map.keys() == outcome_map.keys()
-        and all(intent_map[key] < outcome_map[key] for key in intent_map)
-    )
-
-
-def _operation_sequences(
-    events: tuple[TraceEvent, ...], event_fragment: str
-) -> tuple[tuple[str, int], ...]:
-    return tuple(
-        (item.operation_id, item.saga_seq)
-        for item in events
-        if event_fragment in item.event_type and item.operation_id is not None
-    )

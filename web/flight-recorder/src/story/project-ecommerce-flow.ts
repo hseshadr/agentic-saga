@@ -37,7 +37,7 @@ const forwardDefinitions: readonly StepDefinition[] = [
   {
     id: "reserve-inventory",
     label: "Reserve item",
-    detail: "Hold one travel pack",
+    detail: "Reserve the requested stock",
     tool: "reserve_inventory",
   },
   {
@@ -120,7 +120,12 @@ function toolState(events: readonly TraceEvent[], tool: string): FlowStepState {
   const matching = events.filter((event) => event.tool_name === tool);
   if (matching.length === 0) return "waiting";
   if (matching.some(confirmsEffect)) return "complete";
-  if (matching.some(needsAttention)) return tool.startsWith("refund_") ? "attention" : "checking";
+  if (matching.some(needsAttention)) {
+    const needsHuman = events.at(-1)?.after_status === "human_required";
+    return needsHuman && matching.some((event) => event.direction === "compensation")
+      ? "attention"
+      : "checking";
+  }
   return matching.some((event) => event.event_type.endsWith("observed")) ? "complete" : "active";
 }
 
@@ -196,7 +201,7 @@ function labelForTool(tool: string | null): string | undefined {
 
 function detailFor(phase: FlowPhase): string {
   if (phase === "human")
-    return "The refund result is still uncertain, so the system stops before making another change.";
+    return "The recovery result is still uncertain, so the system stops before making another change.";
   if (phase === "compensated")
     return "The order could not finish, but inventory, payment, and fulfillment are verified safe.";
   if (phase === "compensating")

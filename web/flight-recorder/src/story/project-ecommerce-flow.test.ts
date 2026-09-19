@@ -75,6 +75,29 @@ describe("projectEcommerceFlow", () => {
     expect(result.rollback.map(({ state }) => state)).toEqual(["complete", "attention", "waiting"]);
   });
 
+  it("distinguishes provider checking from recorded human review for any compensation", () => {
+    const parsed = parseRunTrace(loadTraceFixture("compensation-failure"));
+    if (!parsed.ok) throw new Error("fixture must be valid");
+    const trace = {
+      ...parsed.trace,
+      events: parsed.trace.events.map((event) => ({
+        ...event,
+        tool_name: event.tool_name === "refund_payment" ? "release_inventory" : event.tool_name,
+      })),
+    };
+    const uncertainCursor = trace.events.findIndex(
+      (event) =>
+        event.tool_name === "release_inventory" &&
+        event.event_type === "compensation_outcome_recorded",
+    );
+    const checking = projectEcommerceFlow(projectReplay(trace, uncertainCursor));
+    const human = projectEcommerceFlow(projectReplay(trace, trace.events.length - 1));
+
+    expect(checking.rollback.find(({ id }) => id === "release-inventory")?.state).toBe("checking");
+    expect(human.rollback.find(({ id }) => id === "release-inventory")?.state).toBe("attention");
+    expect(human.detail).toContain("recovery result");
+  });
+
   it("shows only evidence visible at the current replay position", () => {
     const result = flow("business-failure", 0);
 

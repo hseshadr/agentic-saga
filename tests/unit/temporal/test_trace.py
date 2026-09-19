@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
+import pytest
+
 from agentic_saga.contracts.common import Direction, JsonObject
 from agentic_saga.contracts.runtime import SagaStatus
 from agentic_saga.temporal.contracts import ActivityIdentity, WorkflowEvent, WorkflowState
@@ -142,3 +144,67 @@ def test_projector_redacts_sensitive_workflow_details() -> None:
 
     assert trace.events[-1].rationale["authorization_id"] == "[REDACTED]"
     assert "synthetic-secret" not in trace.model_dump_json()
+
+
+@pytest.mark.parametrize("event_kind", ["forward_result", "compensation_result"])
+@pytest.mark.parametrize(
+    ("outcome", "expected"),
+    [("failed", "no_effect_confirmed"), ("unresolved", "outcome_unknown")],
+)
+def test_projector_distinguishes_failed_from_unknown_effects(
+    event_kind: str, outcome: str, expected: str
+) -> None:
+    state = WorkflowState(
+        saga_id=_SAGA_ID,
+        status=SagaStatus.RUNNING,
+        events=(
+            _event(1, "started", {}, SagaStatus.RUNNING, SagaStatus.RUNNING),
+            _event(
+                2,
+                event_kind,
+                {"outcome": outcome, "reason_code": "provider_result"},
+                SagaStatus.RUNNING,
+                SagaStatus.RUNNING,
+            ),
+        ),
+        compensations=(),
+    )
+
+    trace = project_run_trace(state, definition_version="checkout-v1")
+
+    assert trace.events[-1].redacted_output == {
+        "kind": expected,
+        "reason_code": "provider_result",
+    }
+
+
+def test_projector_does_not_claim_read_receipts_are_confirmed_effects() -> None:
+    state = WorkflowState(
+        saga_id=_SAGA_ID,
+        status=SagaStatus.RUNNING,
+        events=(
+            _event(1, "started", {}, SagaStatus.RUNNING, SagaStatus.RUNNING),
+            _event(
+                2,
+                "forward_result",
+                {
+                    "declared_kind": "read",
+                    "outcome": "succeeded",
+                    "proof_for_success": False,
+                    "public_receipt": {"available": 4},
+                },
+                SagaStatus.RUNNING,
+                SagaStatus.RUNNING,
+            ),
+        ),
+        compensations=(),
+    )
+
+    trace = project_run_trace(state, definition_version="checkout-v1")
+
+    assert trace.events[-1].event_type == "read_observed"
+    assert trace.events[-1].redacted_output == {
+        "kind": "read_observed",
+        "receipt": {"available": 4},
+    }
+    assert trace.proofs == ()

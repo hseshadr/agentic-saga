@@ -34,12 +34,19 @@ export function ReplayControls(props: ReplayControlsProps) {
       <button disabled={state.atStart} onClick={actions.restart} type="button">
         Restart replay
       </button>
+      <button disabled={state.atEnd} onClick={() => actions.seek(eventCount - 1)} type="button">
+        Show outcome
+      </button>
+      <strong className={styles.replayState}>
+        {state.isPlaying ? "Replay playing" : state.atEnd ? "Replay complete" : "Replay paused"}
+      </strong>
       <output
         aria-live={announce && !state.isPlaying ? "polite" : "off"}
         className={styles.replayPosition}
       >
         Event {state.cursor + 1} of {eventCount}
       </output>
+      <p>Viewing recorded events. Playback pauses at key decisions; Play replay continues.</p>
       {reducedMotion ? <p>Motion preference is active; use Previous and Next.</p> : null}
     </section>
   );

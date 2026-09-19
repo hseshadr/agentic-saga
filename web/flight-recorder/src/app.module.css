@@ -71,3 +71,18 @@
     grid-template-columns: 1fr;
   }
 }
+.freshness {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  align-items: center;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--steel-dark);
+  background: var(--paper-raised);
+  color: var(--muted-ink);
+  font-size: 0.75rem;
+}
+
+.freshness strong {
+  color: var(--deck-blue);
+}
