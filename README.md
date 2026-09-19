@@ -126,6 +126,11 @@ composition setting. See the complete working assembly in
 - Optional Pydantic Deep + Pydantic AI/OpenRouter adapter that exposes only currently eligible
   native proposal tools. Pydantic Deep owns the model/tool protocol; the deterministic kernel owns
   execution, state, compensation order, and terminal proof.
+- Optional TypeSafe AI Jev adapter for cheaper bounded decisions, available either directly or
+  through OpenRouter's native Decisions API. Applications provide fully formed candidate proposals
+  from public evidence; Jev chooses among them with calibrated probabilities and confidence, while
+  the adapter and kernel reject stale, unavailable, or low-confidence choices. Jev cannot invent
+  tool arguments or execute a business effect.
 - Four executable `pytest-bdd` ecommerce paths: verified success, reverse compensation, lost-response
   restart reconciliation, and unverifiable compensation requiring a human.
 - A versioned 24-case deterministic evaluation corpus plus a separately opt-in, credential-gated
@@ -170,9 +175,10 @@ Unlisted fields are public by contract, and `saga.yaml` must contain public auth
 
 `turn_limit`, `tool_call_limit`, `token_limit`, and `elapsed_ms_limit` are deterministic kernel
 limits. Tokens and elapsed milliseconds are fixed per-turn planning allocations: the maintained
-OpenRouter adapter uses them only as an output-token cap and an agent-call deadline. They do not
-measure input tokens, actual provider usage, end-to-end Saga time, money, or provider spend. Set
-provider-account spend limits separately before any opt-in live call.
+OpenRouter adapter uses them only as an output-token cap and an agent-call deadline. The Jev adapter
+uses its reserved turn allocation as a request deadline. These limits do not measure input tokens,
+actual provider usage, end-to-end Saga time, money, or provider spend. Set provider-account spend
+limits separately before any opt-in live call.
 
 The SQLite reference store is POSIX-only and requires an owner-controlled, non-shared-writable
 local parent directory. It keeps database, sidecar, temporary, backup, and restored files at mode

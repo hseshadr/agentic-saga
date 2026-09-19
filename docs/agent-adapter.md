@@ -1,11 +1,15 @@
-# Pydantic Deep planning adapter
+# Planning and decision adapters
 
 ## TL;DR
 
-Pydantic Deep owns the model/tool protocol; the deterministic Saga kernel owns execution,
-state, reconciliation, compensation order, and terminal proof. The model receives only the tools
-eligible for the current turn and must make exactly one native tool call. That call is a proposal,
-not direct authority over a payment, ticket, inventory system, or other external service.
+Agentic Saga supports two planning modes behind the same `AgentDriver` contract. Pydantic Deep with
+OpenRouter can construct a typed call from an eligible tool schema. TypeSafe AI Jev makes a cheaper
+bounded decision among fully formed candidate proposals supplied by the application; that bounded
+mode can use TypeSafe directly or OpenRouter's native Decisions API.
+Pydantic Deep owns the model/tool protocol only in the generative path.
+In both paths, the deterministic Saga kernel owns execution. It also owns state, reconciliation,
+compensation order, and terminal proof. A model result is a proposal, not direct authority over a
+payment, ticket, inventory system, or other external service.
 
 This is the whole control loop:
 
@@ -48,6 +52,38 @@ uv run pytest tests/unit/agents -q
 The tests construct the Pydantic Deep and OpenRouter path without sending a network request. Core
 Agentic Saga imports do not require the `agent` extra.
 
+Install only the Jev transport the application uses:
+
+```bash
+# Direct TypeSafe AI
+uv sync --extra jev --group dev
+
+# Or OpenRouter Decisions
+uv sync --extra jev-openrouter --group dev
+
+uv run pytest tests/unit/agents/test_choice.py tests/unit/agents/test_jev.py \
+  tests/unit/agents/test_openrouter_decisions.py -q
+```
+
+The `jev` extra pins `typesafe-sdk==0.7.0`; `jev-openrouter` pins `openrouter==1.2.1`. Both are
+official Python SDKs. Core imports do not load either SDK, and ordinary tests use injected clients
+or local HTTP transports rather than the network.
+
+An explicitly authorized live smoke test is also available:
+
+```bash
+RUN_LIVE_MODEL_EVALS=1 uv run pytest tests/live_model/test_jev_adapter.py \
+  --force-enable-socket -q
+```
+
+Each route runs only when its own provider key is present. With both keys, the command makes one
+paid request through each route; otherwise the unavailable route skips.
+
+TypeSafe AI also publishes a TypeScript SDK and is available through Vercel AI Gateway. This Python
+library uses the official Python SDK directly so it does not need a Node process, JSON-RPC bridge,
+or sidecar. A TypeScript application can still expose the same bounded candidate/selection contract
+at its own service boundary without changing the Saga kernel.
+
 ## Supported API
 
 ```python
@@ -84,6 +120,101 @@ driver = DeepAgentsDriver(context, scripted)
 
 This injected seam is not the provider protocol. The maintained provider-backed path uses native
 Pydantic AI tool calls.
+
+### TypeSafe AI Jev
+
+Jev is a System One decision model, not a generative tool-calling agent. It returns one choice, a
+probability for every supplied option, and confidence. The application therefore supplies a
+`CandidateFactory` that materializes complete `ProposalCandidate` values from the current public
+goal and evidence. Each candidate already contains its exact tool arguments or control intent:
+
+```python
+from agentic_saga.agents import (
+    JevSettings,
+    OpenRouterDecisionsSettings,
+    ProposalCandidate,
+    ToolCallIntent,
+    build_jev_driver,
+    build_openrouter_decisions_driver,
+)
+
+
+async def candidates(observation, eligible_descriptors):
+    # Application logic derives exact arguments from validated public evidence.
+    order_id = observation.goal.context["order_id"]
+    eligible = {descriptor.name for descriptor in eligible_descriptors}
+    options = []
+    if "inspect_order" in eligible:
+        options.append(
+            ProposalCandidate(
+                candidate_id="choice_00000001",
+                criteria="Refresh the authoritative order state before choosing an effect.",
+                minimum_confidence=0.9,
+                proposal=ToolCallIntent(
+                    tool_name="inspect_order",
+                    arguments={"order_id": order_id},
+                    rationale="Current order evidence is absent or stale.",
+                ),
+            )
+        )
+    if "inspect_inventory" in eligible:
+        options.append(
+            ProposalCandidate(
+                candidate_id="choice_00000002",
+                criteria="Verify stock before the next irreversible action.",
+                minimum_confidence=0.9,
+                proposal=ToolCallIntent(
+                    tool_name="inspect_inventory",
+                    arguments={"order_id": order_id},
+                    rationale="Inventory evidence is absent or stale.",
+                ),
+            )
+        )
+    return tuple(options)
+
+
+# Direct TypeSafe AI:
+driver = build_jev_driver(context, candidates, JevSettings.from_environment())
+
+# To use the same bounded policy through OpenRouter Decisions instead:
+driver = build_openrouter_decisions_driver(
+    context,
+    candidates,
+    OpenRouterDecisionsSettings.from_environment(),
+)
+proposal = await driver.next_action(observation, eligible_descriptors)
+```
+
+Set `TYPESAFE_API_KEY` in the process environment or inject `JevSettings`; the library does not load
+`.env` files implicitly. The maintained model is pinned to `jev-1.13.0`, and every response must
+identify the same configured model. Moving aliases such as `jev-latest` and `jev-preview` are
+rejected because confidence thresholds must be recalibrated when model behavior changes. Do not
+enable `typesafe_sdk` DEBUG logging in production: the SDK redacts secret headers but its documented
+debug mode does not redact request or response bodies.
+
+The OpenRouter transport reads `OPENROUTER_API_KEY`, pins the request route to
+`typesafe/jev-1.13`, and accepts only the exact dated model identity currently published for that
+route. It calls only `https://openrouter.ai/api/alpha/decisions`, requires native choice,
+confidence, and probability fields, disables SDK retries, and requests `zdr: true` plus
+`data_collection: deny`. The Decisions endpoint is alpha, so this adapter fails closed if its
+contract changes; it never falls back to chat completions or the generative Pydantic Deep route.
+The wrapper also disables redirects and SDK debug-body logging, suppresses ambient attribution
+headers, and closes its owned synchronous and asynchronous HTTP clients after every request.
+
+Jev cannot invent tool arguments. It receives opaque candidate IDs plus public criteria and chooses
+only among those complete proposals. The adapter rejects duplicate or unknown IDs, malformed
+probabilities, non-finite values, low confidence, private payloads, stale sequence context, and
+candidates for tools or controls the kernel did not advertise. With exactly one legal candidate it
+selects locally and makes no paid request. The kernel still revalidates the returned proposal and is
+the only component that can create durable intent or dispatch a side effect.
+
+The trajectories below remain the behavioral contract for either adapter. On the happy path, an
+application candidate factory materializes exact read/effect arguments from the goal and fresh
+evidence, and Jev chooses among those complete options. When fresh evidence proves the forward goal
+unreachable and `begin_compensation` is advertised, the factory may offer a
+`BeginCompensationIntent`; Jev chooses whether to enter rollback, but the kernel still derives the
+reverse order. Once the kernel advertises a single compensation frontier action, the choice driver
+selects that sole complete candidate locally rather than paying a model to choose from one option.
 
 ## What “native tool” means here
 
@@ -310,3 +441,8 @@ Useful upstream references:
 - [Pydantic AI deferred tools](https://ai.pydantic.dev/deferred-tools/)
 - [Pydantic AI toolsets](https://ai.pydantic.dev/toolsets/)
 - [OpenRouter tool calling](https://openrouter.ai/docs/guides/features/tool-calling)
+- [OpenRouter Decisions SDK](https://github.com/OpenRouterTeam/python-sdk/blob/main/docs/sdks/decisions/README.mdx)
+- [OpenRouter Jev 1.13](https://openrouter.ai/typesafe/jev-1.13)
+- [TypeSafe AI Choice](https://docs.typesafe.ai/primitives/choice)
+- [TypeSafe AI Python SDK](https://docs.typesafe.ai/sdk/python)
+- [TypeSafe AI versioned models](https://docs.typesafe.ai/models)

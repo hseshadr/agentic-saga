@@ -135,6 +135,26 @@ See the [agent adapter guide](docs/agent-adapter.md) for the complete native hap
 failure-after-charge compensation path, disabled Pydantic Deep capabilities, and human-escalation
 boundary.
 
+For applications that can deterministically materialize complete next-action candidates, Jev
+provides a bounded decision path without a generative tool-calling model. Choose one transport:
+
+```bash
+# Direct TypeSafe AI
+uv sync --extra jev --group dev
+
+# Or OpenRouter's native Decisions API
+uv sync --extra jev-openrouter --group dev
+
+uv run pytest tests/unit/agents/test_choice.py tests/unit/agents/test_jev.py \
+  tests/unit/agents/test_openrouter_decisions.py -q
+```
+
+Set either `TYPESAFE_API_KEY` for the direct route or `OPENROUTER_API_KEY` for OpenRouter Decisions.
+Applications that use a local `.env` may load it before constructing the driver; the library does
+not read project files implicitly. Both routes pin Jev 1.13 and preserve its probabilities and
+confidence. Jev selects among candidates but cannot invent tool arguments, execute effects, or
+assign terminal state.
+
 Validate the fixed 24-case evaluation corpus without a model:
 
 ```bash

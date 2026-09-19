@@ -33,7 +33,7 @@ def test_should_expose_network_opt_in_and_disable_default_sockets_when_inspectin
     required = (
         "--disable-socket",
         "--allow-unix-socket",
-        "live_model: requires network access and an OpenRouter API key",
+        "live_model: requires network access, explicit consent, and a provider API key",
         "network: requires network access and an explicit opt-in",
         (
             "test = \"pytest -m 'not live_model and not network' "

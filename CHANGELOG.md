@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Optional TypeSafe AI Jev decision adapter with pinned `jev-1.13.0`, host-built complete proposal
+  candidates, calibrated per-candidate confidence gates, strict probability validation, zero SDK
+  retries, and no business-effect authority.
+- Optional OpenRouter Decisions transport for the same bounded Jev policy, pinned to
+  `typesafe/jev-1.13` and the exact dated response model, with native confidence/probabilities,
+  zero retries, no-collection routing, and no chat-completions fallback.
+- Provider-neutral bounded-choice driver that keeps the runtime-facing `AgentDriver` contract
+  unchanged and deterministically avoids a paid decision call when only one legal candidate exists.
+
 ## [0.1.0] - 2026-09-18
 
 ### Added

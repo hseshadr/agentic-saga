@@ -14,7 +14,11 @@ from ruamel.yaml import YAML
 
 import agentic_saga
 from agentic_saga.agents import __all__ as agents_all
-from agentic_saga.agents import build_openrouter_driver
+from agentic_saga.agents import (
+    build_jev_driver,
+    build_openrouter_decisions_driver,
+    build_openrouter_driver,
+)
 from agentic_saga.contracts import __all__ as contracts_all
 from agentic_saga.demo import RecorderServer
 from agentic_saga.demo import __all__ as demo_all
@@ -50,8 +54,20 @@ _ROOT_FACADE = (
     "load_saga_context",
 )
 _AGENTS_FACADE = (
+    "BeginCompensationIntent",
+    "ChoiceAgentDriver",
+    "DecisionSelection",
     "DeepAgentsDriver",
+    "EscalateIntent",
+    "FinishIntent",
+    "JevSettings",
+    "OpenRouterDecisionsSettings",
     "OpenRouterSettings",
+    "ProposalCandidate",
+    "ProposalIntent",
+    "ToolCallIntent",
+    "build_jev_driver",
+    "build_openrouter_decisions_driver",
     "build_openrouter_driver",
     "native_proposal_tool_names",
 )
@@ -159,6 +175,8 @@ def test_primary_public_entrypoints_explain_their_contracts() -> None:
     entrypoints = (
         agentic_saga.SagaDefinition,
         agentic_saga.SagaGoal,
+        build_jev_driver,
+        build_openrouter_decisions_driver,
         build_openrouter_driver,
         RecorderServer,
         ReconciliationResult,
@@ -251,16 +269,24 @@ def test_gate_enforces_the_core_branch_coverage_floor() -> None:
     assert tasks["release-candidate"] == ("bash scripts/verify_release_candidate.sh dist/release")
 
 
-def test_agent_dependencies_are_optional_and_bdd_is_development_only() -> None:
+def test_provider_dependencies_are_optional_and_bdd_is_development_only() -> None:
     parsed = tomllib.loads((ROOT / "pyproject.toml").read_text())
     agent = set(parsed["project"]["optional-dependencies"]["agent"])
+    jev = set(parsed["project"]["optional-dependencies"]["jev"])
+    jev_openrouter = set(parsed["project"]["optional-dependencies"]["jev-openrouter"])
 
-    assert set(parsed["project"]["optional-dependencies"]) == {"agent"}
+    assert set(parsed["project"]["optional-dependencies"]) == {
+        "agent",
+        "jev",
+        "jev-openrouter",
+    }
     assert agent == {
         "pydantic-ai-slim[openrouter]==2.45.0",
         "pydantic-deep==0.3.43",
         "python-dotenv>=1.1,<2",
     }
+    assert jev == {"typesafe-sdk==0.7.0"}
+    assert jev_openrouter == {"openrouter==1.2.1"}
     assert "pytest-bdd>=8.1,<9" in parsed["dependency-groups"]["dev"]
     assert "pytest-bdd" not in parsed["project"]["dependencies"]
 
@@ -309,11 +335,15 @@ def test_current_dagger_docs_name_the_repository_auth_secret() -> None:
     assert all("derived from `${{ github.token }}`" not in text for text in contents)
 
 
-def test_default_development_gate_installs_optional_agent_dependencies() -> None:
+def test_default_development_gate_installs_optional_provider_dependencies() -> None:
     config = tomllib.loads((ROOT / "pyproject.toml").read_text())
     agent = set(config["project"]["optional-dependencies"]["agent"])
+    jev = set(config["project"]["optional-dependencies"]["jev"])
+    jev_openrouter = set(config["project"]["optional-dependencies"]["jev-openrouter"])
     development = set(config["dependency-groups"]["dev"])
     assert agent <= development
+    assert jev <= development
+    assert jev_openrouter <= development
 
 
 def test_subpackage_facades_export_only_current_consumers() -> None:
@@ -1013,7 +1043,7 @@ def test_bundled_flight_recorder_declares_third_party_licenses() -> None:
     assert all(value in notice for value in required)
 
 
-def test_local_openrouter_env_is_ignored_copyable_and_secret_free() -> None:
+def test_local_provider_env_is_ignored_copyable_and_secret_free() -> None:
     ignored = (ROOT / ".gitignore").read_text().splitlines()
     example = (ROOT / ".env.example").read_text().splitlines()
     quickstart = (ROOT / "QUICKSTART.md").read_text()
@@ -1022,13 +1052,45 @@ def test_local_openrouter_env_is_ignored_copyable_and_secret_free() -> None:
     assert ".env.*" in ignored
     assert "!.env.example" in ignored
     assert "OPENROUTER_API_KEY=" in example
+    assert "TYPESAFE_API_KEY=" in example
     assert "RUN_LIVE_MODEL_EVALS=0" in example
     assert all(
         not line.startswith("OPENROUTER_API_KEY=") or line == "OPENROUTER_API_KEY="
         for line in example
     )
+    assert all(
+        not line.startswith("TYPESAFE_API_KEY=") or line == "TYPESAFE_API_KEY=" for line in example
+    )
     assert "cp .env.example .env" in quickstart
     assert "chmod 600 .env" in quickstart
+
+
+def test_jev_adapter_is_an_isolated_exactly_pinned_optional_extra() -> None:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+
+    assert project["optional-dependencies"]["jev"] == [
+        "typesafe-sdk==0.7.0",
+    ]
+    assert (
+        "typesafe-sdk==0.7.0"
+        in tomllib.loads((ROOT / "pyproject.toml").read_text())["dependency-groups"]["dev"]
+    )
+
+
+def test_reader_docs_explain_jev_as_bounded_choice_not_argument_generation() -> None:
+    readme = (ROOT / "README.md").read_text()
+    guide = (ROOT / "docs" / "agent-adapter.md").read_text()
+    required = (
+        "TypeSafe AI",
+        "Jev",
+        "fully formed candidate",
+        "cannot invent tool arguments",
+        "jev-1.13.0",
+        "TYPESAFE_API_KEY",
+        "uv sync --extra jev",
+    )
+
+    assert all(value in readme + guide for value in required)
 
 
 def test_dependabot_configures_weekly_ecosystem_updates() -> None:
