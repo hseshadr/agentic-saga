@@ -437,6 +437,27 @@ def test_should_filter_secret_prone_context_before_external_modules() -> None:
     assert "_node(verified)" in security
 
 
+def test_should_filter_generated_local_state_before_exact_source_guard() -> None:
+    # Given local quality tools and the Dagger SDK generate ignored state.
+    generated = {
+        ".artifacts",
+        ".dagger/.venv",
+        ".dagger/sdk",
+        "**/.coverage*",
+        "**/.hypothesis",
+        "**/.mypy_cache",
+        "**/.pytest_cache",
+        "**/.ruff_cache",
+        "**/*.tsbuildinfo",
+        "**/coverage",
+        "**/test-results",
+    }
+
+    # When the public source boundary is applied.
+    # Then reproducible generated state cannot contaminate exact-commit comparison.
+    assert generated <= set(main.SOURCE_IGNORE_PATTERNS)
+
+
 def test_should_mount_the_locked_frontend_identity_before_corepack() -> None:
     # Given Node tools and packages are handed from the frontend builder to a Python lane.
     source = MODULE.read_text()
