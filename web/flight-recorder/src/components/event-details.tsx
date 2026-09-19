@@ -1,4 +1,5 @@
 import type { Ref } from "react";
+import { authorityLabel } from "../trace/flight-projection";
 import { stringifyTraceJson } from "../trace/lossless-json";
 import type { JsonObject, TraceEvent } from "../trace/schema";
 import styles from "./inspection-views.module.css";
@@ -24,7 +25,7 @@ export function EventDetails({ className, event, onReturnFocus, ref }: EventDeta
       ) : null}
       <dl className={styles.evidenceFacts}>
         <Fact label="Ledger sequence" value={String(event.saga_seq)} />
-        <Fact label="Authority" value={event.authority} />
+        <Fact label="Authority" value={authorityLabel(event.authority)} />
         <Fact label="Actor" value={event.actor} />
         <Fact label="Before state" value={event.before_status} />
         <Fact label="After state" value={event.after_status} />
@@ -68,7 +69,8 @@ function Evidence({ label, value }: EvidenceProps) {
   return (
     <section className={styles.evidenceBlock}>
       <h3>{label}</h3>
-      <pre>{stringifyTraceJson(value, 2)}</pre>
+      {/* biome-ignore lint/a11y/noNoninteractiveTabindex: focus exposes horizontally scrollable evidence to keyboard users. */}
+      <pre tabIndex={0}>{stringifyTraceJson(value, 2)}</pre>
     </section>
   );
 }

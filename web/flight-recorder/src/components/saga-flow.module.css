@@ -1,0 +1,263 @@
+.flow {
+  padding: clamp(24px, 4vw, 48px);
+  border-bottom: 1px solid var(--steel);
+  background: var(--paper);
+}
+
+.heading {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.9fr) minmax(320px, 1.1fr);
+  gap: 28px;
+  align-items: end;
+  max-width: 1280px;
+  margin: 0 auto 30px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: var(--authorized);
+  font-size: 0.78rem;
+  font-weight: 750;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.heading h2 {
+  max-width: 720px;
+  margin: 0;
+  font-size: clamp(1.65rem, 3.2vw, 3rem);
+  letter-spacing: -0.04em;
+  line-height: 1.05;
+}
+
+.now {
+  display: grid;
+  gap: 5px;
+  padding: 18px 20px;
+  border-left: 5px solid var(--authorized);
+  background: var(--paper-raised);
+  box-shadow: 0 14px 40px rgb(23 50 77 / 10%);
+}
+
+.now[data-phase="compensated"],
+.now[data-phase="succeeded"] {
+  border-left-color: var(--proof);
+}
+
+.now[data-phase="human"] {
+  border-left-color: var(--stop);
+}
+
+.now strong {
+  font-size: 1.05rem;
+}
+
+.now span,
+.laneHeading p,
+.nodeCopy small {
+  color: var(--muted-ink);
+}
+
+.lane {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.28fr) minmax(0, 1fr);
+  gap: 24px;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+.laneHeading h3,
+.laneHeading p {
+  margin: 0;
+}
+
+.laneHeading h3 {
+  font-size: 1rem;
+}
+
+.laneHeading p {
+  margin-top: 7px;
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.lane ol {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.lane[data-reverse="true"] ol {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.lane li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  min-height: 108px;
+  padding: 15px;
+  border: 1px solid var(--steel);
+  background: rgb(248 250 251 / 74%);
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.lane li:not(:last-child)::after {
+  position: absolute;
+  z-index: 1;
+  top: 31px;
+  right: -13px;
+  width: 13px;
+  height: 2px;
+  background: var(--steel-dark);
+  content: "";
+}
+
+.lane li[data-state="active"],
+.lane li[data-state="checking"] {
+  border-color: var(--authorized);
+  box-shadow: 0 12px 30px rgb(36 107 206 / 15%);
+  transform: translateY(-3px);
+}
+
+.lane li[data-state="complete"] {
+  border-color: var(--proof);
+  background: rgb(28 113 95 / 7%);
+}
+
+.lane li[data-state="reversed"] {
+  border-color: var(--warning);
+  background: rgb(197 106 19 / 8%);
+}
+
+.lane li[data-state="attention"],
+.lane li[data-state="failed"] {
+  border-color: var(--stop);
+  background: rgb(179 58 43 / 7%);
+}
+
+.number {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--signal-muted);
+  color: var(--muted-ink);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  font-weight: 750;
+}
+
+li[data-state="active"] .number,
+li[data-state="checking"] .number {
+  background: var(--authorized);
+  color: #fff;
+}
+
+li[data-state="complete"] .number {
+  background: var(--proof);
+  color: #fff;
+}
+
+li[data-state="reversed"] .number {
+  background: var(--warning);
+  color: #fff;
+}
+
+li[data-state="attention"] .number,
+li[data-state="failed"] .number {
+  background: var(--stop);
+  color: #fff;
+}
+
+.nodeCopy {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+}
+
+.nodeCopy strong {
+  font-size: 0.88rem;
+}
+
+.nodeCopy small,
+.state {
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
+.state {
+  grid-column: 1 / -1;
+  align-self: end;
+  color: var(--muted-ink);
+  font-weight: 700;
+}
+
+.turn {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  max-width: 1280px;
+  padding: 18px 0;
+  margin: 0 auto;
+  color: var(--deck-blue);
+  font-size: 0.84rem;
+}
+
+.turn span {
+  font-size: 1.35rem;
+}
+
+@media (max-width: 1000px) {
+  .heading,
+  .lane {
+    grid-template-columns: 1fr;
+  }
+
+  .lane ol {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .flow {
+    padding: 24px 16px 30px;
+  }
+
+  .heading {
+    grid-template-columns: 1fr;
+  }
+
+  .lane ol,
+  .lane[data-reverse="true"] ol {
+    grid-template-columns: 1fr;
+  }
+
+  .lane li {
+    min-height: 0;
+  }
+
+  .lane li:not(:last-child)::after {
+    top: auto;
+    right: auto;
+    bottom: -13px;
+    left: 31px;
+    width: 2px;
+    height: 13px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lane li {
+    transform: none;
+    transition: none;
+  }
+}

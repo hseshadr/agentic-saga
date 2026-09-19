@@ -11,6 +11,7 @@ function actions() {
     previous: vi.fn(),
     restart: vi.fn(),
     seek: vi.fn(),
+    watch: vi.fn(),
   };
 }
 
@@ -27,6 +28,7 @@ describe("ReplayControls", () => {
     );
 
     expect(screen.getByRole("button", { name: "Previous event" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Watch from start" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Play replay" })).toBeEnabled();
     expect(screen.getByText("Event 1 of 3")).toHaveAttribute("aria-live", "polite");
   });
@@ -123,6 +125,7 @@ describe("ReplayControls", () => {
     );
 
     expect(screen.getByRole("button", { name: "Play replay" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Watch from start" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Next event" })).toBeEnabled();
     expect(screen.getByText(/motion preference/i)).toBeVisible();
   });

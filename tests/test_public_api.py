@@ -1,51 +1,47 @@
 from __future__ import annotations
 
-import agentic_saga
-from agentic_saga import execution, storage
-from agentic_saga.contracts import runtime as runtime_contracts
-from agentic_saga.contracts.runtime import SagaGoal
-from agentic_saga.execution import leases
-from agentic_saga.execution.runtime import SagaRuntime
-from agentic_saga.kernel import invariants, policy, state
-from agentic_saga.kernel.definitions import SagaDefinition
+from pathlib import Path
 
-_LEGACY_REEXPORTS = (
-    (leases, "Lease"),
-    (leases, "LeaseLost"),
-    (leases, "LeaseUnavailable"),
-    (invariants, "TerminalRequirement"),
-    (policy, "ExecutionBudget"),
-    (state, "SagaStatus"),
-    (runtime_contracts, "SagaState"),
-    (storage, "LeaseState"),
+import agentic_saga
+from agentic_saga import temporal
+from agentic_saga.temporal import WorkflowState, start_saga
+
+_REQUIRED = frozenset(
+    {
+        "SagaContext",
+        "SagaGoal",
+        "SagaManifest",
+        "SagaWorkflowInput",
+        "WorkflowResult",
+        "WorkflowState",
+        "WorkflowTool",
+        "load_saga_context",
+        "query_saga_state",
+        "resolve_human_compensation",
+        "start_saga",
+    }
+)
+_LEGACY = frozenset({"SagaDefinition", "SagaRuntime", "compose_runtime"})
+_TEMPORAL_LEGOS = frozenset(
+    {"TemporalActivities", "build_worker", "connect_client", "project_run_trace"}
 )
 
 
-def test_should_export_supported_runtime_composition_from_public_facades() -> None:
-    # Given
-    root_exports = tuple(agentic_saga.__all__)
-    execution_exports = tuple(execution.__all__)
+def test_root_exports_the_typed_temporal_surface() -> None:
+    exports = frozenset(agentic_saga.__all__)
 
-    # When
-    root_factory_is_public = "compose_runtime" in root_exports
-    execution_factory_is_public = "compose_runtime" in execution_exports
-
-    # Then
-    assert root_factory_is_public
-    assert execution_factory_is_public
-    assert agentic_saga.compose_runtime is execution.compose_runtime
-    assert agentic_saga.SagaRuntime is SagaRuntime
-    assert execution.SagaRuntime is SagaRuntime
-    assert agentic_saga.SagaDefinition is SagaDefinition
-    assert agentic_saga.SagaGoal is SagaGoal
+    assert exports >= _REQUIRED
+    assert not exports & _LEGACY
+    assert agentic_saga.WorkflowState is WorkflowState
+    assert agentic_saga.start_saga is start_saga
 
 
-def test_should_expose_contracts_only_from_their_canonical_modules() -> None:
-    # Given
-    legacy_owners = _LEGACY_REEXPORTS
+def test_legacy_runtime_packages_are_absent() -> None:
+    package = Path(agentic_saga.__file__).parent
+    for name in ("execution", "kernel", "storage"):
+        assert not tuple((package / name).glob("*.py"))
 
-    # When
-    exposed = tuple(symbol for module, symbol in legacy_owners if hasattr(module, symbol))
 
-    # Then
-    assert exposed == ()
+def test_temporal_package_exports_integration_legos() -> None:
+    assert frozenset(temporal.__all__) >= _TEMPORAL_LEGOS
+    assert all(callable(getattr(temporal, name)) for name in _TEMPORAL_LEGOS)

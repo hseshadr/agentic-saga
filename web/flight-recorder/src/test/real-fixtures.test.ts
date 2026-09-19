@@ -9,7 +9,7 @@ import { loadIndexFixture } from "./load-index-fixture";
 const ROOT = resolve(process.cwd(), "../../examples/ecommerce/flight-recorder/traces");
 
 describe("real flight-recorder fixtures", () => {
-  it("indexes four honest kernel-generated paths with verified digests", () => {
+  it("indexes four honest Temporal-generated paths with verified digests", () => {
     const parsed = parseScenarioIndex(loadIndexFixture());
     if (!parsed.ok) throw new Error("fixture index must be valid");
     expect(parsed.value.runs.map(({ id }) => id)).toEqual([

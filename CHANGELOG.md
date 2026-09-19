@@ -1,98 +1,49 @@
 # Changelog
 
-All notable changes to Agentic Saga will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+All notable changes to Agentic Saga are documented here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project intends to use
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html) after its first public release.
 
 ## [Unreleased]
 
 ### Added
 
-- Optional TypeSafe AI Jev decision adapter with pinned `jev-1.13.0`, host-built complete proposal
-  candidates, calibrated per-candidate confidence gates, strict probability validation, zero SDK
-  retries, and no business-effect authority.
-- Optional OpenRouter Decisions transport for the same bounded Jev policy, pinned to
-  `typesafe/jev-1.13` and the exact dated response model, with native confidence/probabilities,
-  zero retries, no-collection routing, and no chat-completions fallback.
-- Provider-neutral bounded-choice driver that keeps the runtime-facing `AgentDriver` contract
-  unchanged and deterministically avoids a paid decision call when only one legal candidate exists.
-
-## [0.1.0] - 2026-09-18
-
-### Added
-
-- Generic durable Saga kernel with typed actions, intent-before-effect dispatch, reconciliation,
-  compensation, human escalation, crash recovery, and redacted evidence export.
-- SQLite reference storage with lease fencing, replay verification, backup, and restore contracts.
-- Offline unit, integration, crash-process, concurrency, contract, and Hypothesis safety suites.
-- Domain-neutral Saga Context Manifest loading with bounded safe YAML, deterministic agent context,
-  authoritative tool-catalog resolution, named check references, and ecommerce/ticket-booking
-  examples.
-- Optional planning-only Pydantic Deep/Pydantic AI/OpenRouter adapter with one deferred native tool
-  call, pinned-model provider failover, deterministic offline injection, and no tool-execution
-  authority.
-- Executable offline ecommerce reference with a separate durable provider, proposal-only agent,
-  exact payment policy, four pytest-bdd Saga paths, restart recovery, and redacted evidence.
-- Typed `BeginCompensation` proposals that let an agent request the kernel-owned compensation phase
-  without choosing arbitrary rollback execution or bypassing the deterministic frontier.
-- Versioned 24-case evaluation corpus, executable ecommerce fixtures, deterministic scoring, and
-  an opt-in resumable OpenRouter runner with atomic redacted evidence and provider separation.
-- Secret-free typed agent planning failures that distinguish trusted provider exhaustion from
-  invalid model responses and internal adapter failures without exposing raw exception material.
-- Saga Flight Recorder package resources with bounded strict `RunTrace` ingestion, digest-bound
-  scenario loading, pure causal replay, responsive Story/Ledger/Proof inspection, and four
-  reproducible real ecommerce evidence fixtures.
-- Loopback-only, read-only recorder materialization and serving with anchored POSIX paths, exclusive
-  destinations, bounded files and requests, explicit security headers, and fail-closed cleanup.
-- Packaged `agentic-saga demo` command for one selected captured trace, with deterministic
-  offline defaults, optional browser launch, bounded safe failures, and clean Ctrl-C shutdown.
-- Source-grounded architecture signal board and one operational contract for threat, privacy,
-  recovery, operator, resource, performance, and release boundaries.
-- Frozen browser quality gate covering all four traces, keyboard and reduced-motion behavior,
-  required responsive widths, 200% zoom, accessibility, console errors, and external requests.
-- Fail-closed offline release measurement, exact wheel/source-archive contracts, and a hosted
-  Python 3.12/3.13 packaged-browser matrix.
-- Secret-free `.env.example` loading for explicitly authorized OpenRouter evaluation, with local
-  `.env` exclusion and output redaction.
-- Third-party license notices packaged with the bundled Flight Recorder dependencies.
-- Host-owned proposal identity and Saga freshness binding, so models choose business intent while
-  the deterministic adapter owns protocol fields and fails closed on identity reuse.
-- Bounded cumulative read evidence with ledger sequence and conservative freshness labels, plus
-  application-owned semantic tool descriptions and model-facing decision trajectories for success,
-  kernel-ordered compensation, clean abort, and runtime-owned reconciliation.
-- Versioned live-request policy evidence and a strict straightforward-path success gate that prevent
-  stale or cleanly aborted model runs from qualifying as release evidence.
-- Native happy-path, failure-after-charge compensation, unknown-outcome reconciliation, and human
-  escalation examples that make the model/kernel authority split explicit.
+- Temporal Python SDK integration as the sole durable Saga engine.
+- One deterministic Workflow for tool eligibility, prerequisites, budgets, success proof,
+  reverse compensation, and verified human recovery.
+- Typed Activities for bounded agent decisions, business tools, reconciliation, and application-
+  authenticated human authorization.
+- Stable operation identities for provider idempotency and lost-response reconciliation.
+- Four Temporal `pytest-bdd` scenarios covering verified success, automatic compensation,
+  one-effect lost-response recovery, and a human-required compensation outcome.
+- Pydantic Deep with a pinned OpenRouter tool-calling route for optional agentic decisions.
+- Optional TypeSafe AI Jev and OpenRouter Decisions adapters for bounded selection among
+  application-built candidates.
+- Public `saga.yaml` context manifests with bounded parsing, registered-name validation, catalog
+  digests, budgets, safety guidance, and example paths.
+- An accessible Flight Recorder that replays four redacted ecommerce traces with a perceptible
+  forward and rollback animation.
+- Interactive Archify architecture documentation, exact-package release checks, and Dagger CI.
 
 ### Changed
 
-- Replaced the pre-release custom structured-response agent path with exactly pinned
-  `pydantic-deep==0.3.43` and `pydantic-ai-slim[openrouter]==2.45.0`. The model now selects one
-  eligible native proposal tool while the kernel retains every execution decision.
-- Disabled Pydantic Deep's general-purpose filesystem, execution, web, planning, memory, skill,
-  subagent, team, checkpoint, forking, context-discovery, and cost-tracking capabilities for this
-  bounded transactional adapter.
+- Limited the model surface to currently eligible forward business tools plus
+  `finish_saga(succeeded_verified)` when deterministic proof permits it.
+- Assigned reconciliation, compensation order, escalation, and final state exclusively to the
+  Temporal Workflow.
+- Made ecommerce a standalone example of the generic library rather than domain logic in core.
+- Documented distinct test, local-development, and production Temporal modes.
+- Declared Workflow history public/redacted by default; private production payloads require an
+  application-configured encryption codec, external KMS, and least-privilege Namespace access.
 
-- Removed pre-release domain-specific policy slots. Application policies, strict schemas, and
-  adapters enforce domain constraints; manifests reference application-registered checks by name.
-- Reduced package facades to current consumers; advanced types are imported from defining modules.
-- Cut over the unreleased v0.1 store format after removing adapter-factory capability fields and
-  `AgentTurnReserved.agent_factory_digest`; stores created before `4e947cb` must be recreated.
-- Made exhausted agent compensation fail closed to durable human escalation instead of attempting
-  to restart an already-active compensation phase.
-- Consolidated byte-framed stable identity hashing behind one kernel helper while preserving all
-  previously generated identifiers and deliberately distinct identity domains.
-- Added one supported `compose_runtime` assembly path with eight explicit inputs, while keeping each
-  `SagaGoal` as separate transaction input to `runtime.start(...)`.
-- Classified rejected provider requests separately from invalid model output, and converted proposal
-  identity conflicts into durable, redacted agent-turn failures followed by deterministic unwind.
-- Selected pinned `openai/gpt-oss-120b` as the maintained OpenRouter route after it produced the
-  stronger observed completion on the fixed native deferred-tool release corpus. This is scoped
-  empirical evidence, not a universal model-reliability claim.
-- Omitted OpenRouter `seed` and `parallel_tool_calls` request parameters because endpoint support
-  varies. Deterministic single-call enforcement remains local: zero or multiple calls fail closed
-  before execution, so safety does not depend on provider hints.
-- Raised the bounded per-turn OpenRouter deadline to 30 seconds after live evidence showed the
-  pinned model could exceed the earlier deadline without a provider or schema failure.
+### Removed
+
+- The unpublished custom SQLite store, append-only ledger, dispatcher, lease/fence coordinator,
+  crash-recovery runtime, backup/restore layer, and compatibility surface.
+- Agent-controlled `begin_compensation`, rollback tools, non-success finish targets, and
+  `escalate_to_human` proposals.
+- Stale design plans and tests for the retired runtime. There is no dual-write path or migration
+  promise for prototype local databases.
+
+No package has been published from this cutover. A release requires a clean exact-commit gate,
+matching hosted Dagger evidence, and a separate explicit publication decision.

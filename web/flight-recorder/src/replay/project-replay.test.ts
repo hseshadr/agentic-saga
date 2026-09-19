@@ -11,12 +11,14 @@ function trace(name: "business-failure" | "compensation-failure" = "business-fai
 
 describe("projectReplay", () => {
   it("never exposes future terminal or proof evidence before its ledger cursor", () => {
-    const projection = projectReplay(trace(), 34);
+    const source = trace();
+    const compensationIndex = source.events.findIndex(
+      ({ event_type }) => event_type === "compensation_started",
+    );
+    const projection = projectReplay(source, compensationIndex);
 
-    expect(projection.cursor).toBe(34);
-    expect(projection.events).toHaveLength(35);
-    expect(projection.currentEvent.saga_seq).toBe(35);
-    expect(projection.proofs).toEqual([]);
+    expect(projection.currentEvent.event_type).toBe("compensation_started");
+    expect(projection.proofs.map(({ rule_id }) => rule_id)).toEqual(["verify_order"]);
     expect(projection.terminalVerified).toBe(false);
     expect(projection.currentStatus).toBe("compensating");
   });
@@ -24,50 +26,31 @@ describe("projectReplay", () => {
   it("clamps to the recorded end and verifies only recorded terminal proof", () => {
     const projection = projectReplay(trace(), 999);
 
-    expect(projection.cursor).toBe(36);
-    expect(projection.proofs).toHaveLength(3);
+    expect(projection.cursor).toBe(trace().events.length - 1);
+    expect(projection.proofs).toHaveLength(1);
+    expect(projection.proofs[0]?.rule_id).toBe("obligations_reversed");
     expect(projection.terminalVerified).toBe(true);
     expect(projection.currentStatus).toBe("compensated_verified");
   });
 
   it("fails closed when recorded proof omits a declared invariant", () => {
     const source = trace();
-    const incomplete = { ...source, proofs: source.proofs.slice(0, 2) };
+    const incomplete = { ...source, proofs: source.proofs.slice(0, -1) };
 
     const projection = projectReplay(incomplete, 999);
 
-    expect(projection.proof.expectedRuleIds).toEqual([
-      "inventory_released",
-      "order_cancelled",
-      "payment_refunded",
-    ]);
-    expect(projection.proof.missingRuleIds).toEqual(["payment_refunded"]);
+    expect(projection.proof.expectedRuleIds).toEqual(["obligations_reversed"]);
+    expect(projection.proof.missingRuleIds).toEqual(["obligations_reversed"]);
     expect(projection.terminalVerified).toBe(false);
   });
 
   it("uses only the latest invariant evaluation's exact proof group", () => {
     const source = trace();
     const latest = source.events.findLast(({ event_type }) => event_type === "invariant_evaluated");
-    const prior = source.events[30];
-    if (!latest || !prior) throw new Error("fixture must contain two proof positions");
-    const events = source.events.map((event) =>
-      event === prior
-        ? { ...event, event_type: "invariant_evaluated", rationale: latest.rationale }
-        : event,
-    );
-    const older = source.proofs.map((proof) => ({
-      ...proof,
-      evaluated_at_seq: prior.saga_seq - 1,
-      source_event_id: prior.event_id,
-      source_event_seq: prior.saga_seq,
-    }));
+    if (!latest) throw new Error("fixture must contain proof evidence");
+    const projection = projectReplay(source, 999);
 
-    const projection = projectReplay(
-      { ...source, events, proofs: [...older, ...source.proofs] },
-      999,
-    );
-
-    expect(projection.proofs).toHaveLength(3);
+    expect(projection.proofs).toHaveLength(1);
     expect(projection.proofs.every((proof) => proof.source_event_id === latest.event_id)).toBe(
       true,
     );
@@ -76,7 +59,7 @@ describe("projectReplay", () => {
 
   it("fails closed and presents one row per rule when the latest group has a duplicate", () => {
     const source = trace();
-    const duplicate = source.proofs[0];
+    const duplicate = source.proofs.at(-1);
     if (!duplicate) throw new Error("fixture must contain proof evidence");
 
     const projection = projectReplay({ ...source, proofs: [...source.proofs, duplicate] }, 999);

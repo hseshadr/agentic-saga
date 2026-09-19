@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
 from agentic_saga import load_saga_context
-from agentic_saga.contracts.clock import FakeClock
 from agentic_saga.contracts.common import Reversibility
 from agentic_saga.contracts.outcomes import EffectConfirmed, ReconcileEffectConfirmed
 from agentic_saga.contracts.runtime import ToolDescriptor
@@ -20,9 +18,8 @@ from agentic_saga.contracts.tools import (
     ToolCapabilities,
     ToolRegistry,
 )
-from examples.ecommerce.demo import build_registry
 from examples.ecommerce.domain import ScenarioName
-from examples.ecommerce.provider import EcommerceProvider
+from examples.ecommerce.provider import EcommerceProvider, build_registry
 
 ROOT = Path(__file__).parents[3]
 
@@ -97,45 +94,42 @@ def _tickets_registry() -> ToolRegistry:
     )
 
 
-def _digest(registry: ToolRegistry) -> str:
+def _digest(registry: ToolRegistry, names: tuple[str, ...] | None = None) -> str:
+    definitions = (
+        registry.definitions()
+        if names is None
+        else tuple(registry.definition(name) for name in names)
+    )
     descriptors = [
-        ToolDescriptor.from_definition(item).model_dump(mode="json")
-        for item in registry.definitions()
+        ToolDescriptor.from_definition(item).model_dump(mode="json") for item in definitions
     ]
     payload = json.dumps({"tools": descriptors}, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
-def test_should_load_ecommerce_example_against_registered_capabilities(
-    tmp_path: Path,
-) -> None:
+def test_should_load_ecommerce_example_against_registered_capabilities() -> None:
     # Given
-    clock = FakeClock(datetime(2026, 1, 1, tzinfo=UTC))
-    provider = EcommerceProvider.initialize(
-        tmp_path / "provider.db", clock, ScenarioName.HAPPY_PATH
-    )
+    provider = EcommerceProvider(ScenarioName.HAPPY_PATH)
     registry = build_registry(provider)
 
     # When
     context = load_saga_context(
         ROOT / "examples/ecommerce/saga.yaml",
         registry=registry,
-        policy_checks=("amount_within_limit", "customer_authorized"),
+        policy_checks=(),
         invariant_checks=(
-            "inventory_released",
-            "inventory_reserved",
             "no_external_effects",
-            "order_cancelled",
-            "order_fulfilled",
-            "payment_captured",
-            "payment_refunded",
+            "obligations_reversed",
+            "order_verified",
         ),
     )
 
     # Then
-    assert context.manifest.tools.catalog_sha256 == _digest(registry)
-    assert context.manifest.name == "ecommerce_order"
-    assert len(context.tool_descriptors) == 8
+    assert context.manifest.tools.catalog_sha256 == _digest(
+        registry, context.manifest.tools.allowed
+    )
+    assert context.manifest.name == "ecommerce_checkout"
+    assert len(context.tool_descriptors) == 4
 
 
 def test_should_load_ticket_example_with_same_domain_neutral_schema() -> None:

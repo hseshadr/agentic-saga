@@ -289,7 +289,7 @@ type JsonValue = Annotated[_FrozenJsonValue, _JsonValueMarker]
 
 
 def canonical_json(value: object) -> bytes:
-    """Encode strict JSON using the kernel's byte-stable representation."""
+    """Encode strict JSON using the runtime's byte-stable representation."""
     validated = _freeze_json(value)
     return _encode_json(thaw_json(validated))
 

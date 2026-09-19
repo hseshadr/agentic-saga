@@ -5,11 +5,10 @@ from typing import cast
 import pytest
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
+import agentic_saga.contracts.actions as action_contracts
 from agentic_saga.contracts.actions import (
     AgentProposal,
     AuthorizedToolCall,
-    BeginCompensation,
-    Escalate,
     Finish,
     HumanDecision,
     ToolCall,
@@ -25,6 +24,11 @@ from agentic_saga.contracts.common import (
     StepInstanceId,
     thaw_json_object,
 )
+
+
+def test_agent_controls_are_not_public_contracts() -> None:
+    assert not hasattr(action_contracts, "BeginCompensation")
+    assert not hasattr(action_contracts, "Escalate")
 
 
 class ExampleCommand(BaseModel):
@@ -295,21 +299,6 @@ def test_should_reject_extra_field_when_validating_finish() -> None:
         Finish.model_validate(payload)
 
 
-def test_should_reject_empty_reason_code_when_validating_escalation() -> None:
-    # Given
-    payload = {
-        "kind": "escalate",
-        "proposal_id": "proposal_00000003",
-        "based_on_saga_seq": 3,
-        "reason_code": "",
-        "rationale": "Provider evidence conflicts.",
-    }
-
-    # When / Then
-    with pytest.raises(ValidationError):
-        Escalate.model_validate(payload)
-
-
 @pytest.mark.parametrize(
     ("payload", "expected_type"),
     [
@@ -323,26 +312,6 @@ def test_should_reject_empty_reason_code_when_validating_escalation() -> None:
                 "target_status": "succeeded_verified",
             },
             Finish,
-        ),
-        (
-            {
-                "kind": "begin_compensation",
-                "proposal_id": "proposal_00000004",
-                "based_on_saga_seq": 3,
-                "reason_code": "goal_unreachable",
-                "rationale": "Confirmed effects must be compensated.",
-            },
-            BeginCompensation,
-        ),
-        (
-            {
-                "kind": "escalate",
-                "proposal_id": "proposal_00000003",
-                "based_on_saga_seq": 3,
-                "reason_code": "provider_conflict",
-                "rationale": "Provider evidence conflicts.",
-            },
-            Escalate,
         ),
     ],
 )

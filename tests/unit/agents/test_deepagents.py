@@ -24,10 +24,9 @@ from agentic_saga.agents.deepagents import (
     AgentPlanningError,
     native_proposal_tool_names,
 )
-from agentic_saga.contracts.actions import BeginCompensation, Escalate, Finish, ToolCall
+from agentic_saga.contracts.actions import Finish, ToolCall
 from agentic_saga.contracts.common import canonical_json
 from agentic_saga.contracts.runtime import (
-    ControlProposalCapabilities,
     ExecutionBudget,
     SagaGoal,
     SagaObservation,
@@ -170,7 +169,7 @@ def _context(*tool_names: str) -> SagaContext:
 
 
 def _observation(
-    controls: ControlProposalCapabilities | None = None,
+    finish_allowed: bool = True,
 ) -> SagaObservation:
     return SagaObservation(
         saga_id="saga_0123456789abcdef",
@@ -180,11 +179,7 @@ def _observation(
         last_action=None,
         projection={"status": "pending"},
         remaining_budget=_budget(),
-        proposal_controls=controls
-        or ControlProposalCapabilities(
-            finish_targets=("succeeded_verified", "aborted_clean"),
-            escalate_to_human=True,
-        ),
+        finish_allowed=finish_allowed,
     )
 
 
@@ -213,26 +208,6 @@ def _finish() -> dict[str, object]:
             "kind": "finish",
             "rationale": "All registered checks can now be evaluated.",
             "target_status": "succeeded_verified",
-        }
-    }
-
-
-def _escalate() -> dict[str, object]:
-    return {
-        "proposal": {
-            "kind": "escalate",
-            "reason_code": "ambiguous_evidence",
-            "rationale": "A human must resolve conflicting public evidence.",
-        }
-    }
-
-
-def _begin_compensation() -> dict[str, object]:
-    return {
-        "proposal": {
-            "kind": "begin_compensation",
-            "reason_code": "forward_goal_unreachable",
-            "rationale": "Use the kernel-owned compensation frontier.",
         }
     }
 
@@ -319,7 +294,7 @@ def test_model_schema_should_require_discriminator_for_every_intent_variant() ->
         if "kind" in definition.get("properties", {})
     ]
 
-    assert len(intent_variants) == 4
+    assert len(intent_variants) == 2
     assert all("kind" in definition.get("required", []) for definition in intent_variants)
 
 
@@ -342,13 +317,13 @@ async def test_should_render_manifest_observation_and_current_eligible_catalog()
     system_context, turn_context = calls[0]
     rendered = json.loads(turn_context)
     assert context.agent_context in system_context
-    assert "Only the deterministic Saga kernel executes business tools" in system_context
+    assert "Only the deterministic Temporal workflow executes business tools" in system_context
     assert rendered["observation"]["saga_seq"] == 3
     assert [item["name"] for item in rendered["available_tools"]] == ["inspect"]
 
 
 @pytest.mark.asyncio
-async def test_system_context_should_teach_generic_compensation_decisions() -> None:
+async def test_system_context_should_explain_temporal_owned_recovery() -> None:
     calls: list[str] = []
 
     async def propose(system_context: str, turn_context: str) -> object:
@@ -361,31 +336,19 @@ async def test_system_context_should_teach_generic_compensation_decisions() -> N
     )
 
     system_context = calls[0]
-    assert "Call begin_compensation" in system_context
     assert "Call finish_saga" in system_context
-    assert "compensated_verified" in system_context
-    assert "aborted_clean" in system_context
-    assert "kernel derives rollback order" in system_context
-    assert "runtime before another turn" in system_context
-    assert "currently advertised compensation tool" in system_context
-    assert "confirmed forward effect is success evidence, not failure" in system_context
-    assert (
-        "Never begin compensation from stale or missing evidence or speculation" in system_context
-    )
-    assert "Refresh facts needed for the next forward step" in system_context
-    assert "proves the forward goal cannot safely complete" in system_context
-    assert "last_action.event_type=terminal_denied" in system_context
-    assert "failed forward invariant" in system_context
-    assert "call begin_compensation immediately" in system_context
-    assert "rollback tools intentionally appear only after that transition" in system_context
-    assert "Never escalate merely because rollback tools are not yet advertised" in system_context
+    assert "succeeded_verified" in system_context
+    assert "ordinary failed proof triggers workflow-owned compensation" in system_context
+    assert "unresolved evidence triggers verified human handling" in system_context
+    assert "deterministic Temporal workflow" in system_context
+    assert "begin_compensation" not in system_context
+    assert "escalate_to_human" not in system_context
+    assert "Saga kernel" not in system_context
     assert "an exact advertised action is available" in system_context
     assert "never claim that a matching action is unavailable" in system_context
     assert "freshness=fresh" in system_context
     assert "never duplicate an already-satisfied effect" in system_context
     assert "never repeat the rejected effect" in system_context
-    assert "explicitly requires human escalation" in system_context
-    assert "reconciliation read" not in system_context
     assert "exact advertised native tool" in system_context
 
 
@@ -410,7 +373,7 @@ async def test_system_context_should_teach_rejection_refresh_and_budget_decision
     assert "Before the first mutation" in system_context
     assert "remaining_budget.turn_limit" in system_context
     assert "evidence, effects, and terminal proof" in system_context
-    assert "finish aborted_clean before creating partial work" in system_context
+    assert "avoid creating partial work" in system_context
 
 
 @pytest.mark.asyncio
@@ -801,35 +764,16 @@ async def test_should_reject_private_material_in_valid_provider_proposal() -> No
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("raw", "proposal_type", "controls"),
-    [
-        (
-            _finish(),
-            Finish,
-            ControlProposalCapabilities(finish_targets=("succeeded_verified",)),
-        ),
-        (
-            _begin_compensation(),
-            BeginCompensation,
-            ControlProposalCapabilities(begin_compensation=True),
-        ),
-        (_escalate(), Escalate, ControlProposalCapabilities(escalate_to_human=True)),
-    ],
-)
-async def test_should_accept_each_non_effect_proposal(
-    raw: dict[str, object],
-    proposal_type: type[Finish] | type[BeginCompensation] | type[Escalate],
-    controls: ControlProposalCapabilities,
-) -> None:
+async def test_should_accept_verified_success_proposal() -> None:
     async def propose(system_context: str, turn_context: str) -> object:
         del system_context, turn_context
-        return raw
+        return _finish()
 
     proposal = await DeepAgentsDriver(_context("inspect"), propose).next_action(
-        _observation(controls), (_descriptor("inspect"),)
+        _observation(),
+        (_descriptor("inspect"),),
     )
-    assert isinstance(proposal, proposal_type)
+    assert isinstance(proposal, Finish)
 
 
 @pytest.mark.asyncio
@@ -945,7 +889,6 @@ async def test_pydantic_deep_should_call_one_native_eligible_proposal_tool() -> 
     assert [tool.name for tool in parameters.function_tools] == [
         "inspect",
         "finish_saga",
-        "escalate_to_human",
     ]
 
 
@@ -1000,7 +943,7 @@ def test_should_keep_arbitrary_prebuilt_model_construction_internal() -> None:
 
 
 @pytest.mark.asyncio
-async def test_should_expose_only_eligible_business_and_control_proposal_tools() -> None:
+async def test_should_expose_only_eligible_business_and_verified_finish_tools() -> None:
     model = TestModel(call_tools=["reserve"])
     driver = DeepAgentsDriver._from_model(
         _context("inspect", "reserve"),
@@ -1019,7 +962,6 @@ async def test_should_expose_only_eligible_business_and_control_proposal_tools()
     assert [tool.name for tool in parameters.function_tools] == [
         "reserve",
         "finish_saga",
-        "escalate_to_human",
     ]
 
 
@@ -1040,24 +982,8 @@ async def test_should_scope_model_resources_to_each_durable_agent_turn() -> None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("tool_name", "proposal_type"),
-    [
-        ("finish_saga", Finish),
-        ("begin_compensation", BeginCompensation),
-        ("escalate_to_human", Escalate),
-    ],
-)
-async def test_should_model_control_decisions_as_native_proposal_tools(
-    tool_name: str,
-    proposal_type: type[Finish] | type[BeginCompensation] | type[Escalate],
-) -> None:
-    controls = ControlProposalCapabilities(
-        finish_targets=("succeeded_verified", "aborted_clean"),
-        begin_compensation=True,
-        escalate_to_human=True,
-    )
-    model = TestModel(call_tools=[tool_name])
+async def test_should_bind_ready_finish_to_current_sequence() -> None:
+    model = TestModel(call_tools=["finish_saga"])
     driver = DeepAgentsDriver._from_model(
         _context("inspect"),
         model,
@@ -1065,15 +991,16 @@ async def test_should_model_control_decisions_as_native_proposal_tools(
         model_route=("test/native-tools",),
     )
 
-    proposal = await driver.next_action(_observation(controls), (_descriptor("inspect"),))
+    proposal = await driver.next_action(_observation(), (_descriptor("inspect"),))
 
-    assert isinstance(proposal, proposal_type)
+    assert isinstance(proposal, Finish)
+    assert proposal.target_status == "succeeded_verified"
     assert proposal.based_on_saga_seq == 3
     assert proposal.proposal_id.startswith("proposal_")
 
 
 @pytest.mark.asyncio
-async def test_should_remove_begin_compensation_after_compensation_starts() -> None:
+async def test_should_build_only_forward_and_ready_finish_tools() -> None:
     model = TestModel(call_tools=["inspect"])
     driver = DeepAgentsDriver._from_model(
         _context("inspect"),
@@ -1081,62 +1008,32 @@ async def test_should_remove_begin_compensation_after_compensation_starts() -> N
         provider_id="test",
         model_route=("test/native-tools",),
     )
-    controls = ControlProposalCapabilities(
-        finish_targets=("compensated_verified",),
-        escalate_to_human=True,
-    )
-    observation = _observation(controls).model_copy(update={"state": SagaStatus.COMPENSATING})
-
-    await driver.next_action(observation, (_descriptor("inspect"),))
+    await driver.next_action(_observation(), (_descriptor("inspect"),))
 
     parameters = model.last_model_request_parameters
     assert parameters is not None
     assert [tool.name for tool in parameters.function_tools] == [
         "inspect",
         "finish_saga",
-        "escalate_to_human",
     ]
 
 
 def test_should_report_the_exact_state_dependent_native_tool_allowlist() -> None:
     running = native_proposal_tool_names(_observation(), (_descriptor("inspect"),))
-    compensable = native_proposal_tool_names(
-        _observation(
-            ControlProposalCapabilities(
-                finish_targets=("succeeded_verified", "aborted_clean"),
-                begin_compensation=True,
-                escalate_to_human=True,
-            )
-        ),
-        (_descriptor("inspect"),),
-    )
-    controls = ControlProposalCapabilities(
-        finish_targets=("compensated_verified",),
-        escalate_to_human=True,
-    )
+    compensable = native_proposal_tool_names(_observation(), (_descriptor("inspect"),))
     compensating = native_proposal_tool_names(
-        _observation(controls).model_copy(update={"state": SagaStatus.COMPENSATING}),
+        _observation(False).model_copy(update={"state": SagaStatus.COMPENSATING}),
         (_descriptor("refund"),),
     )
 
-    assert running == (
-        "inspect",
-        "finish_saga",
-        "escalate_to_human",
-    )
-    assert compensable == (
-        "inspect",
-        "finish_saga",
-        "begin_compensation",
-        "escalate_to_human",
-    )
-    assert compensating == ("refund", "finish_saga", "escalate_to_human")
+    assert running == ("inspect", "finish_saga")
+    assert compensable == ("inspect", "finish_saga")
+    assert compensating == ("refund",)
 
 
 @pytest.mark.asyncio
-async def test_should_restrict_finish_schema_to_kernel_advertised_targets() -> None:
-    controls = ControlProposalCapabilities(finish_targets=("compensated_verified",))
-    observation = _observation(controls).model_copy(update={"state": SagaStatus.COMPENSATING})
+async def test_should_restrict_finish_schema_to_verified_success() -> None:
+    observation = _observation()
     model = TestModel(call_tools=["finish_saga"])
     driver = DeepAgentsDriver._from_model(
         _context("inspect"),
@@ -1151,7 +1048,27 @@ async def test_should_restrict_finish_schema_to_kernel_advertised_targets() -> N
     assert parameters is not None
     finish = next(tool for tool in parameters.function_tools if tool.name == "finish_saga")
     terminal = finish.parameters_json_schema["properties"]["target_status"]
-    assert terminal["enum"] == ["compensated_verified"]
+    assert terminal["enum"] == ["succeeded_verified"]
+
+
+@pytest.mark.asyncio
+async def test_should_omit_premature_finish_tool() -> None:
+    model = TestModel(call_tools=["inspect"])
+    driver = DeepAgentsDriver._from_model(
+        _context("inspect"),
+        model,
+        provider_id="test",
+        model_route=("test/native-tools",),
+    )
+
+    await driver.next_action(
+        _observation(False),
+        (_descriptor("inspect"),),
+    )
+
+    parameters = model.last_model_request_parameters
+    assert parameters is not None
+    assert [tool.name for tool in parameters.function_tools] == ["inspect"]
 
 
 @pytest.mark.asyncio
@@ -1170,19 +1087,33 @@ async def test_should_reject_multiple_native_proposal_calls_without_executing_ef
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("raw", "controls"),
+    "raw",
     [
-        (_begin_compensation(), ControlProposalCapabilities()),
-        (_escalate(), ControlProposalCapabilities()),
-        (
-            _finish(),
-            ControlProposalCapabilities(finish_targets=("compensated_verified",)),
-        ),
+        {
+            "proposal": {
+                "kind": "begin_compensation",
+                "reason_code": "forward_goal_unreachable",
+                "rationale": "Start rollback.",
+            }
+        },
+        {
+            "proposal": {
+                "kind": "escalate",
+                "reason_code": "ambiguous_evidence",
+                "rationale": "Ask an operator.",
+            }
+        },
+        {
+            "proposal": {
+                "kind": "finish",
+                "rationale": "Rollback completed.",
+                "target_status": "compensated_verified",
+            }
+        },
     ],
 )
-async def test_should_reject_a_control_outside_the_kernel_advertised_surface(
+async def test_should_reject_temporal_owned_controls_from_injected_model(
     raw: dict[str, object],
-    controls: ControlProposalCapabilities,
 ) -> None:
     async def propose(system_context: str, turn_context: str) -> object:
         del system_context, turn_context
@@ -1190,25 +1121,8 @@ async def test_should_reject_a_control_outside_the_kernel_advertised_surface(
 
     driver = DeepAgentsDriver(_context("inspect"), propose)
 
-    with pytest.raises(ValueError, match="invalid proposal"):
-        await driver.next_action(_observation(controls), (_descriptor("inspect"),))
-
-
-@pytest.mark.asyncio
-async def test_should_reject_model_defined_compensation_policy_reason() -> None:
-    raw = _begin_compensation()
-    intent = cast(dict[str, object], raw["proposal"])
-    intent["reason_code"] = "payment_failed"
-
-    async def propose(system_context: str, turn_context: str) -> object:
-        del system_context, turn_context
-        return raw
-
-    controls = ControlProposalCapabilities(begin_compensation=True)
-    driver = DeepAgentsDriver(_context("inspect"), propose)
-
     with pytest.raises(AgentPlanningError, match="invalid_response"):
-        await driver.next_action(_observation(controls), (_descriptor("inspect"),))
+        await driver.next_action(_observation(), (_descriptor("inspect"),))
 
 
 def test_should_strip_every_unneeded_pydantic_deep_capability(

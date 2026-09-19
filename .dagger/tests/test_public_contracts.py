@@ -66,7 +66,7 @@ VALID_MANIFEST = "\n".join(
     )
 )
 PUBLIC_INPUTS = (
-    ("source", "dagger.Directory"),
+    ("source", "Annotated[dagger.Directory, Ignore(SOURCE_IGNORE_PATTERNS)]"),
     ("commit_sha", "str"),
     ("git_auth_header", "dagger.Secret | None"),
 )
@@ -419,6 +419,22 @@ def test_should_install_the_project_offline_without_build_isolation() -> None:
     assert "'--offline'" in body
     assert "'--no-build-isolation'" in body
     assert "'--no-editable'" in body
+
+
+def test_should_filter_secret_prone_context_before_external_modules() -> None:
+    source = MODULE.read_text()
+
+    assert "Annotated[dagger.Directory, Ignore(SOURCE_IGNORE_PATTERNS)]" in source
+    assert '".env"' in source
+    assert '"**/.env"' in source
+    release = _function_body(source, "_release_source")
+    adapter = _adapter_class(_tree(source))
+    method = next(item for item in _public_methods(adapter) if item.name == "security")
+    security = ast.unparse(method)
+    assert "await _guard(source" in release
+    assert "verified = await _release_source(source" in security
+    assert "_dependency_audit(verified" in security
+    assert "_node(verified)" in security
 
 
 def test_should_mount_the_locked_frontend_identity_before_corepack() -> None:
@@ -827,7 +843,11 @@ def test_should_propagate_security_audit_failure_before_frontend_work(
     async def failed_audit(*_: object) -> None:
         raise RuntimeError("locked audit failed")
 
+    async def verified_source(source: object, *_: object) -> object:
+        return source
+
     monkeypatch.setattr(main, "_dependency_audit", failed_audit)
+    monkeypatch.setattr(main, "_release_source", verified_source)
 
     # When the public security entry point is awaited.
     # Then its dependency-audit failure remains visible without starting a Dagger container.

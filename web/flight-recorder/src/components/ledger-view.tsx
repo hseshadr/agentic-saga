@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { filterLedgerEvents, type LedgerFilter } from "../ledger/filter-events";
-import type { FlightLaneId, ProjectedEvent } from "../trace/flight-projection";
+import { authorityLabel, type FlightLaneId, type ProjectedEvent } from "../trace/flight-projection";
 import type { SagaStatus } from "../trace/schema";
 import styles from "./inspection-views.module.css";
 
@@ -131,7 +131,7 @@ function LedgerRow({
     <tr>
       <td data-label="Sequence">{event.saga_seq}</td>
       <td data-label="Recorded">{event.recorded_at}</td>
-      <td data-label="Authority">{event.authority}</td>
+      <td data-label="Authority">{authorityLabel(event.authority)}</td>
       <td data-label="Event">{item.label}</td>
       <td data-label="State">{event.after_status}</td>
       <td data-label="Evidence">

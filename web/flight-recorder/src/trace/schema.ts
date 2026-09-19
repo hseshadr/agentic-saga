@@ -51,17 +51,12 @@ export const jsonValueSchema: z.ZodType<JsonValue> = z.lazy(() =>
 const jsonObjectSchema = z.record(z.string().max(MAX_STRING), jsonValueSchema);
 
 export const sagaStatusSchema = z.enum([
-  "created",
   "running",
-  "recovery_plan_required",
-  "retry_wait",
-  "reconciling_unknown",
   "compensating",
   "human_required",
   "succeeded_verified",
   "compensated_verified",
   "aborted_clean",
-  "resolved_with_exception",
 ]);
 
 export const traceEventSchema = z
@@ -69,7 +64,7 @@ export const traceEventSchema = z
     event_id: eventIdSchema,
     saga_seq: z.number().int().positive(),
     recorded_at: utcSchema,
-    authority: z.enum(["agent", "policy", "kernel", "effect", "compensation", "proof", "human"]),
+    authority: z.enum(["agent", "workflow", "effect", "compensation", "proof", "human"]),
     event_type: boundedNameSchema,
     actor: boundedNameSchema,
     trace_id: traceIdSchema,

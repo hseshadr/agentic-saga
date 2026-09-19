@@ -1,18 +1,20 @@
 # Provenance and release status
 
-TL;DR: source commits are authoritative. A release candidate is one immutable wheel and source
-archive built from a clean exact commit, verified offline against hash-pinned inputs, measured
-against the [operations contract](docs/operations.md), and matched to hosted CI. The project is
-not published to a package registry.
+TL;DR: source commits are authoritative. A release candidate is one wheel and one source archive
+built from a clean exact commit, installed with hash-pinned dependencies, tested through the
+Temporal and browser gates, and matched to the hosted Dagger run for that commit. This project does
+not publish a package automatically.
 
-The committed `uv.lock` freezes Python inputs. `web/flight-recorder/pnpm-lock.yaml` freezes
-frontend inputs and `package.json` pins pnpm 11.5.0. The locked `lossless-json` parser preserves
-numeric lexemes required to verify Python canonical evidence hashes without JavaScript precision
-loss.
+## What is frozen
 
-## Current evidence
+- `uv.lock` freezes Python inputs, including the Temporal Python SDK.
+- `web/flight-recorder/pnpm-lock.yaml` freezes frontend inputs.
+- `package.json` pins pnpm 11.5.0.
+- Dagger base images and shared CI modules use immutable digests or exact commits.
+- `SHA256SUMS` binds the wheel, source archive, and runtime requirements to one build.
+- `SOURCE_COMMIT` binds the artifact set to committed `HEAD`.
 
-The release machinery is implemented. These are the local entry points:
+## Reproduce the evidence
 
 ```bash
 uv run poe gate
@@ -20,49 +22,57 @@ uv run poe release-candidate
 uv run python scripts/measure_release.py
 ```
 
-The local `uv run poe gate` enforces lint, formatting, strict types, Xenon grade A, offline tests,
-and separate true branch floors for the kernel and release scripts. The release-candidate command
-builds exactly one wheel and one source archive from an isolated `git archive` of committed `HEAD`,
-records and checks their SHA-256 digests, installs the wheel and hash-pinned runtime dependencies
-offline in a clean environment matching the active supported Python (3.12 or 3.13), verifies the
-CLI version, and proves optional-provider import isolation. The build stage downloads a
-platform-specific wheelhouse with pip's hash checking; verification then disables indexes,
-network access, and Python downloads, so it does not depend on an ambient package cache. Package tests
-also compare the wheel's static/reference bytes exactly and require the source archive's public
-documents and safe relative links.
+The gate runs lint, formatting, strict types, Xenon grade A, ordinary tests, Temporal integration
+tests, true branch-coverage floors, package checks, and release-measurement tests. The Temporal BDD
+suite uses the isolated time-skipping test server; it does not pretend that test infrastructure is
+a production Temporal Service.
 
-`scripts/measure_release.py` is the fail-closed executable form of the published operations budget.
-It records the full commit, dirty/clean state, OS, CPU, Python, Node, and pnpm; runs the Python and
-frontend gates; builds and installs a wheel offline from hash-pinned inputs; exercises all four
-reference scenarios and the packaged Chromium recorder; and reports sample counts, p50/p95/max
-latencies, bundle/catalog sizes, peak RSS, boundary limits, and a result for every budget. It makes
-no paid model call.
+The release-candidate command builds from `git archive HEAD`, creates exactly one wheel and one
+source archive, verifies SHA-256 digests, installs hash-pinned runtime dependencies without an
+index, installs the wheel without dependency resolution, checks the environment, and verifies the
+CLI and Temporal public surface. It does not publish.
 
-Audited baseline commit `3fcf10ea6a6dbd2799f242758cecbbd6321ff639` passed hosted
-[Dagger run 34807057405](https://github.com/hseshadr/agentic-saga/actions/runs/34807057405)
-and [security run 34859242334](https://github.com/hseshadr/agentic-saga/actions/runs/34859242334).
-The Dagger run covered the complete Python 3.12/3.13 and packaged-browser release matrix and prints
-its validated SHA-256 manifest in the run log. It uploaded no GitHub artifact, so the log is digest
-evidence rather than hosted wheel/sdist distribution. Only green checks bound to the release
-candidate's own exact head count as final evidence. A dirty-tree measurement remains diagnostic
-only. No registry artifacts exist, and none of these commands publishes one.
+The measurement report proves these shipped surfaces:
+
+- core, frontend, and release-script branch coverage;
+- Python complexity and browser behavior gates;
+- Temporal as the runtime dependency and absence of the retired runtime packages;
+- typed public API imports and Temporal integration Legos;
+- Temporal tests as part of the exact quality gate;
+- wheel build/install; and
+- packaged Flight Recorder startup.
+
+A dirty-tree result is diagnostic only. Final evidence must come from the same clean commit as the
+reviewed source and hosted Dagger run.
+
+## Current cutover status
+
+The pre-1.0 branch has cut over to Temporal as its sole durability engine. A previous unpublished
+implementation contained a custom SQLite store, leases, dispatch recovery, and local replay. That
+code and its compatibility surface were deliberately removed; there is no dual runtime and no
+migration promise for those pre-release local files.
+
+Historical CI links for the retired implementation are historical provenance only. They do not
+prove the Temporal release candidate. The Temporal cutover becomes releasable only after its own
+clean exact commit passes every local and hosted gate.
 
 ## Repository controls
 
-`.github/workflows/dagger.yml` and `.github/workflows/dagger-security.yml` are compact, read-only
-ingress into the version-pinned Dagger graph. The graph composes shared Foundation and Python-package
-controls from exact `hseshadr/ci` commit `5cf3b7550442bb06d1cce1f146e48c064dcf511c` with the
-product-specific Python, frontend, packaged-browser, and release-measurement gates. Checkout
-credentials remain disabled.
+`.github/workflows/dagger.yml` and `.github/workflows/dagger-security.yml` are narrow entry points
+to the pinned Dagger graph. Dagger is the canonical CI Lego: it composes shared supply-chain and
+Python-package controls with repository-specific Temporal, frontend, recorder, and release checks.
+Checkout credentials remain disabled for untrusted build work.
 
-Branch protection requires the exact GitHub Actions `Dagger` check, enforces administrator rules
-and conversation resolution, and disallows force pushes and branch deletion. The run links above
-bind execution evidence to the exact main commit. Hosted deployment availability is N/A because
-v0.1 is a non-hosted library with a local loopback viewer.
+The project is a library plus a local loopback viewer. It has no hosted application deployment.
+Production users deploy their Workers and connect them to Temporal Cloud or an operated,
+production-ready self-hosted Temporal Service.
 
 ## Publication boundary
 
-Publication requires separate, fresh authorization and trusted publishing from the reviewed
-immutable artifact. The source release workflow does not publish to PyPI or another package
-registry. Opening the optional OpenRouter evaluation route also requires separate explicit consent;
-its output is model-quality evidence, not release correctness evidence.
+Publishing to PyPI or another registry requires separate, fresh authorization and trusted
+publishing from the reviewed immutable artifact. Live OpenRouter evaluation also requires separate
+consent and provider-side spend controls. Model-quality evidence is not release-correctness
+evidence.
+
+See the [operations contract](docs/operations.md) and
+[Temporal safety contract](docs/temporal-safety-contract.md).

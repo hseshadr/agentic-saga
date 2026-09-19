@@ -15,12 +15,7 @@ const MAX_STRING = 20_000;
 const MAX_TRACE_BYTES = 8 * 1024 * 1024;
 const encoder = new TextEncoder();
 const UTC_PARTS = new RegExp(utcTimestampPattern.source);
-const terminalStates = new Set([
-  "succeeded_verified",
-  "compensated_verified",
-  "aborted_clean",
-  "resolved_with_exception",
-]);
+const terminalStates = new Set(["succeeded_verified", "compensated_verified", "aborted_clean"]);
 
 export interface ParseSuccess {
   readonly ok: true;

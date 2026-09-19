@@ -22,6 +22,11 @@ the same public Jev decision payload to OpenRouter's native Decisions API with z
 provider-routing preferences that require ZDR and deny data collection; it never falls back to chat
 completions.
 
+The core Python package installs, but does not bundle, `temporalio` from the Apache-2.0-licensed
+Temporal Python SDK. Temporal supplies durable Workflow history, Activity delivery, retries,
+timers, Queries, and Updates; Agentic Saga supplies the domain-neutral agent, tool, proof,
+compensation, reconciliation, and human-resolution contracts layered on those primitives.
+
 ## React family
 
 Components: `react 19.2.8`, `react-dom 19.2.8`, and `scheduler 0.27.0`

@@ -171,4 +171,4 @@ UV_OFFLINE=1 UV_PYTHON_DOWNLOADS=never uv pip check --offline --no-python-downlo
 actual="$("$venv"/bin/agentic-saga --version)"
 test "$actual" = "agentic-saga 0.1.0"
 "$venv"/bin/python -c \
-  'from agentic_saga.agents import DeepAgentsDriver, OpenRouterSettings, build_openrouter_driver'
+  'import agentic_saga, temporalio; import agentic_saga.temporal as temporal; from agentic_saga.agents import DeepAgentsDriver, OpenRouterSettings, build_openrouter_driver; assert agentic_saga.WorkflowState.__module__ == "agentic_saga.temporal.contracts"; assert callable(agentic_saga.start_saga); assert all(callable(item) for item in (temporal.TemporalActivities, temporal.build_worker, temporal.connect_client, temporal.project_run_trace)); assert not hasattr(agentic_saga, "SagaRuntime")'

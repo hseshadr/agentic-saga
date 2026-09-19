@@ -1,0 +1,2 @@
+# Vite's minified vendor bundle preserves whitespace inside generated template literals.
+src/agentic_saga/demo/static/assets/*.js -whitespace

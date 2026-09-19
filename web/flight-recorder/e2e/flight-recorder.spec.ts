@@ -3,16 +3,16 @@ import { expect, type Page, type TestInfo, test } from "@playwright/test";
 import { installTraceRoutes, type NetworkEvidence } from "./install-trace-routes";
 
 const runs = [
-  [0, "Succeeded verified", "/traces/happy-path.json", "Terminal assigned"],
-  [1, "Succeeded verified", "/traces/lost-response.json", "Reconciliation recorded"],
-  [2, "Compensated verified", "/traces/business-failure.json", "Compensation started"],
-  [3, "Human required", "/traces/compensation-failure.json", "Human required"],
+  [0, "Completed safely", "/traces/happy-path.json", "Terminal assigned"],
+  [1, "Completed safely", "/traces/lost-response.json", "Reconciliation recorded"],
+  [2, "Safely undone", "/traces/business-failure.json", "Compensation started"],
+  [3, "Waiting for a human", "/traces/compensation-failure.json", "Human required"],
 ] as const;
 
 async function openRecorder(page: Page): Promise<NetworkEvidence> {
   const evidence = await installTraceRoutes(page);
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Saga Flight Recorder" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Agentic Saga Replay" })).toBeVisible();
   return evidence;
 }
 
@@ -26,21 +26,21 @@ async function selectRun(page: Page, index: number, outcome: string): Promise<vo
 }
 
 async function expectBusinessFailureEvidence(page: Page): Promise<void> {
-  await page.getByRole("button", { name: /^22\. Compensation started/ }).click();
+  await page.getByRole("button", { name: /\. Compensation started$/ }).click();
   await expect(page.getByRole("complementary", { name: "Recorded evidence" })).toContainText(
-    "forward_goal_unreachable",
+    "compensating",
   );
-  await page.getByRole("button", { name: /^20\. Read observed/ }).click();
+  await page
+    .getByRole("button", { name: /\. Invariant evaluated$/ })
+    .first()
+    .click();
   await expect(page.getByRole("complementary", { name: "Recorded evidence" })).toContainText(
-    '"fulfillment": "rejected"',
+    '"verified": false',
   );
   await page.getByRole("tab", { name: "Ledger" }).click();
   await page.getByLabel("Search recorded fields").fill("charge_payment");
-  const charge = page
-    .getByRole("row")
-    .filter({ hasText: "13" })
-    .filter({ hasText: "Effect outcome recorded" });
-  await charge.getByRole("button", { name: "Inspect event 13" }).click();
+  const charge = page.getByRole("row").filter({ hasText: "Effect outcome recorded" });
+  await charge.getByRole("button", { name: /Inspect event/ }).click();
   await expect(page.getByRole("complementary", { name: "Recorded evidence" })).toContainText(
     "effect_confirmed",
   );
@@ -164,6 +164,61 @@ test("keyboard replay, tabs, inspection, and focus return preserve context", asy
   await expect(inspect).toBeFocused();
 });
 
+test("watch from start reveals the ecommerce Saga at a human pace", async ({ page }) => {
+  await page.clock.install();
+  await openRecorder(page);
+  await selectRun(page, 2, "Safely undone");
+  const replay = await page.evaluate(async () => {
+    const response = await fetch("/traces/business-failure.json");
+    const trace = (await response.json()) as {
+      events: Array<{ event_type: string }>;
+    };
+    return {
+      compensationPosition:
+        trace.events.findIndex(({ event_type }) => event_type === "compensation_started") + 1,
+      eventCount: trace.events.length,
+      firstPausePosition:
+        trace.events.findIndex(({ event_type }) =>
+          ["compensation_started", "invariant_evaluated", "reconciliation_recorded"].includes(
+            event_type,
+          ),
+        ) + 1,
+    };
+  });
+
+  await page.getByRole("button", { name: "Watch from start" }).click();
+  await expect(page.getByText(`Event 1 of ${replay.eventCount}`)).toBeVisible();
+  await expect(page.getByText("The agent is reading the order goal")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Pause replay" })).toBeVisible();
+
+  await page.clock.fastForward(600);
+  await expect(page.getByText(`Event 1 of ${replay.eventCount}`)).toBeVisible();
+  await page.clock.fastForward(100);
+  await expect(page.getByText(`Event 2 of ${replay.eventCount}`)).toBeVisible();
+
+  for (let event = 3; event <= replay.firstPausePosition; event += 1) {
+    await page.clock.fastForward(700);
+    await expect(page.getByText(`Event ${event} of ${replay.eventCount}`)).toBeVisible();
+  }
+  await expect(page.getByRole("button", { name: "Play replay" })).toBeVisible();
+  if (replay.firstPausePosition < replay.compensationPosition) {
+    await page.getByRole("button", { name: "Play replay" }).click();
+    for (
+      let event = replay.firstPausePosition + 1;
+      event <= replay.compensationPosition;
+      event += 1
+    ) {
+      await page.clock.fastForward(700);
+      await expect(page.getByText(`Event ${event} of ${replay.eventCount}`)).toBeVisible();
+    }
+  }
+  await expect(
+    page.getByText(`Event ${replay.compensationPosition} of ${replay.eventCount}`),
+  ).toBeVisible();
+  await expect(page.getByText("A later step failed—starting safe undo actions")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Play replay" })).toBeVisible();
+});
+
 test("all evidence views are axe-clean and retain semantic tabs", async ({ page }) => {
   await openRecorder(page);
   for (const name of ["Story", "Ledger", "Proof"]) {
@@ -256,6 +311,7 @@ test("reduced motion prevents autoplay while retaining manual replay", async ({ 
   await openRecorder(page);
   const play = page.getByRole("button", { name: "Play replay" });
   await expect(play).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Watch from start" })).toBeDisabled();
   await expect(page.getByText(/motion preference is active/i)).toBeVisible();
   const durationMs = await page.getByRole("button", { name: "Next event" }).evaluate((button) => {
     button.style.transitionDuration = "2s";
@@ -275,7 +331,10 @@ test("human-required evidence remains quiescent and distinct from terminal proof
 }) => {
   await page.clock.install();
   await openRecorder(page);
-  await selectRun(page, 3, "Human required");
+  await selectRun(page, 3, "Waiting for a human");
+  await expect(page.getByText("Paused safely for human review", { exact: true })).toBeVisible();
+  await expect(page.getByRole("listitem", { name: "Refund payment: Needs a human" })).toBeVisible();
+  await expect(page.getByRole("listitem", { name: "Release stock: Waiting" })).toBeVisible();
   await page.getByRole("tab", { name: "Proof" }).click();
   await expect(page.getByText(/recorded stop is quiescent, not terminal proof/i)).toBeVisible();
   await expect(page.getByRole("button", { name: "Play replay" })).toBeDisabled();

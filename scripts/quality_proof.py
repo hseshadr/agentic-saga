@@ -289,7 +289,7 @@ def _expected_results() -> tuple[BudgetResult, ...]:
 
 
 def _python_coverage() -> float:
-    return branch_percent(_evidence_json(".coverage.json"), "/kernel/")
+    return branch_percent(_evidence_json(".coverage.json"), "/agentic_saga/")
 
 
 def _release_coverage() -> float:

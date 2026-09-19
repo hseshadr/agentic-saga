@@ -17,12 +17,14 @@ from agentic_saga.contracts.tools import (
     EffectAdapter,
     EffectContext,
     EffectToolDefinition,
+    InvalidCompensationDependency,
     InvalidToolSchemaError,
     ReadAdapter,
     ReadToolDefinition,
     ReconcileContext,
     ToolCapabilities,
     ToolRegistry,
+    ToolRegistryFrozen,
     UnknownToolError,
     UnsupportedToolDefinitionError,
 )
@@ -214,6 +216,22 @@ def charge_definition() -> EffectToolDefinition[ChargeCommand]:
     )
 
 
+def refund_definition() -> EffectToolDefinition[ChargeCommand]:
+    return EffectToolDefinition(
+        name="refund_payment",
+        definition_version="refund-payment-v1",
+        command_schema_version="refund-command-v1",
+        input_model=ChargeCommand,
+        adapter=ChargeAdapter(),
+        capabilities=effect_capabilities(),
+        compensate_with=None,
+    )
+
+
+def payment_registry() -> ToolRegistry:
+    return ToolRegistry((charge_definition(), refund_definition()))
+
+
 def inventory_definition() -> ReadToolDefinition[InventoryQuery, InventoryResult]:
     return ReadToolDefinition(
         name="check_inventory",
@@ -258,7 +276,7 @@ def effect_context() -> EffectContext:
 
 def test_should_convert_strict_command_before_authorization() -> None:
     # Given
-    registry = ToolRegistry((charge_definition(),))
+    registry = payment_registry()
 
     # When
     command = registry.validate_command(
@@ -279,7 +297,7 @@ def test_should_convert_strict_command_before_authorization() -> None:
 
 def test_should_reject_extra_field_before_command_authorization() -> None:
     # Given
-    registry = ToolRegistry((charge_definition(),))
+    registry = payment_registry()
 
     # When / Then
     with pytest.raises(ValidationError):
@@ -291,7 +309,7 @@ def test_should_reject_extra_field_before_command_authorization() -> None:
 
 def test_should_reject_coercion_before_command_authorization() -> None:
     # Given
-    registry = ToolRegistry((charge_definition(),))
+    registry = payment_registry()
 
     # When / Then
     with pytest.raises(ValidationError):
@@ -307,16 +325,38 @@ def test_should_raise_domain_error_when_tool_is_unknown() -> None:
         registry.definition("wire_money")
 
 
-def test_should_register_effect_definition_when_name_is_unique() -> None:
-    # Given
+def test_incremental_registry_rejects_missing_compensator_when_frozen() -> None:
     registry = ToolRegistry(())
     definition = charge_definition()
-
-    # When
     registry.register_effect(definition)
 
-    # Then
-    assert registry.definition("charge_payment") is definition
+    with pytest.raises(
+        InvalidCompensationDependency,
+        match="unknown compensation tool: refund_payment",
+    ):
+        registry.freeze()
+
+    registry.register_effect(refund_definition())
+    registry.freeze()
+
+    with pytest.raises(ToolRegistryFrozen):
+        registry.register_read(inventory_definition())
+
+
+def test_effect_definition_rejects_self_compensation() -> None:
+    with pytest.raises(
+        InvalidCompensationDependency,
+        match="an effect cannot compensate itself",
+    ):
+        EffectToolDefinition(
+            name="charge_payment",
+            definition_version="charge-payment-v1",
+            command_schema_version="charge-command-v1",
+            input_model=ChargeCommand,
+            adapter=ChargeAdapter(),
+            capabilities=effect_capabilities(),
+            compensate_with="charge_payment",
+        )
 
 
 @pytest.mark.parametrize(
@@ -403,7 +443,7 @@ def test_should_reject_structural_definition_from_registry_constructor() -> None
 
 def test_should_reject_duplicate_name_across_tool_kinds() -> None:
     # Given
-    registry = ToolRegistry((charge_definition(),))
+    registry = payment_registry()
     duplicate = ReadToolDefinition(
         name="charge_payment",
         input_model=InventoryQuery,
@@ -416,11 +456,35 @@ def test_should_reject_duplicate_name_across_tool_kinds() -> None:
         registry.register_read(duplicate)
 
 
+def test_constructor_rejects_missing_compensation_tool() -> None:
+    with pytest.raises(
+        InvalidCompensationDependency,
+        match="unknown compensation tool: refund_payment",
+    ):
+        ToolRegistry((charge_definition(),))
+
+
+def test_constructor_rejects_read_tool_as_compensation() -> None:
+    charge = charge_definition()
+    read = ReadToolDefinition(
+        name="refund_payment",
+        input_model=InventoryQuery,
+        result_model=InventoryResult,
+        adapter=InventoryAdapter(),
+    )
+
+    with pytest.raises(
+        InvalidCompensationDependency,
+        match="compensation tool is not an effect: refund_payment",
+    ):
+        ToolRegistry((charge, read))
+
+
 def test_should_keep_read_and_effect_definitions_separate() -> None:
     # Given
     read = inventory_definition()
     effect = charge_definition()
-    registry = ToolRegistry((read, effect))
+    registry = ToolRegistry((read, effect, refund_definition()))
 
     # When
     registered_read = registry.definition("check_inventory")

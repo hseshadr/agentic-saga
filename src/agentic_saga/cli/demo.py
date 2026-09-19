@@ -92,7 +92,11 @@ def _serve_demo(arguments: DemoArguments, output: _Writer, errors: _Writer) -> i
     with TemporaryDirectory(prefix="agentic-saga-") as workspace:
         destination = Path(workspace).resolve(strict=True) / "site"
         trace = load_reference_trace(arguments.scenario)
-        materialize_recorder_site(destination, {arguments.scenario: trace})
+        materialize_recorder_site(
+            destination,
+            {arguments.scenario: trace},
+            presentation="ecommerce",
+        )
         with serve_recorder(destination, port=arguments.port) as server:
             _write_line(output, f"Agentic Saga recorder: {server.url}")
             _open_browser(arguments.open_browser, server, errors)

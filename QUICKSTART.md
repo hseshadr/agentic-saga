@@ -1,186 +1,186 @@
 # Quickstart
 
-TL;DR: clone the repository, then run the candidate console command against one
-deterministic compensation trace in the local Flight Recorder. No model key or external runtime
-service is required.
+TL;DR: Agentic Saga lets an agent choose the next approved business tool while a deterministic
+Temporal Workflow owns retries, compensation order, durable state, and human pauses.
+
+## Run the complete ecommerce Saga
+
+From a cloned checkout, this one command runs the canonical Temporal example: success, reverse
+compensation, lost-response reconciliation without a second charge, and authenticated human
+resolution.
 
 ```bash
-git clone https://github.com/hseshadr/agentic-saga.git
-cd agentic-saga
+uv run pytest -q -m temporal --force-enable-socket tests/bdd/steps/test_ecommerce_saga.py
+```
+
+The command uses `WorkflowEnvironment.start_time_skipping()`. It starts an isolated Temporal test
+server for the test process, so it needs no separately running service, model key, or provider
+account. It is test infrastructure—not an embedded production mode. The first run may download
+locked dependencies and Temporal's test-server binary.
+
+The readable behavior lives in `tests/bdd/features/ecommerce_saga.feature`. The implementation is
+in `examples/ecommerce/demo.py` and `examples/ecommerce/provider.py`.
+
+## What the example proves
+
+The happy path is:
+
+```text
+reserve inventory -> charge payment -> schedule fulfillment -> verify order
+```
+
+If fulfillment fails after accepting the request, compensation runs automatically in reverse
+order:
+
+```text
+cancel fulfillment -> refund payment -> release inventory
+```
+
+If a payment succeeds but its response is lost, the Activity reconciles the same operation before
+the Saga continues. It does not create a second charge. If a refund remains uncertain, the
+Workflow reaches `human_required`; stale and unauthorized Updates are rejected, and an authorized
+Update resumes compensation.
+
+## Why the agent is useful
+
+The agent is the planner, not the transaction engine. It receives the current public observation
+and only the tools eligible at that moment. A deterministic or model-backed agent can choose among
+those tools. The Temporal Workflow validates the decision and controls execution.
+
+This keeps the useful flexibility without letting a model decide durability, retry safety,
+compensation order, or final proof.
+
+## See the flow
+
+The packaged Flight Recorder replays redacted evidence at a human-readable pace:
+
+```bash
 uv run --no-dev agentic-saga demo --scenario business-failure --open
 ```
 
-The first `uv run --no-dev` may install the seven locked runtime packages. The source-checkout demo then generates no
-external request: it serves one distribution-bound redacted trace on `127.0.0.1`, prints the
-actual URL, and waits. Press Ctrl-C to close the server and remove its temporary site. Fresh-wheel
-and hosted-CI proof are required before this command is release evidence.
+This is a read-only replay, not a live Workflow or provider call. Other captured outcomes are
+`happy-path`, `lost-response`, and `compensation-failure`.
 
-## Explore all four Saga outcomes
+## Run Temporal locally
 
-```bash
-uv run --no-dev agentic-saga demo --scenario happy-path --open
-uv run --no-dev agentic-saga demo --scenario lost-response --open
-uv run --no-dev agentic-saga demo --scenario compensation-failure --open
-```
-
-The default is `business-failure`. The four captured traces prove verified success, restart
-reconciliation without a duplicate business effect, reverse-order verified compensation, and an
-unverifiable repair parked in quiescent `HUMAN_REQUIRED`. They came from the real ecommerce
-reference runtime, but the viewer is generic, read-only, and imports no ecommerce runtime or
-provider.
-
-Omit `--open` to print and serve the URL without launching a browser. Use `--port 0` for an
-OS-selected loopback port or choose a valid explicit port.
-
-## Run the executable reference
-
-Run the same realistic ecommerce application directly and print its ordered evidence:
+For manual application development, install the Temporal CLI and run:
 
 ```bash
-uv run --no-dev python -m examples.ecommerce.run
+temporal server start-dev
 ```
 
-Pass `happy-path`, `lost-response`, or `compensation-failure` to select another path. Every
-scenario uses temporary SQLite databases, a separate deterministic provider store, and the
-production kernel APIs. It needs no credential or network.
+That starts a disposable local Temporal Service on `localhost:7233` and its Web UI on
+`localhost:8233`. It is for development, not production. Temporal recommends Temporal Cloud or a
+production self-hosted service for production; see the official
+[deployment guide](https://docs.temporal.io/production-deployment).
 
-Run one realistic, generic durable effect through intent, execution, verified compensation,
-backup, restore, and projection replay:
+| Use | Temporal mode |
+| --- | --- |
+| Automated tests | `WorkflowEnvironment.start_time_skipping()`; isolated test server and virtual time |
+| Local manual development | `temporal server start-dev`; disposable service and Web UI |
+| Production | Temporal Cloud or an operated, production-ready self-hosted Temporal Service |
 
-```bash
-uv run pytest tests/integration/test_kernel_end_to_end.py -q
-```
+## Integrate the library
 
-## Compose your application
-
-`compose_runtime` is the supported assembly path. Build your domain-specific registry, policy,
-context provider, invariant evidence, and terminal gate, then supply the exact eight keyword
-arguments explicitly:
+The supported Temporal Legos include `TemporalActivities`, `build_worker`, local and Cloud client
+connectors, `start_saga`, `query_saga_state`, `resolve_human_compensation`, and
+`project_run_trace`.
 
 ```python
-from agentic_saga import SagaGoal, compose_runtime
-
-runtime = compose_runtime(
-    store=store,
-    definition=definition,
-    policy_context_provider=policy_context_provider,
-    terminal_gate=terminal_gate,
-    invariant_evidence_provider=invariant_evidence_provider,
-    clock=clock,
-    worker_id="orders-worker",
-    id_namespace=b"acme-orders-v1",
+from agentic_saga.temporal import (
+    TemporalActivities,
+    build_worker,
+    connect_local_client,
+    start_saga,
 )
 
-goal = SagaGoal(goal_id="order-123", text="Complete the order safely.", context={})
-result = await runtime.start(definition=definition, goal=goal, agent=agent)
+client = await connect_local_client("localhost:7233", namespace="default")
+activities = TemporalActivities(agent, tool_registry, execution_budget)
+
+async with build_worker(
+    client,
+    task_queue="checkout",
+    activities=activities,
+    human_resolution_activity=verify_human_resolution,
+):
+    handle = await start_saga(client, saga_input, task_queue="checkout")
+    final_state = await handle.result()
 ```
 
-`SagaGoal` is passed to `runtime.start(...)` separately because it is transaction input, not runtime
-configuration. The executable ecommerce assembly in
-[`examples/ecommerce/demo.py`](examples/ecommerce/demo.py) shows each collaborator in context.
+Use the same task queue for the Worker and client call. `verify_human_resolution` is an application
+Activity that validates the authorization reference and returns a typed result.
 
-## Author a domain-neutral Saga context
+`connect_client` remains a compatibility alias for `connect_local_client`; both reject non-loopback
+targets because they deliberately disable TLS. For Temporal Cloud, use `TemporalCloudConfig` with
+`connect_cloud_client`. Its API key is a masked `SecretStr`, TLS is always configured through the
+official SDK, and the Pydantic converter remains consistent with Workers. If private production
+payloads enter history, configure the Client and Workers with the same encrypted Data
+Converter/Payload Codec backed by your KMS. Also enforce least-privilege Namespace access. See
+[Security](SECURITY.md).
 
-The ecommerce and ticket-booking manifests use the same three-name API: registered tool name,
-registered policy-check name, and registered invariant-check name. Validate both manifests against
-their real typed registries:
+```python
+import os
+
+from pydantic import SecretStr
+
+from agentic_saga.temporal import TemporalCloudConfig, connect_cloud_client
+
+cloud = TemporalCloudConfig(
+    target_host="your-namespace.tmprl.cloud:7233",
+    namespace="your-namespace.your-account",
+    api_key=SecretStr(os.environ["TEMPORAL_API_KEY"]),
+)
+client = await connect_cloud_client(cloud)
+```
+
+## Add your domain
+
+Define typed `WorkflowTool` values for reads and effects. Each reversible effect names its
+compensation tool; prerequisites describe dependencies. Register implementations in a
+`ToolRegistry`. Ecommerce is only a sample—ticketing, onboarding, provisioning, and other
+long-running transactions use the same contracts.
+
+Provider Activities must accept at-least-once delivery. Give each logical effect a stable
+idempotency key, retain the provider reference needed for compensation, and implement
+reconciliation for a lost or ambiguous response.
+
+The optional `saga.yaml` supplies public context, objectives, limits, and registered names. It is
+not executable Workflow code. Never put credentials, private receipts, or personal data in it.
+
+## Optional OpenRouter agent
+
+The deterministic example is the release baseline. To use the optional model-backed planner:
 
 ```bash
-uv run pytest tests/integration/manifest/test_examples.py -q
+cp .env.example .env
+chmod 600 .env
+# Edit .env and set OPENROUTER_API_KEY to your own key.
+uv sync --extra agent --group dev
 ```
 
-Read the [Saga Context Manifest guide](docs/context-manifest.md) before choosing the optional
-`saga.yaml` authoring format. The manifest supplies public objective and instructions, four
-deterministic planning/execution limits, tool names, and proof references; it does not embed a
-workflow or install executable tools. Applications may instead build the same typed runtime inputs
-directly.
+`.env` stays local and `.env.example` is secret-free. The library does not read project files
+implicitly; your application decides whether to load `.env`. Never send the key through Temporal
+payloads. Configure OpenRouter spend limits before live use.
 
-Treat `saga.yaml` as public. Put no personal data, credential, receipt, or provider secret in it.
-When constructing the exact `SagaDefinition`, configure its redaction policy with every ordinary
-personal-data key your application admits; the built-in credential checks are only a safety floor.
+Pydantic Deep owns the model/tool-calling loop. Agentic Saga exposes only currently eligible
+proposal tools and bounds the decision Activity. The model never receives a callable business
+adapter, Temporal client, provider credential, or human authorization token.
 
 ## Prove the checkout
 
 ```bash
 uv sync --group dev
 uv run poe gate
-uv run python scripts/measure_release.py
+cd web/flight-recorder
+npx --yes pnpm@11.5.0 install --frozen-lockfile
+npx --yes pnpm@11.5.0 gate
 ```
 
-The first command installs development and optional-agent dependencies. The quality gate and
-implemented measurement harness are offline and credential-free. The measurement command runs both
-quality gates, builds and installs a wheel from locked inputs, exercises the packaged recorder, and
-enforces the published budgets. It reports `overall: FAIL` for an invalid release environment; a
-dirty-tree result is diagnostic only. Every release candidate requires a clean exact-commit report
-and matching hosted CI run. The
-[operations and release contract](docs/operations.md) lists every threshold and required artifact.
+The Python gate covers ordinary tests, Temporal integration tests, strict types, formatting,
+complexity, branch coverage, and release-contract unit tests. The pinned frontend gate covers the
+recorder's tests, accessibility, build, packaged-asset parity, and browser behavior. Neither command
+makes a paid model call. A final release claim still requires `uv run poe release-candidate` from a
+clean exact commit and its matching hosted Dagger run.
 
-## Optional Pydantic Deep planning adapter
-
-Install the exactly pinned optional integration and construct it without making a model call:
-
-```bash
-uv sync --extra agent --group dev
-uv run pytest tests/unit/agents -q
-```
-
-The `agent` extra pins `pydantic-deep==0.3.43` and
-`pydantic-ai-slim[openrouter]==2.45.0`. Pydantic Deep owns the model/tool protocol: it receives one
-strict native toolset containing only the actions currently eligible. The deterministic Saga
-kernel owns execution, durable state, unknown-outcome reconciliation, compensation order, and
-terminal proof. No business-tool callable, receipt, credential, idempotency key, or kernel
-authority reaches the model harness.
-
-See the [agent adapter guide](docs/agent-adapter.md) for the complete native happy path,
-failure-after-charge compensation path, disabled Pydantic Deep capabilities, and human-escalation
-boundary.
-
-For applications that can deterministically materialize complete next-action candidates, Jev
-provides a bounded decision path without a generative tool-calling model. Choose one transport:
-
-```bash
-# Direct TypeSafe AI
-uv sync --extra jev --group dev
-
-# Or OpenRouter's native Decisions API
-uv sync --extra jev-openrouter --group dev
-
-uv run pytest tests/unit/agents/test_choice.py tests/unit/agents/test_jev.py \
-  tests/unit/agents/test_openrouter_decisions.py -q
-```
-
-Set either `TYPESAFE_API_KEY` for the direct route or `OPENROUTER_API_KEY` for OpenRouter Decisions.
-Applications that use a local `.env` may load it before constructing the driver; the library does
-not read project files implicitly. Both routes pin Jev 1.13 and preserve its probabilities and
-confidence. Jev selects among candidates but cannot invent tool arguments, execute effects, or
-assign terminal state.
-
-Validate the fixed 24-case evaluation corpus without a model:
-
-```bash
-uv run python -m examples.ecommerce.eval
-```
-
-Live evaluation costs money and requires a key plus explicit consent. It is separate from the demo,
-ordinary tests, and release measurement:
-
-```bash
-cp .env.example .env
-chmod 600 .env
-# Edit .env and set OPENROUTER_API_KEY to your own key.
-RUN_LIVE_MODEL_EVALS=1 uv run python -m examples.ecommerce.eval --live \
-  --samples 3 --output .artifacts/eval
-```
-
-`.env` is local-only and ignored by Git. `.env.example` is the committed, secret-free template.
-Process environment values take precedence over the local file.
-
-The library does not meter money or cap provider spend. Its token limit caps output allocation for
-the maintained adapter, and its elapsed limit caps agent-call time; neither is actual provider
-usage or an end-to-end Saga budget. Configure account-level provider spend controls before opting
-in.
-
-Before integrating a real provider, read the
-[kernel safety contract](docs/kernel-safety-contract.md). It defines at-least-once attempts,
-provider idempotency obligations, reconciliation, compensation proof, SQLite assumptions, and the
-conditions that require a human.
+Next: [Temporal safety contract](docs/temporal-safety-contract.md),
+[operations](docs/operations.md), and [architecture](docs/architecture/index.html).

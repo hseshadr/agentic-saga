@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
-from itertools import count
 from pathlib import Path
-from tempfile import TemporaryDirectory
-from typing import Literal
+from typing import Literal, cast
 
-from examples.ecommerce.demo import run_scenario
+from agentic_saga.contracts.common import JsonObject, sha256_json
+from agentic_saga.contracts.trace import RunTrace
+from examples.ecommerce.demo import run_fixture_scenario
 from examples.ecommerce.domain import ScenarioName, StrictModel
 
 TRACE_ROOT = Path(__file__).with_name("flight-recorder") / "traces"
+_FIXTURE_TIME = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 class CatalogEntry(StrictModel):
@@ -19,6 +20,7 @@ class CatalogEntry(StrictModel):
     name: str
     summary: str
     mode: Literal["scripted"]
+    presentation: Literal["ecommerce"] | None = None
     trace_ref: str
     trace_sha256: str
 
@@ -38,11 +40,9 @@ async def export_catalog(destination: Path, source: Path = TRACE_ROOT) -> None:
 
 
 async def _export_entry(entry: CatalogEntry, destination: Path) -> CatalogEntry:
-    with TemporaryDirectory() as workspace:
-        run = await run_scenario(
-            entry.id, Path(workspace), claim_id_factory=_deterministic_claim_ids()
-        )
-    body = f"{run.trace.model_dump_json(indent=2)}\n".encode()
+    run = await run_fixture_scenario(entry.id)
+    trace = _stable_trace(run.trace)
+    body = f"{trace.model_dump_json(indent=2)}\n".encode()
     trace_ref = f"{entry.id.value}.json"
     await asyncio.to_thread((destination / trace_ref).write_bytes, body)
     return entry.model_copy(
@@ -50,9 +50,29 @@ async def _export_entry(entry: CatalogEntry, destination: Path) -> CatalogEntry:
     )
 
 
-def _deterministic_claim_ids() -> Callable[[], str]:
-    sequence = count(1)
-    return lambda: f"claim_{next(sequence):032x}"
+def _stable_trace(trace: RunTrace) -> RunTrace:
+    events = tuple(
+        event.model_copy(update={"recorded_at": _FIXTURE_TIME + timedelta(seconds=event.saga_seq)})
+        for event in trace.events
+    )
+    finished = None if trace.finished_at is None else events[-1].recorded_at
+    return trace.model_copy(
+        update={
+            "events": events,
+            "started_at": events[0].recorded_at,
+            "finished_at": finished,
+            "final_projection_hash": _stable_projection_hash(trace),
+        }
+    )
+
+
+def _stable_projection_hash(trace: RunTrace) -> str:
+    material = {
+        "event_ids": [event.event_id for event in trace.events],
+        "outcome": trace.outcome.value,
+        "proofs": [proof.model_dump(mode="json") for proof in trace.proofs],
+    }
+    return sha256_json(cast(JsonObject, material))
 
 
 def main() -> None:

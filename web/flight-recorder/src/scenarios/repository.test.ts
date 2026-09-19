@@ -54,6 +54,16 @@ describe("parseScenarioIndex", () => {
     ).toEqual(expect.objectContaining({ ok: false }));
   });
 
+  it("accepts only the known optional presentation", () => {
+    const ecommerce = validIndex();
+    firstRun(ecommerce).presentation = "ecommerce";
+    expect(parseScenarioIndex(ecommerce)).toEqual(expect.objectContaining({ ok: true }));
+
+    const unknown = validIndex();
+    firstRun(unknown).presentation = "banking";
+    expect(parseScenarioIndex(unknown)).toEqual(expect.objectContaining({ ok: false }));
+  });
+
   it.each([
     "/absolute.json",
     ".json",

@@ -162,6 +162,8 @@ class EffectToolDefinition[CommandT: BaseModel]:
         _require_unique_names(self.compensation_dependencies, "compensation dependencies")
         _require_unique_names(self.compensation_independent_with, "independent compensations")
         _require_unique_names(self.compensation_resource_selector, "resource selector")
+        if self.compensate_with == self.name:
+            raise InvalidCompensationDependency("an effect cannot compensate itself")
         if self.name in self.compensation_independent_with:
             raise InvalidCompensationDependency("an effect cannot be independent with itself")
 
@@ -204,6 +206,11 @@ class ToolRegistry:
     ) -> None:
         self._require_mutable()
         self._register(definition)
+        try:
+            self._validate_compensation_wiring(require_complete=False)
+        except ValueError:
+            del self._definitions[definition.name]
+            raise
 
     def register_effect[CommandT: BaseModel](
         self, definition: EffectToolDefinition[CommandT]
@@ -229,6 +236,7 @@ class ToolRegistry:
         return tuple(sorted(self._definitions.values(), key=lambda item: item.name))
 
     def freeze(self) -> None:
+        self._validate_compensation_dependencies(require_complete=True)
         self._frozen = True
 
     def effect_definitions(self) -> tuple[EffectToolDefinition[BaseModel], ...]:
@@ -250,6 +258,7 @@ class ToolRegistry:
             raise ToolRegistryFrozen("version-pinned tool registry is immutable")
 
     def _validate_compensation_dependencies(self, *, require_complete: bool) -> None:
+        self._validate_compensation_wiring(require_complete=require_complete)
         definitions = self.effect_definitions()
         names = frozenset(item.name for item in definitions)
         graph = {item.name: item.compensation_dependencies for item in definitions}
@@ -257,6 +266,35 @@ class ToolRegistry:
         _require_known_dependencies(unknown, require_complete)
         if _graph_has_cycle(graph, names):
             raise DependencyCycle("compensation dependency graph contains a cycle")
+
+    def _validate_compensation_wiring(self, *, require_complete: bool) -> None:
+        for definition in self.effect_definitions():
+            _require_valid_compensator(definition, self._definitions, require_complete)
+
+
+def _require_valid_compensator(
+    definition: EffectToolDefinition[BaseModel],
+    definitions: dict[str, _PublicDefinition],
+    require_complete: bool,
+) -> None:
+    target = definition.compensate_with
+    if target is None:
+        return
+    registered = definitions.get(target)
+    if registered is None:
+        _require_known_compensator(target, require_complete)
+        return
+    _require_effect_compensator(target, registered)
+
+
+def _require_known_compensator(target: str, require_complete: bool) -> None:
+    if require_complete:
+        raise InvalidCompensationDependency(f"unknown compensation tool: {target}")
+
+
+def _require_effect_compensator(target: str, registered: _PublicDefinition) -> None:
+    if not isinstance(registered, EffectToolDefinition):
+        raise InvalidCompensationDependency(f"compensation tool is not an effect: {target}")
 
 
 def _unknown_dependencies(

@@ -19,12 +19,18 @@ else
 fi
 canonical_dist_root="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$dist_root")"
 [[ "$canonical_dist_root" == "$dist_root" ]] || refuse "$output_arg"
+lexical_output="$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$requested")"
 canonical_output="$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$requested")"
 case "$canonical_output" in
   "$dist_root"/*) ;;
   *) refuse "$output_arg" ;;
 esac
+case "$lexical_output" in
+  "$dist_root"/*) ;;
+  *) refuse "$output_arg" ;;
+esac
 [[ "$canonical_output" != "$dist_root" ]] || refuse "$output_arg"
+[[ "$lexical_output" == "$canonical_output" ]] || refuse "$output_arg"
 [[ ! -L "$requested" ]] || refuse "$output_arg"
 [[ ! -e "$requested" || -d "$requested" ]] || refuse "$output_arg"
 

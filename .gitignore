@@ -20,6 +20,7 @@ build/
 web/flight-recorder/node_modules/
 web/flight-recorder/dist/
 web/flight-recorder/coverage/
+web/flight-recorder/.vitest/
 *.tsbuildinfo
 test-results/
 mutants/

@@ -67,7 +67,6 @@
   font-weight: 650;
 }
 
-.mono,
 .sequence {
   font-family: var(--font-mono);
 }

@@ -27,20 +27,17 @@ describe("recorded proof evaluation", () => {
   it("binds each expected rule to its exact visible source and terminal target", () => {
     const proof = projection("business-failure").proof;
 
-    expect(proof.expectedRuleIds).toEqual([
-      "inventory_released",
-      "order_cancelled",
-      "payment_refunded",
-    ]);
+    expect(proof.expectedRuleIds).toEqual(["obligations_reversed"]);
     expect(proof.validRuleIds).toEqual(proof.expectedRuleIds);
     expect(proof.invalidRuleIds).toEqual([]);
     expect(proof.missingRuleIds).toEqual([]);
-    expect(proof.sourceEvent?.saga_seq).toBe(36);
+    expect(proof.sourceEvent?.event_type).toBe("invariant_evaluated");
+    expect(proof.sourceEvent?.rationale.rule_id).toBe("obligations_reversed");
     expect(proof.terminalVerified).toBe(true);
   });
 
   it("does not reveal proof before its invariant event", () => {
-    const proof = projection("business-failure", 34).proof;
+    const proof = projection("business-failure", 3).proof;
     expect(proof.expectedRuleIds).toEqual([]);
     expect(proof.records).toEqual([]);
     expect(proof.terminalVerified).toBe(false);
@@ -67,11 +64,7 @@ describe("recorded proof evaluation", () => {
     const trace = businessTrace();
     const source = trace.events.findLast(({ event_type }) => event_type === "invariant_evaluated");
     if (!source) throw new Error("fixture must include invariant evidence");
-    const results = {
-      inventory_released: true,
-      order_cancelled: true,
-      payment_refunded: false,
-    };
+    const results = { obligations_reversed: false };
     const changed = replaceInvariant(trace, { ...source.rationale, all_passed: true, results });
 
     expect(projectReplay(changed, 99).terminalVerified).toBe(false);

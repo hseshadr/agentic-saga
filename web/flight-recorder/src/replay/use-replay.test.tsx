@@ -30,6 +30,20 @@ describe("useReplay", () => {
     expect(result.current.state).toMatchObject({ cursor: 1, isPlaying: false });
   });
 
+  it("replays from the beginning with a human-perceivable delay", () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() =>
+      useReplay({ eventCount: 3, initialCursor: "end", intervalMs: 700, pauseAfter: new Set() }),
+    );
+
+    act(() => result.current.actions.watch());
+    expect(result.current.state).toMatchObject({ cursor: 0, isPlaying: true });
+    act(() => vi.advanceTimersByTime(699));
+    expect(result.current.state.cursor).toBe(0);
+    act(() => vi.advanceTimersByTime(1));
+    expect(result.current.state.cursor).toBe(1);
+  });
+
   it("never starts a timer under reduced motion and cleans up an active timer", () => {
     vi.useFakeTimers();
     const { result, unmount } = renderHook(() =>
@@ -38,6 +52,8 @@ describe("useReplay", () => {
 
     act(() => result.current.actions.play());
     expect(result.current.state.isPlaying).toBe(false);
+    act(() => result.current.actions.watch());
+    expect(result.current.state).toMatchObject({ cursor: 0, isPlaying: false });
     expect(vi.getTimerCount()).toBe(0);
 
     const active = renderHook(() => useReplay({ eventCount: 3, pauseAfter: new Set() }));

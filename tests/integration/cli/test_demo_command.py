@@ -176,6 +176,7 @@ def test_should_serve_only_selected_trace_and_exit_zero_on_sigint(tmp_path: Path
 
         # Then
         assert [entry["id"] for entry in index["runs"]] == ["compensation-failure"]
+        assert index["runs"][0]["presentation"] == "ecommerce"
         with pytest.raises(HTTPError) as exc_info:
             urlopen(f"{url}/traces/happy-path.json")  # noqa: S310
         assert exc_info.value.code == 404

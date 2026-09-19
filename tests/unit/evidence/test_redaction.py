@@ -42,6 +42,21 @@ def test_should_redact_bearer_token_outside_sensitive_key() -> None:
     assert redact_json(value, RedactionPolicy()) == {"note": "[REDACTED]"}
 
 
+@pytest.mark.parametrize(
+    "credential",
+    [
+        "sk-or-v1-" + "a" * 64,
+        "AKIA" + "A" * 16,
+        "ASIA" + "B" * 16,
+        "ghp_" + "c" * 36,
+    ],
+)
+def test_should_redact_high_confidence_credentials_outside_sensitive_key(
+    credential: str,
+) -> None:
+    assert redact_json({"note": credential}, RedactionPolicy()) == {"note": "[REDACTED]"}
+
+
 def test_should_redact_card_number_outside_sensitive_key() -> None:
     value = {"note": "4242 4242 4242 4242"}
 

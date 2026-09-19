@@ -2,194 +2,321 @@
 
 [![Dagger](https://github.com/hseshadr/agentic-saga/actions/workflows/dagger.yml/badge.svg)](https://github.com/hseshadr/agentic-saga/actions/workflows/dagger.yml)
 
-TL;DR: **OSS release candidate.** Agentic Saga is a generic Python library for agent-directed,
-side-effecting work. An LLM chooses the next typed action from the objective and current evidence;
-a deterministic Saga kernel authorizes it, records intent before execution, reconciles
-uncertainty, compensates verified effects, and refuses to call an unproven outcome “done.”
+Let an agent choose the next useful step. Let Temporal guarantee that the transaction can recover.
 
-Run the candidate console command from this source checkout and open its read-only Flight Recorder:
+Agentic Saga is a small Python library for long-running, multi-system transactions. It combines:
+
+- **Temporal** for durable execution, retries, timers, recovery, and history;
+- **Pydantic Deep** or **Jev** for bounded, tool-based decisions; and
+- your typed business tools for effects, checks, reconciliation, and compensation.
+
+The agent is the smart orchestrator. It is not the transaction authority. Deterministic workflow
+code still controls which tools are eligible, how often they may run, what must be proven, and how
+confirmed effects are compensated.
+
+> Status: pre-alpha source release. The API may change. The ecommerce provider is a simulation,
+> not a production commerce integration.
+
+## What is a Saga?
+
+Suppose checkout must reserve stock, charge a card, and schedule fulfillment. Those systems cannot
+share one database transaction. A Saga treats each successful step as a fact and pairs it with an
+undo action:
+
+| Forward action | Compensation if a later step fails |
+| --- | --- |
+| Reserve inventory | Release inventory |
+| Charge payment | Refund payment |
+| Schedule fulfillment | Cancel fulfillment |
+
+If fulfillment fails after the first two actions succeeded, the Saga compensates the confirmed
+effects in safe reverse order. If a provider response is lost, it first reconciles with that
+provider instead of guessing or repeating the effect blindly.
+
+## Why make the orchestrator agentic?
+
+A static orchestrator accumulates branches for alternate suppliers, stale facts, partial progress,
+retries, and every new exception. An agent can inspect fresh public evidence and choose the best
+currently eligible capability without encoding every route as nested `if/else` logic.
+
+The model does **not** receive unrestricted functions. On each turn it sees a small, typed set of
+eligible tools. Temporal then validates and executes the proposal using deterministic rules.
+
+```text
+public goal + current evidence + eligible tools
+                       |
+                       v
+              bounded agent decision
+                       |
+                       v
+        deterministic Temporal Workflow validates
+              /                    \
+     business Activity       reject invalid proposal
+              |
+      receipt or reconciliation
+              |
+      prove success, continue, or compensate
+```
+
+No probability model or Markov decision process is required. The LLM only needs to choose a tool
+and produce arguments within a constrained schema. The hard transaction guarantees remain ordinary,
+testable code.
+
+## The ecommerce example
+
+The example is one application of the generic library, not a workflow baked into Agentic Saga.
+
+```text
+reserve inventory -> charge payment -> schedule fulfillment -> verify order
+                                                              |
+                              +-------------------------------+------------------+
+                              |                                                  |
+                       verified success                                   proof fails
+                              |                                                  |
+                   SUCCEEDED_VERIFIED                          cancel -> refund -> release
+                                                                                 |
+                                                                    COMPENSATED_VERIFIED
+```
+
+The agent chooses among forward tools. It never chooses rollback order. The Workflow derives that
+order from confirmed effects and registered compensation pairs. A human enters only when automatic
+reconciliation or compensation cannot prove a safe result. Human resolutions are authenticated by
+an application-owned verification Activity before the Workflow accepts them.
+
+The executable behavior includes four scenarios:
+
+- verified happy path;
+- fulfillment rejection with automatic `cancel -> refund -> release`;
+- lost payment response recovered by stable-ID reconciliation without a duplicate charge; and
+- unresolved refund compensation that pauses for a verified human resolution.
+
+## Watch it in 60 seconds
+
+The packaged Flight Recorder replays captured, redacted traces. It needs no API key or running
+Temporal server:
 
 ```bash
 uv run --no-dev agentic-saga demo --scenario business-failure --open
 ```
 
-The first dependency installation may access the package registry. The demo itself needs no key,
-model, or external runtime service: it serves one captured, redacted ecommerce trace on
-`127.0.0.1`, waits for Ctrl-C, and removes its temporary site on shutdown. Use `happy-path`,
-`lost-response`, or `compensation-failure` to inspect another real captured outcome.
+Choose **Watch from start**. The UI reveals the forward path and reverse compensation at a pace a
+person can follow. Try every captured outcome:
 
-## The idea
-
-An application may build typed context directly or load the optional `saga.yaml` authoring format.
-Both give the agent an objective, bounded planning allocations, eligible tool descriptions, proof
-checks, and escalation guidance; neither defines a fixed workflow. The agent may propose a read,
-effect, finish, compensation phase, or escalation; only the kernel may turn a proposal into a
-durable external action.
-
-Delivery is deliberately honest. Attempts are at least once. Durable intent, stable operation
-identity, provider deduplication and fencing where declared, and reconciliation make ambiguity
-recoverable. If safe reconciliation still cannot prove what happened, the Saga becomes durably
-quiescent in `HUMAN_REQUIRED`.
-
-## Architecture
-
-[Explore the interactive architecture](docs/architecture/index.html) to see how the agent chooses
-proposals while the deterministic kernel owns effects, evidence, compensation, and escalation.
-
-| Surface | One responsibility |
-| --- | --- |
-| `src/agentic_saga/manifest.py` | Validate domain-neutral `saga.yaml` context and registered names. |
-| `src/agentic_saga/contracts/` | Define strict, serializable values at every public boundary. |
-| `src/agentic_saga/cli/` | Expose the packaged demo command and no kernel authority. |
-| `src/agentic_saga/agents/` | Translate one deferred native tool call into a proposal; never receive business-tool authority. |
-| `src/agentic_saga/kernel/` | Own policy, identity, budgets, compensation frontier, and terminal proof. |
-| `src/agentic_saga/execution/` | Dispatch, reconcile, recover, and coordinate leases. |
-| `src/agentic_saga/storage/` | Provide append-only SQLite evidence, replay, backup, and restore. |
-| `src/agentic_saga/evidence/` | Export deterministic redacted traces. |
-| `src/agentic_saga/demo/` | Materialize and serve the generic loopback Flight Recorder. |
-| `examples/ecommerce/` | Exercise the public Lego pieces as one realistic application. |
-| `web/flight-recorder/` | Validate and replay stored evidence without mutating Saga state. |
-
-Ecommerce is an example, not a workflow hidden in the core. The ticket-booking manifest uses the
-same authoring shape; applications register their own typed tools, adapters, policies, and
-invariants.
-
-## Lean release proof
-
-TL;DR: every pull request and the exact commit merged to `main` receive the complete release
-proof behind the single protected **Dagger** check. The graph resolves exact source once,
-builds the first-party wheel and sdist once, proves the frontend once, and then validates those
-same immutable inputs on Python 3.12 and 3.13 before one result is reported.
-
-```text
-exact source (once)
-                |
-       +--------+--------+
-       |                 |
-release artifacts     frontend proof
-wheel + sdist (once)      (once)
-       |                 |
-       +--------+--------+
-                |
-     +----------+----------+
-     |                     |
-Python 3.12 validation  Python 3.13 validation
-     |                     |
-     +----------+----------+
-                |
-     one protected Dagger check
+```bash
+uv run --no-dev agentic-saga demo --scenario happy-path --open
+uv run --no-dev agentic-saga demo --scenario lost-response --open
+uv run --no-dev agentic-saga demo --scenario compensation-failure --open
 ```
 
-Each Python lane runs its quality proof, uses its own runtime-specific dependency wheelhouse, and
-installs the already-built first-party wheel offline. The quality handoff is identity-bound: it
-rejects changed source, lockfiles, coverage evidence, runtime, or results rather than treating a
-previous green run as a shortcut. After both lanes pass, the check prints the validated SHA-256
-manifest in the run log; it does not claim that GitHub-hosted wheel or sdist artifacts were
-uploaded. The separate Dagger security audit remains required on its own schedule. Trusted runs
-use private-history authentication while the repository is private; public fork pull requests use
-credentialless public-history resolution and receive no repository secret.
+The recorder is read-only. It cannot call a business tool or alter a Saga.
 
-## Compose the supported runtime
+## Run the real workflow locally
 
-The root package provides one supported composition path. Applications construct the typed Lego
-pieces, then pass all eight collaborators and identity values explicitly:
+Install the locked development environment and start Temporal's single-binary development server:
+
+```bash
+uv sync --group dev
+temporal server start-dev
+```
+
+In another terminal:
+
+```bash
+uv run python -m examples.ecommerce.run happy-path
+uv run python -m examples.ecommerce.run business-failure
+uv run python -m examples.ecommerce.run lost-response
+uv run python -m examples.ecommerce.run compensation-failure
+```
+
+`temporal server start-dev` is convenient local infrastructure, not a production topology. The
+test suite uses Temporal's time-skipping test server. Production applications should connect the
+same Worker and client code to Temporal Cloud or an operated Temporal Service.
+
+See [QUICKSTART.md](QUICKSTART.md) for the complete copy-paste path.
+
+## The Lego model
+
+Agentic Saga deliberately does not reimplement a durable workflow engine.
+
+| Lego | Responsibility |
+| --- | --- |
+| Temporal | Durable history, crash recovery, Activity retries, timers, Queries, and Updates |
+| Agentic Saga Workflow | Eligibility, prerequisites, global budgets, proof gates, reverse compensation, escalation |
+| Pydantic Deep | OpenRouter-backed native tool choice from bounded public context |
+| Jev adapter | Optional probability-bearing choice among application-built candidates |
+| Your integrations | Typed provider calls, idempotency, authorization, reconciliation, receipts |
+| Flight Recorder | Redacted, read-only explanation of the recorded execution |
+
+This keeps the library focused on the seam between probabilistic planning and deterministic
+transaction safety.
+
+## Describe intent with `saga.yaml`
+
+`saga.yaml` is an agent context template, not an executable workflow language. It explains the
+public objective, use cases, available capability names, safety guidance, and decision budgets.
+Your application still registers the real typed tools in Python.
+
+```yaml
+schema_version: "1.0"
+name: ecommerce-checkout
+version: "1.0"
+objective: Complete an order safely or compensate every confirmed effect.
+instructions:
+  - Choose one eligible forward tool from fresh public evidence.
+success_criteria:
+  - Authoritative proof confirms the completed order.
+autonomy:
+  mode: guarded
+  instructions:
+    - Never guess when a provider outcome is unknown.
+budgets:
+  turn_limit: 8
+  tool_call_limit: 6
+  elapsed_ms_limit: 60000
+  token_limit: 4000
+tools:
+  catalog_sha256: "<digest of the registered descriptors>"
+  allowed:
+    - reserve_inventory
+    - charge_payment
+    - schedule_fulfillment
+    - verify_order
+checks:
+  policy: []
+  success: [order_verified]
+  compensation: [effects_compensated]
+  clean_abort: [no_external_effects]
+escalation:
+  conditions:
+    - Compensation remains unresolved after safe retries and reconciliation.
+  instructions:
+    - Present redacted evidence to an authorized operator.
+```
+
+Compensation tools are registered with their forward effects; they are not offered to the agent as
+forward choices. The Workflow invokes them when recovery is required. The same manifest shape can
+describe ticket booking, travel reservations, provisioning, or any other Saga.
+
+Read [the context-manifest guide](docs/context-manifest.md).
+
+## Choose a decision adapter
+
+### Deterministic driver
+
+Start here. The included deterministic driver exercises the real Temporal Workflow and is the
+fastest way to prove provider semantics, compensation, and recovery without an LLM.
+
+### Pydantic Deep through OpenRouter
+
+Pydantic Deep supplies the model/tool loop. Agentic Saga disables its unrelated filesystem,
+subagent, shell, memory, and web features, advertises only current native proposal tools, sets
+temperature to zero, and allows one bounded decision per Workflow turn.
+
+```bash
+uv sync --extra agent --group dev
+cp .env.example .env
+# Add OPENROUTER_API_KEY to .env, then explicitly opt in to a live evaluation.
+```
+
+Ordinary tests and release gates never make a paid model call. Read
+[the agent adapter guide](docs/agent-adapter.md) for the opt-in command and data boundary.
+
+### Jev
+
+Use Jev when the application can build a closed set of valid candidates and wants a compact
+decision engine to rank them. The adapter preserves the returned probabilities and confidence;
+Jev cannot invent arguments or execute an effect.
+
+```bash
+uv sync --extra jev --group dev             # TypeSafe API
+uv sync --extra jev-openrouter --group dev  # OpenRouter Decisions API
+```
+
+## Minimal integration shape
+
+An application supplies a typed `ToolRegistry`, an `AgentDriver`, a bounded `ExecutionBudget`, and
+an authenticated human-resolution Activity. Agentic Saga supplies the Temporal Activities,
+Workflow, client helpers, and Worker assembly.
 
 ```python
-from agentic_saga import SagaGoal, compose_runtime
-
-runtime = compose_runtime(
-    store=store,
-    definition=definition,
-    policy_context_provider=policy_context_provider,
-    terminal_gate=terminal_gate,
-    invariant_evidence_provider=invariant_evidence_provider,
-    clock=clock,
-    worker_id="orders-worker",
-    id_namespace=b"acme-orders-v1",
+activities = TemporalActivities(agent, registry, budget)
+worker = build_worker(
+    client,
+    task_queue="orders",
+    activities=activities,
+    human_resolution_activity=verify_operator_resolution,
 )
 
-goal = SagaGoal(goal_id="order-123", text="Complete the order safely.", context={})
-result = await runtime.start(definition=definition, goal=goal, agent=agent)
+handle = await start_saga(client, workflow_input, task_queue="orders")
+result = await handle.result()
 ```
 
-`SagaGoal` enters `runtime.start(...)` separately; it is transaction input, not a hidden ninth
-composition setting. See the complete working assembly in
-[`examples/ecommerce/demo.py`](examples/ecommerce/demo.py).
+See [`examples/ecommerce`](examples/ecommerce) for complete tool definitions, provider-side
+idempotency, reconciliation, a Worker, and all four outcomes.
 
-## v0.1 behavior
+## What the library guarantees—and what it cannot
 
-- Generic typed contracts and a single-host SQLite reference kernel with deterministic policy,
-  intent-before-effect dispatch, recovery, reconciliation, compensation, human escalation, backup,
-  restore, and redacted evidence export.
-- Strict, bounded, deliberately public `saga.yaml` loading with authoritative registered
-  descriptors and named checks.
-- Optional Pydantic Deep + Pydantic AI/OpenRouter adapter that exposes only currently eligible
-  native proposal tools. Pydantic Deep owns the model/tool protocol; the deterministic kernel owns
-  execution, state, compensation order, and terminal proof.
-- Optional TypeSafe AI Jev adapter for cheaper bounded decisions, available either directly or
-  through OpenRouter's native Decisions API. Applications provide fully formed candidate proposals
-  from public evidence; Jev chooses among them with calibrated probabilities and confidence, while
-  the adapter and kernel reject stale, unavailable, or low-confidence choices. Jev cannot invent
-  tool arguments or execute a business effect.
-- Four executable `pytest-bdd` ecommerce paths: verified success, reverse compensation, lost-response
-  restart reconciliation, and unverifiable compensation requiring a human.
-- A versioned 24-case deterministic evaluation corpus plus a separately opt-in, credential-gated
-  OpenRouter evaluator. Ordinary validation makes no live model call.
-- A keyboard-operable Flight Recorder implementation with four distribution-bound captured traces,
-  bounded strict loading, user-controlled replay, and Story, Ledger, and Proof views.
-- An offline release-measurement harness, dual-Python hosted workflow, exact package-content checks,
-  and packaged-browser gate. Audited baseline commit
-  `3fcf10ea6a6dbd2799f242758cecbbd6321ff639` passed the full hosted
-  [Dagger gate](https://github.com/hseshadr/agentic-saga/actions/runs/34807057405) and
-  [security gate](https://github.com/hseshadr/agentic-saga/actions/runs/34859242334). Every release
-  candidate still requires fresh checks bound to its own exact commit.
+- Workflow decisions, prerequisites, budgets, compensation order, and terminal proof are
+  deterministic and replayable.
+- Activities are **at least once**. Every effect integration must use the stable operation identity
+  for provider idempotency or fencing and implement authoritative reconciliation.
+- A lost response is not success or failure. The Workflow reconciles it before continuing.
+- `SUCCEEDED_VERIFIED` requires fresh proof. Failed proof starts compensation.
+- Unresolved compensation stops at `HUMAN_REQUIRED`; it never guesses.
+- A human Update is accepted only after an application-owned verification Activity authenticates
+  its opaque authorization reference.
+
+The library cannot create atomic commits across external services, make a non-idempotent provider
+safe, contain hostile installed Python, or decide your organization's authorization policy.
+
+Workflow inputs and history must be public/redacted under the default converter. Applications that
+need private production payloads must configure a Temporal payload encryption codec backed by
+their key-management system and enforce namespace access controls. Never place credentials in
+`saga.yaml`, Workflow inputs, trace files, or receipts.
+
+Read the [Temporal safety contract](docs/temporal-safety-contract.md),
+[operations guide](docs/operations.md), and [security policy](SECURITY.md) before connecting real
+providers.
+
+## Architecture and source map
+
+[Explore the interactive architecture](docs/architecture/index.html) to follow a decision through
+Temporal, an external provider, reconciliation, compensation, and verified human recovery.
+
+| Surface | Responsibility |
+| --- | --- |
+| `src/agentic_saga/temporal/` | Workflow, Activities, typed client/Worker helpers, journal, trace projection |
+| `src/agentic_saga/contracts/` | Strict serializable values and public payload limits |
+| `src/agentic_saga/agents/` | Pydantic Deep, Jev, and OpenRouter decision adapters |
+| `src/agentic_saga/manifest.py` | Bounded domain-neutral context manifests |
+| `examples/ecommerce/` | Realistic provider, Worker, scenarios, BDD features, and evaluation |
+| `web/flight-recorder/` | Accessible animated trace explorer |
 
 ## Prove it locally
 
 ```bash
 uv sync --group dev
 uv run poe gate
-uv run python scripts/measure_release.py
+cd web/flight-recorder
+npx --yes pnpm@11.5.0 install --frozen-lockfile
+npx --yes pnpm@11.5.0 gate
+cd ../..
+
+# After committing, from a clean exact source tree:
+uv run poe artifacts
+uv run poe release-candidate
 ```
 
-The quality gate and implemented measurement harness stay offline and credential-free. The
-measurement command runs the Python and frontend gates, builds and installs a wheel from locked
-inputs, exercises all four scenarios and the packaged recorder, and enforces the published resource
-and latency budgets. It reports the exact commit and environment; a dirty-tree result is diagnostic
-only. The protected Dagger graph runs this proof under both supported Python versions; only a green
-check bound to the current exact head counts as hosted release-matrix evidence.
+`poe gate` runs Python formatting, lint, strict typing, complexity, offline tests, Temporal
+time-skipping tests, coverage, and release-contract unit tests. The pinned `pnpm` gate separately
+proves the recorder's tests, accessibility, build, packaged-asset parity, and browser behavior. The
+final two commands build and install the package from a clean exact commit. Core branch coverage
+must stay at or above 90%. Dagger combines those proofs again from clean, exact source.
 
-## Boundaries
+No release command publishes to PyPI. This repository does not claim a released package until a
+fresh exact-commit gate and an explicit publish decision exist. See [PROVENANCE.md](PROVENANCE.md).
 
-This is a non-hosted, single-host v0.1 source library. The example provider is deterministic
-simulation, not a production commerce integration. The library does not provide universal
-exactly-once effects, atomic cross-service commit, high availability, serializable cross-Saga
-isolation, or containment for hostile installed Python/native code. Pre-release storage has no
-migration guarantee.
+## License
 
-Every generic JSON boundary is capped at depth 16, 4,096 nodes, 256 items per container, 16 KiB per
-UTF-8 string, and 64 KiB encoded. Each exact `SagaDefinition` owns the redaction policy used by its
-runtime and exported evidence. The built-in policy is a credential and payment-secret floor; the
-application must explicitly add every ordinary personal-data key it permits into Saga inputs.
-Unlisted fields are public by contract, and `saga.yaml` must contain public authoring context only.
-
-`turn_limit`, `tool_call_limit`, `token_limit`, and `elapsed_ms_limit` are deterministic kernel
-limits. Tokens and elapsed milliseconds are fixed per-turn planning allocations: the maintained
-OpenRouter adapter uses them only as an output-token cap and an agent-call deadline. The Jev adapter
-uses its reserved turn allocation as a request deadline. These limits do not measure input tokens,
-actual provider usage, end-to-end Saga time, money, or provider spend. Set provider-account spend
-limits separately before any opt-in live call.
-
-The SQLite reference store is POSIX-only and requires an owner-controlled, non-shared-writable
-local parent directory. It keeps database, sidecar, temporary, backup, and restored files at mode
-`0600`; backup and restore publish only to fresh destinations and never overwrite. Read the
-operations contract before handling real data: same-UID/root access, ACLs, local-filesystem truth,
-retention, and deletion remain operator responsibilities.
-
-Start with the [Quickstart](QUICKSTART.md). Before integrating a real provider, read the
-[Kernel safety contract](docs/kernel-safety-contract.md),
-[operations and release contract](docs/operations.md),
-[Saga Context Manifest guide](docs/context-manifest.md), and
-[agent adapter guide](docs/agent-adapter.md), which includes native happy-path and compensation
-trajectories. The packaged Flight Recorder's bundled dependencies
-and complete licenses are listed in [third-party notices](THIRD_PARTY_NOTICES.md).
+Apache-2.0. Bundled frontend dependencies and notices are listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

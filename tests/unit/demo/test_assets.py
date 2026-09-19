@@ -58,6 +58,33 @@ def test_should_materialize_static_assets_and_strict_run_trace(tmp_path: Path) -
     assert index["runs"][0]["trace_sha256"] == sha256(payload).hexdigest()
 
 
+def test_should_materialize_optional_ecommerce_presentation(tmp_path: Path) -> None:
+    # Given
+    destination = tmp_path / "recorder"
+
+    # When
+    materialize_recorder_site(
+        destination,
+        {"happy-path": _trace()},
+        presentation="ecommerce",
+    )
+
+    # Then
+    index = json.loads((destination / "traces" / "index.json").read_bytes())
+    assert index["runs"][0]["presentation"] == "ecommerce"
+    _validate(destination)
+
+
+def test_should_omit_presentation_for_generic_recorder(tmp_path: Path) -> None:
+    # Given / When
+    destination = tmp_path / "recorder"
+    materialize_recorder_site(destination, {"happy-path": _trace()})
+
+    # Then
+    index = json.loads((destination / "traces" / "index.json").read_bytes())
+    assert "presentation" not in index["runs"][0]
+
+
 @pytest.mark.parametrize("scenario", ["../escape", "UPPER", "", "x" * 81])
 def test_should_reject_unsafe_scenario_name_when_materializing(
     tmp_path: Path, scenario: str
@@ -148,6 +175,20 @@ def test_should_reject_duplicate_index_entry_when_validating(tmp_path: Path) -> 
     index_path = directory / "traces" / "index.json"
     index = json.loads(index_path.read_bytes())
     index["runs"].append(index["runs"][0])
+    index_path.write_text(json.dumps(index))
+
+    # When / Then
+    with pytest.raises(MaterializationError):
+        _validate(directory)
+
+
+def test_should_reject_unrecognized_index_entry_field(tmp_path: Path) -> None:
+    # Given
+    directory = tmp_path / "recorder"
+    materialize_recorder_site(directory, {"happy-path": _trace()})
+    index_path = directory / "traces" / "index.json"
+    index = json.loads(index_path.read_bytes())
+    index["runs"][0]["unexpected"] = "unsafe"
     index_path.write_text(json.dumps(index))
 
     # When / Then
@@ -280,10 +321,14 @@ def test_should_keep_publication_anchored_when_parent_is_retargeted(
     attacker.mkdir()
     original_write = assets._write_site
 
-    def retarget_parent(site_descriptor: int, traces: object) -> None:
+    def retarget_parent(
+        site_descriptor: int,
+        traces: object,
+        presentation: assets._Presentation | None,
+    ) -> None:
         nested.rename(moved)
         nested.symlink_to(attacker, target_is_directory=True)
-        original_write(site_descriptor, cast(dict[str, RunTrace], traces))
+        original_write(site_descriptor, cast(dict[str, RunTrace], traces), presentation)
 
     monkeypatch.setattr(assets, "_write_site", retarget_parent)
 
@@ -302,10 +347,14 @@ def test_should_keep_exclusive_destination_claim_during_construction(
     destination = tmp_path / "recorder"
     original_write = assets._write_site
 
-    def reject_competing_destination(site_descriptor: int, traces: object) -> None:
+    def reject_competing_destination(
+        site_descriptor: int,
+        traces: object,
+        presentation: assets._Presentation | None,
+    ) -> None:
         with pytest.raises(FileExistsError):
             destination.mkdir()
-        original_write(site_descriptor, cast(dict[str, RunTrace], traces))
+        original_write(site_descriptor, cast(dict[str, RunTrace], traces), presentation)
 
     monkeypatch.setattr(assets, "_write_site", reject_competing_destination)
 
@@ -374,7 +423,7 @@ def test_should_not_remove_substitution_immediately_before_trace_cleanup(
     destination = tmp_path / "recorder"
     moved = tmp_path / "moved"
 
-    def replace_then_fail(_: int, __: object) -> None:
+    def replace_then_fail(_: int, __: object, ___: assets._Presentation | None) -> None:
         destination.rename(moved)
         destination.mkdir()
         (destination / "competitor.txt").write_text("keep")
