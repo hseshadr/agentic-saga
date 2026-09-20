@@ -319,7 +319,7 @@ class AgenticSagaWorkflow:
         while request := self._journal.next_request():
             result = await self._run_compensation_activity(request)
             self._record_compensation(request, result)
-            if result.outcome == "unresolved":
+            if self._journal.human_required_reason is not None:
                 await self._wait_for_human()
 
     def _record_compensation_proof(self, target: SagaStatus) -> None:
@@ -569,7 +569,7 @@ def _event_details(
     result: ToolActivityResult,
     tool: WorkflowTool,
 ) -> JsonObject:
-    return cast(
+    details = cast(
         JsonObject,
         {
             "arguments": request.arguments,
@@ -584,6 +584,9 @@ def _event_details(
             "verified": _receipt_verified(result.receipt),
         },
     )
+    if tool.kind == "read":
+        return cast(JsonObject, {**details, "declared_kind": "read"})
+    return details
 
 
 def _compensation_event_details(

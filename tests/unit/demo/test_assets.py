@@ -325,10 +325,18 @@ def test_should_keep_publication_anchored_when_parent_is_retargeted(
         site_descriptor: int,
         traces: object,
         presentation: assets._Presentation | None,
+        default_run_id: str | None = None,
+        recording_mode: assets._RecordingMode = "unknown",
     ) -> None:
         nested.rename(moved)
         nested.symlink_to(attacker, target_is_directory=True)
-        original_write(site_descriptor, cast(dict[str, RunTrace], traces), presentation)
+        original_write(
+            site_descriptor,
+            cast(dict[str, RunTrace], traces),
+            presentation,
+            default_run_id,
+            recording_mode,
+        )
 
     monkeypatch.setattr(assets, "_write_site", retarget_parent)
 
@@ -351,10 +359,18 @@ def test_should_keep_exclusive_destination_claim_during_construction(
         site_descriptor: int,
         traces: object,
         presentation: assets._Presentation | None,
+        default_run_id: str | None = None,
+        recording_mode: assets._RecordingMode = "unknown",
     ) -> None:
         with pytest.raises(FileExistsError):
             destination.mkdir()
-        original_write(site_descriptor, cast(dict[str, RunTrace], traces), presentation)
+        original_write(
+            site_descriptor,
+            cast(dict[str, RunTrace], traces),
+            presentation,
+            default_run_id,
+            recording_mode,
+        )
 
     monkeypatch.setattr(assets, "_write_site", reject_competing_destination)
 
@@ -423,7 +439,13 @@ def test_should_not_remove_substitution_immediately_before_trace_cleanup(
     destination = tmp_path / "recorder"
     moved = tmp_path / "moved"
 
-    def replace_then_fail(_: int, __: object, ___: assets._Presentation | None) -> None:
+    def replace_then_fail(
+        _: int,
+        __: object,
+        ___: assets._Presentation | None,
+        ____: str | None = None,
+        _____: assets._RecordingMode = "unknown",
+    ) -> None:
         destination.rename(moved)
         destination.mkdir()
         (destination / "competitor.txt").write_text("keep")
@@ -511,3 +533,65 @@ def test_should_fail_cleanly_without_posix_descriptor_capabilities(
     # When / Then
     with pytest.raises(MaterializationError, match="POSIX descriptor support"):
         materialize_recorder_site(tmp_path / "recorder", {"happy-path": _trace()})
+
+
+def test_should_materialize_default_selection_with_all_requested_traces(tmp_path: Path) -> None:
+    destination = tmp_path / "recorder"
+    traces = {"happy-path": _trace(), "business-failure": _trace()}
+
+    materialize_recorder_site(destination, traces, default_run_id="business-failure")
+
+    index = json.loads((destination / "traces" / "index.json").read_bytes())
+    assert index["default_run_id"] == "business-failure"
+    assert {entry["id"] for entry in index["runs"]} == set(traces)
+    _validate(destination)
+
+
+def test_should_reject_default_selection_missing_from_catalog(tmp_path: Path) -> None:
+    destination = tmp_path / "recorder"
+
+    with pytest.raises(MaterializationError, match="default run"):
+        materialize_recorder_site(
+            destination, {"happy-path": _trace()}, default_run_id="business-failure"
+        )
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize("default_run_id", ["unknown", "", None, 7, ["happy-path"]])
+def test_should_reject_invalid_default_selection_in_index(
+    tmp_path: Path, default_run_id: object
+) -> None:
+    destination = tmp_path / "recorder"
+    materialize_recorder_site(destination, {"happy-path": _trace()})
+    index_path = destination / "traces" / "index.json"
+    index = json.loads(index_path.read_bytes())
+    index["default_run_id"] = default_run_id
+    index_path.write_text(json.dumps(index))
+
+    with pytest.raises(MaterializationError):
+        _validate(destination)
+
+
+@pytest.mark.parametrize("mode", ["scripted", "live", "unknown"])
+def test_agent_provenance_is_explicit(tmp_path: Path, mode: assets._RecordingMode) -> None:
+    destination = tmp_path / "site"
+    materialize_recorder_site(destination, {"sample": _trace()}, recording_mode=mode)
+    index = json.loads((destination / "traces" / "index.json").read_bytes())
+    assert index["runs"][0]["mode"] == mode
+
+
+def test_generic_trace_does_not_claim_scripted_agent(tmp_path: Path) -> None:
+    destination = tmp_path / "site"
+    materialize_recorder_site(destination, {"sample": _trace()})
+    index = json.loads((destination / "traces" / "index.json").read_bytes())
+    assert index["runs"][0]["mode"] == "unknown"
+
+
+def test_ecommerce_summary_uses_trace_outcome_not_scenario_name(tmp_path: Path) -> None:
+    destination = tmp_path / "site"
+    source = Path("examples/ecommerce/flight-recorder/traces/compensation-failure.json")
+    paused = RunTrace.model_validate_json(source.read_bytes())
+    materialize_recorder_site(destination, {"happy-path": paused}, presentation="ecommerce")
+    index = json.loads((destination / "traces" / "index.json").read_bytes())
+    assert "needs human review" in index["runs"][0]["summary"]
+    assert "succeeds" not in index["runs"][0]["summary"]

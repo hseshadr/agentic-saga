@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
 from socket import SO_REUSEADDR, SOL_SOCKET, socket
-from urllib.error import HTTPError
 from urllib.parse import urlsplit
 from urllib.request import urlopen
 
@@ -20,8 +19,9 @@ import pytest
 from pytest import MonkeyPatch
 
 from agentic_saga.cli.demo import DemoArguments, run_demo
+from agentic_saga.contracts.trace import RunTrace
 from agentic_saga.demo.assets import MaterializationError
-from agentic_saga.demo.reference import ReferenceTraceError
+from agentic_saga.demo.reference import REFERENCE_SCENARIOS, ReferenceTraceError
 from agentic_saga.demo.server import RecorderServer
 
 pytestmark = pytest.mark.enable_socket
@@ -61,8 +61,11 @@ def test_should_print_flush_and_stop_cleanly_on_keyboard_interrupt(
     # Then
     assert result == 0
     assert output.stream.getvalue().startswith("Agentic Saga recorder: http://127.0.0.1:")
-    assert output.stream.getvalue().count("\n") == 1
-    assert output.flushes == 1
+    assert "All 4 scenario recordings are complete" in output.stream.getvalue()
+    assert "no live model calls or JEV adapter" in output.stream.getvalue()
+    assert "web server stays open for browsing" in output.stream.getvalue()
+    assert "Ctrl+C" in output.stream.getvalue()
+    assert output.flushes == 4
 
 
 def _unexpected_browser_open(_: str) -> bool:
@@ -164,7 +167,9 @@ def _occupied_loopback_port() -> Iterator[int]:
         holder.close()
 
 
-def test_should_serve_only_selected_trace_and_exit_zero_on_sigint(tmp_path: Path) -> None:
+def test_should_serve_all_traces_with_selected_default_and_exit_zero_on_sigint(
+    tmp_path: Path,
+) -> None:
     # Given
     process = _start_demo_process("compensation-failure", temp_root=tmp_path)
 
@@ -175,12 +180,15 @@ def test_should_serve_only_selected_trace_and_exit_zero_on_sigint(tmp_path: Path
             index = json.loads(response.read())
 
         # Then
-        assert [entry["id"] for entry in index["runs"]] == ["compensation-failure"]
-        assert index["runs"][0]["presentation"] == "ecommerce"
-        with pytest.raises(HTTPError) as exc_info:
-            urlopen(f"{url}/traces/happy-path.json")  # noqa: S310
-        assert exc_info.value.code == 404
-        exc_info.value.close()
+        assert {entry["id"] for entry in index["runs"]} == set(REFERENCE_SCENARIOS)
+        assert index["default_run_id"] == "compensation-failure"
+        for entry in index["runs"]:
+            assert entry["presentation"] == "ecommerce"
+            assert entry["name"] != f"Recorded run: {entry['id']}"
+            with urlopen(f"{url}/traces/{entry['trace_ref']}") as response:  # noqa: S310
+                trace = RunTrace.model_validate_json(response.read(), strict=True)
+            assert trace.events
+        assert process.poll() is None
     finally:
         _stop_demo_process(process)
     assert process.returncode == 0

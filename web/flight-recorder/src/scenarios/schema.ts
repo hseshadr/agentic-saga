@@ -12,7 +12,7 @@ export const scenarioIndexEntrySchema = z
       .regex(/^[a-z0-9][a-z0-9-]*$/),
     name: z.string().min(1).max(120),
     summary: z.string().min(1).max(500),
-    mode: z.enum(["scripted", "live"]),
+    mode: z.enum(["scripted", "live", "unknown"]),
     presentation: z.enum(["ecommerce"]).optional(),
     trace_ref: safeTraceRefSchema,
     trace_sha256: digestSchema,
@@ -22,11 +22,19 @@ export const scenarioIndexEntrySchema = z
 export const scenarioIndexSchema = z
   .object({
     schema_version: z.literal("1.0"),
+    default_run_id: z.string().min(1).max(80).optional(),
     runs: z.array(scenarioIndexEntrySchema).min(1).max(100),
   })
   .strict()
   .superRefine((value, context) => {
     const ids = value.runs.map((run) => run.id);
+    if (value.default_run_id !== undefined && !ids.includes(value.default_run_id)) {
+      context.addIssue({
+        code: "custom",
+        message: "default run must refer to an included run",
+        path: ["default_run_id"],
+      });
+    }
     if (new Set(ids).size !== ids.length) {
       context.addIssue({ code: "custom", message: "run IDs must be unique", path: ["runs"] });
     }

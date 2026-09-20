@@ -8,6 +8,10 @@ All notable changes to Agentic Saga are documented here. The format follows
 
 ### Added
 
+- A four-scenario recorder catalog with stable outcome summaries, explicit agent provenance,
+  replay status, and `python -m examples.ecommerce.run all --open` for fresh local runs.
+- Automatic recording refresh, reconnect status, and page updates when a rebuilt UI is served.
+- Evidence-checked use-case pass indicators and a labeled story table with per-event results.
 - Temporal Python SDK integration as the sole durable Saga engine.
 - One deterministic Workflow for tool eligibility, prerequisites, budgets, success proof,
   reverse compensation, and verified human recovery.
@@ -27,12 +31,21 @@ All notable changes to Agentic Saga are documented here. The format follows
 
 ### Changed
 
+- Replaced custom prerequisite traversal with Python's `graphlib` cycle validation and removed
+  unused agent helpers and obsolete ecommerce test models.
 - Limited the model surface to currently eligible forward business tools plus
   `finish_saga(succeeded_verified)` when deterministic proof permits it.
 - Assigned reconciliation, compensation order, escalation, and final state exclusively to the
   Temporal Workflow.
 - Made ecommerce a standalone example of the generic library rather than domain logic in core.
 - Documented distinct test, local-development, and production Temporal modes.
+
+### Fixed
+
+- Failed compensation now waits for verified human resolution instead of claiming successful
+  recovery with unresolved obligations.
+- Trace projection distinguishes confirmed no-effect failures, uncertain outcomes, and reads.
+- The ecommerce human-review wait accommodates real Temporal retry timing.
 - Declared Workflow history public/redacted by default; private production payloads require an
   application-configured encryption codec, external KMS, and least-privilege Namespace access.
 

@@ -83,9 +83,16 @@ def _public_output(event: WorkflowEvent, receipt: JsonObject | None) -> JsonObje
         return None
     if event.details.get("proof_for_success") is True:
         return cast(JsonObject, {"kind": "read_observed", "verified": _verified(event)})
-    succeeded = _text_detail(event, "outcome") == "succeeded"
-    kind = "effect_confirmed" if succeeded else "outcome_unknown"
-    return _outcome_payload(kind, receipt, event)
+    return _outcome_payload(_tool_outcome_kind(event), receipt, event)
+
+
+def _tool_outcome_kind(event: WorkflowEvent) -> str:
+    outcome = _text_detail(event, "outcome")
+    if outcome == "failed":
+        return "no_effect_confirmed"
+    if outcome != "succeeded":
+        return "outcome_unknown"
+    return "read_observed" if event.details.get("declared_kind") == "read" else "effect_confirmed"
 
 
 def _reconciliation_kind(event: WorkflowEvent) -> str:
@@ -186,6 +193,8 @@ def _event_type(event: WorkflowEvent) -> str:
 def _forward_event_type(event: WorkflowEvent) -> str:
     if event.details.get("proof_for_success") is True:
         return "invariant_evaluated"
+    if event.details.get("declared_kind") == "read":
+        return "read_observed"
     return "effect_outcome_recorded"
 
 

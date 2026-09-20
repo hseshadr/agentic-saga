@@ -5,10 +5,10 @@ import { createInterface } from "node:readline";
 import { expect, type Page, test } from "@playwright/test";
 
 const runs = [
-  ["happy-path", "Succeeded verified", "Terminal assigned"],
-  ["lost-response", "Succeeded verified", "Reconciliation recorded"],
-  ["business-failure", "Compensated verified", "Compensation started"],
-  ["compensation-failure", "Human required", "Human required"],
+  ["happy-path", "Completed safely", "Terminal assigned"],
+  ["lost-response", "Completed safely", "Reconciliation recorded"],
+  ["business-failure", "Safely undone", "Compensation started"],
+  ["compensation-failure", "Needs human review", "Human required"],
 ] as const;
 const STOP_SIGNALS = ["SIGINT", "SIGTERM", "SIGKILL"] as const;
 const STOP_GRACE_MS = 2_000;
@@ -171,12 +171,21 @@ for (const [scenario, outcome, evidenceLabel] of runs) {
       const url = await readyUrl(server);
       const network = await recordNetwork(page, new URL(url).origin);
       await page.goto(url);
-      await expect(page.getByRole("heading", { name: "Saga Flight Recorder" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Agentic Saga Replay" })).toBeVisible();
       await expect(page.getByText(outcome, { exact: true }).first()).toBeVisible();
+      const scenarios = page.getByRole("navigation", { name: "Run trajectory" });
+      await expect(scenarios.getByRole("button")).toHaveCount(4);
+      await expect(scenarios.locator('[aria-current="page"]')).toHaveCount(1);
+      await page.getByRole("button", { name: "Restart replay", exact: true }).click();
+      await expect(page.getByText("Replay paused", { exact: true })).toBeVisible();
+      await expect(page.locator("header").first()).toContainText(outcome);
+      await page.getByRole("button", { name: "Show outcome", exact: true }).click();
+      await expect(page.getByText("Replay complete", { exact: true })).toBeVisible();
       await expect(page.getByText(evidenceLabel, { exact: true }).first()).toBeVisible();
       if (scenario === "compensation-failure") await proveHumanRequiredQuiescence(page);
+      await expect(page.getByRole("heading", { name: "4 / 4 use cases passed" })).toBeVisible();
       expect(new Set(network.tracePaths)).toEqual(
-        new Set(["/traces/index.json", `/traces/${scenario}.json`]),
+        new Set(["/traces/index.json", ...runs.map(([id]) => `/traces/${id}.json`)]),
       );
       expect(network.externalOrigins).toEqual([]);
       expect(network.webSockets).toEqual([]);
@@ -197,7 +206,7 @@ test("wheel-installed recorder meets the warm-browser fresh-page navigation budg
       const url = await readyUrl(server);
       const started = performance.now();
       await page.goto(url);
-      await expect(page.getByText("Succeeded verified", { exact: true }).first()).toBeVisible();
+      await expect(page.getByText("Completed safely", { exact: true }).first()).toBeVisible();
       samples.push(performance.now() - started);
     } finally {
       await page.close();
@@ -206,4 +215,33 @@ test("wheel-installed recorder meets the warm-browser fresh-page navigation budg
   }
   await writeBrowserMeasurements(samples);
   expect(p95(samples)).toBeLessThanOrEqual(2_000);
+});
+
+test("an open packaged recorder reloads when a newer UI build is available", async ({ page }) => {
+  const server = launchRecorder("happy-path");
+  try {
+    const url = await readyUrl(server);
+    await page.goto(url);
+    await expect(page.getByText("Completed safely", { exact: true }).first()).toBeVisible();
+    const html = await (await page.request.get(url)).text();
+    const script = /src="(\.\/assets\/[^"]+\.js)"/.exec(html)?.[1];
+    if (!script) throw new Error("packaged page must declare its UI bundle");
+    const bundle = await (await page.request.get(new URL(script, url).href)).text();
+    const updatedHtml = html.replace(script, "./assets/updated-ui.js");
+    await page.route(`${url}/assets/updated-ui.js`, (route) =>
+      route.fulfill({ contentType: "text/javascript", body: bundle }),
+    );
+    await page.route(`${url}/`, (route) =>
+      route.fulfill({ contentType: "text/html", body: updatedHtml }),
+    );
+    await expect(page.locator('script[src="./assets/updated-ui.js"]')).toHaveCount(1, {
+      timeout: 8_000,
+    });
+    await expect(page.getByText("Completed safely", { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole("status", { name: "Recording updates" })).toContainText(
+      "Up to date",
+    );
+  } finally {
+    await stopRecorder(server);
+  }
 });

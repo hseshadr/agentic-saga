@@ -35,6 +35,16 @@ uv run python -m examples.ecommerce.run lost-response
 uv run python -m examples.ecommerce.run compensation-failure
 ```
 
+Run all four and open their recorded results together in the Flight Recorder:
+
+```bash
+uv run python -m examples.ecommerce.run all --open
+```
+
+The commands execute real Temporal Workflows using a deterministic `CheckoutAgent` and simulated
+providers. They do not use JEV or call a model. With `--open`, execution finishes before the browser
+opens; only the read-only recorder server remains active until Ctrl+C.
+
 The example CLI is intentionally local-only and connects to `localhost:7233` by default. An
 alternate loopback port is supported:
 
@@ -107,6 +117,11 @@ uv run python -m examples.ecommerce.export_flight_recorder
 The JSON files in `flight-recorder/traces/` drive the existing replay UI. They contain public,
 redacted workflow evidence: effects, reconciliation, proof, compensation, human resolution, and
 terminal state.
+
+For a ready-made catalog without a running Temporal server, use
+`uv run agentic-saga demo --open`. All four recordings are available in one page. The bundled
+compensation-failure recording deliberately ends at human review; the example runner demonstrates
+the authorized resolution too, so its fresh recording ends with verified compensation.
 
 ## Model-backed evaluation
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 from importlib import resources
@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Final, Literal, cast
 
 from agentic_saga.contracts.trace import RunTrace
+from agentic_saga.demo.reference import REFERENCE_PRESENTATIONS, reference_summary
 
 _MAX_RUNS: Final[int] = 100
 _MAX_STATIC_FILES: Final[int] = 200
@@ -21,6 +22,7 @@ _MAX_NAME_CHARS: Final[int] = 120
 _MAX_SUMMARY_CHARS: Final[int] = 500
 _SCENARIO = re.compile(r"^[a-z0-9][a-z0-9-]{0,79}$")
 _Presentation = Literal["ecommerce"]
+_RecordingMode = Literal["scripted", "live", "unknown"]
 
 
 class MaterializationError(ValueError):
@@ -40,16 +42,21 @@ def materialize_recorder_site(
     traces: Mapping[str, RunTrace],
     *,
     presentation: _Presentation | None = None,
+    default_run_id: str | None = None,
+    recording_mode: _RecordingMode = "unknown",
 ) -> None:
     """Build a fresh recorder site, purging trace payloads after failure.
 
     An unserved empty root can remain for caller cleanup; same-UID mutation is out of scope.
     """
     _require_destination(destination, traces)
+    _require_default_run(default_run_id, traces)
+    if recording_mode not in {"scripted", "live", "unknown"}:
+        raise MaterializationError("recorder agent provenance is invalid")
     _require_posix_capabilities()
     anchor = _claim_destination(destination)
     try:
-        _materialize_claim(anchor, traces, presentation)
+        _materialize_claim(anchor, traces, presentation, default_run_id, recording_mode)
     finally:
         os.close(anchor.site_descriptor)
         os.close(anchor.parent_descriptor)
@@ -162,9 +169,11 @@ def _materialize_claim(
     anchor: _Anchor,
     traces: Mapping[str, RunTrace],
     presentation: _Presentation | None,
+    default_run_id: str | None,
+    recording_mode: _RecordingMode,
 ) -> None:
     try:
-        _write_site(anchor.site_descriptor, traces, presentation)
+        _write_site(anchor.site_descriptor, traces, presentation, default_run_id, recording_mode)
         _validate_site_at(anchor.site_descriptor)
         _require_current_claim(anchor)
     except BaseException as original:
@@ -219,15 +228,18 @@ def _write_site(
     site_descriptor: int,
     traces: Mapping[str, RunTrace],
     presentation: _Presentation | None,
+    default_run_id: str | None = None,
+    recording_mode: _RecordingMode = "unknown",
 ) -> None:
     _copy_static_assets(site_descriptor)
     os.mkdir("traces", mode=0o700, dir_fd=site_descriptor)
     trace_descriptor = os.open("traces", _directory_flags(), dir_fd=site_descriptor)
     try:
         entries = tuple(
-            _write_trace(trace_descriptor, item, presentation) for item in sorted(traces.items())
+            _write_trace(trace_descriptor, item, presentation, recording_mode)
+            for item in sorted(traces.items())
         )
-        _write_file(trace_descriptor, "index.json", _index_payload(entries))
+        _write_file(trace_descriptor, "index.json", _index_payload(entries, default_run_id))
     finally:
         os.close(trace_descriptor)
 
@@ -296,12 +308,13 @@ def _write_trace(
     trace_directory: int,
     item: tuple[str, RunTrace],
     presentation: _Presentation | None,
+    recording_mode: _RecordingMode,
 ) -> dict[str, str]:
     scenario, trace = item
     payload = _trace_payload(trace)
     trace_name = f"{scenario}.json"
     _write_file(trace_directory, trace_name, payload)
-    return _index_entry(scenario, trace_name, payload, presentation)
+    return _index_entry(scenario, trace, payload, presentation, recording_mode)
 
 
 def _trace_payload(trace: RunTrace) -> bytes:
@@ -317,25 +330,32 @@ def _trace_payload(trace: RunTrace) -> bytes:
 
 def _index_entry(
     scenario: str,
-    trace_name: str,
+    trace: RunTrace,
     payload: bytes,
     presentation: _Presentation | None,
+    recording_mode: _RecordingMode,
 ) -> dict[str, str]:
     entry = {
         "id": scenario,
         "name": f"Recorded run: {scenario}",
         "summary": "Materialized strict RunTrace 1.0 evidence.",
-        "mode": "scripted",
-        "trace_ref": trace_name,
+        "mode": recording_mode,
+        "trace_ref": f"{scenario}.json",
         "trace_sha256": sha256(payload).hexdigest(),
     }
     if presentation is not None:
         entry["presentation"] = presentation
+        if scenario in REFERENCE_PRESENTATIONS:
+            entry["name"] = REFERENCE_PRESENTATIONS[scenario]
+            entry["summary"] = reference_summary(trace)
     return entry
 
 
-def _index_payload(entries: tuple[dict[str, str], ...]) -> bytes:
-    payload = f"{json.dumps({'schema_version': '1.0', 'runs': entries}, indent=2)}\n".encode()
+def _index_payload(entries: tuple[dict[str, str], ...], default_run_id: str | None = None) -> bytes:
+    index: dict[str, object] = {"schema_version": "1.0", "runs": entries}
+    if default_run_id is not None:
+        index["default_run_id"] = default_run_id
+    payload = f"{json.dumps(index, indent=2)}\n".encode()
     if len(payload) > _MAX_INDEX_BYTES:
         raise MaterializationError("recorder trace index exceeds safety bounds")
     return payload
@@ -363,7 +383,10 @@ def _validate_site_at(site_descriptor: int) -> None:
     trace_descriptor = os.open("traces", _directory_flags(), dir_fd=site_descriptor)
     try:
         index = _load_index_at(trace_descriptor)
-        _validate_entries_at(trace_descriptor, index["runs"])
+        entries = _require_entries(index["runs"])
+        _validate_entries_at(trace_descriptor, entries)
+        scenarios = {str(_require_entry(entry)["id"]) for entry in entries}
+        _require_default_run(index.get("default_run_id"), scenarios)
     finally:
         os.close(trace_descriptor)
 
@@ -410,9 +433,18 @@ def _read_all(descriptor: int, maximum: int) -> bytes:
 def _has_expected_index_shape(payload: object) -> bool:
     return (
         isinstance(payload, dict)
-        and set(payload) == {"schema_version", "runs"}
+        and {"schema_version", "runs"}.issubset(payload)
+        and set(payload) <= {"schema_version", "runs", "default_run_id"}
         and payload.get("schema_version") == "1.0"
+        and isinstance(payload.get("default_run_id", ""), str)
     )
+
+
+def _require_default_run(default_run_id: object, scenarios: Collection[str]) -> None:
+    if default_run_id is None:
+        return
+    if not isinstance(default_run_id, str) or default_run_id not in scenarios:
+        raise MaterializationError("recorder default run is invalid")
 
 
 def _validate_entries_at(trace_descriptor: int, entries: object) -> None:
@@ -494,7 +526,7 @@ def _has_valid_entry_text(entry: dict[object, object]) -> bool:
 
 
 def _has_valid_mode(entry: dict[object, object]) -> bool:
-    return entry["mode"] in {"scripted", "live"}
+    return entry["mode"] in {"scripted", "live", "unknown"}
 
 
 def _has_valid_presentation(entry: dict[object, object]) -> bool:

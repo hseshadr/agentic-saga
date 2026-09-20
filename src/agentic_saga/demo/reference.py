@@ -22,12 +22,43 @@ REFERENCE_SCENARIOS: Final[tuple[ReferenceScenario, ...]] = (
     "lost-response",
     "compensation-failure",
 )
+REFERENCE_PRESENTATIONS: Final[dict[str, str]] = {
+    "happy-path": "Everything works",
+    "business-failure": "Delivery fails after payment",
+    "lost-response": "The payment reply is lost",
+    "compensation-failure": "The refund needs human verification",
+}
 DEFAULT_REFERENCE_SCENARIO: Final[ReferenceScenario] = "business-failure"
 _MAX_TRACE_BYTES: Final[int] = 8 * 1024 * 1024
 
 
 class ReferenceTraceError(ValueError):
     """Raised when a packaged reference trace cannot be loaded safely."""
+
+
+def reference_summary(trace: RunTrace) -> str:
+    """Describe the recorded ecommerce outcome without inferring it from a scenario name."""
+    if trace.outcome.value == "succeeded_verified":
+        return _success_summary(trace)
+    if trace.outcome.value == "compensated_verified":
+        return _recovery_summary(trace)
+    if trace.outcome.value == "human_required":
+        return "The order did not complete. Recovery is unresolved and needs human review."
+    return "The recording ends before a verified order or recovery outcome."
+
+
+def _success_summary(trace: RunTrace) -> str:
+    if any(event.event_type == "reconciliation_recorded" for event in trace.events):
+        return "The order succeeds: payment was reconciled without charging twice."
+    return "The order succeeds: stock, payment, and delivery are verified."
+
+
+def _recovery_summary(trace: RunTrace) -> str:
+    if any(event.event_type == "human_resolved" for event in trace.events):
+        return (
+            "The order fails. Human verification resolves the uncertain refund; recovery succeeds."
+        )
+    return "The order fails. Recovery succeeds: payment is refunded and stock is released."
 
 
 def load_reference_trace(scenario: str) -> RunTrace:

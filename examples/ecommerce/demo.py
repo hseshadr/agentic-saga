@@ -69,6 +69,7 @@ _UNAUTHORIZED = "authz_untrusted_actor_0000001"
 _DEFINITION_VERSION = "ecommerce-temporal-v1"
 _MANIFEST_PATH = Path(__file__).with_name("saga.yaml")
 _INVARIANT_CHECKS = ("no_external_effects", "obligations_reversed", "order_verified")
+_HUMAN_WAIT_SECONDS = 60.0
 
 
 class _CheckoutContext(StrictModel):
@@ -308,12 +309,13 @@ def _demo_authorization(saga_id: str, operation_id: str, event_seq: int) -> str:
 async def _wait_for_human(
     handle: WorkflowHandle[AgenticSagaWorkflow, WorkflowState],
 ) -> WorkflowState:
-    for _ in range(100):
-        state = await handle.query(AgenticSagaWorkflow.state)
-        if state.status is SagaStatus.HUMAN_REQUIRED:
-            return state
-        await asyncio.sleep(0.01)
-    raise AssertionError("checkout Saga did not pause for a human")
+    # Real Temporal retries take wall-clock time; the test server skips that delay.
+    async with asyncio.timeout(_HUMAN_WAIT_SECONDS):
+        while True:
+            state = await handle.query(AgenticSagaWorkflow.state)
+            if state.status is SagaStatus.HUMAN_REQUIRED:
+                return state
+            await asyncio.sleep(0.05)
 
 
 def _workflow_input(

@@ -7,14 +7,18 @@ import { App } from "./app";
 import { ScenarioRepository } from "./scenarios/repository";
 import { loadIndexFixture } from "./test/load-index-fixture";
 
-const TRACE_PATH = resolve(
-  process.cwd(),
-  "../../examples/ecommerce/flight-recorder/traces/happy-path.json",
-);
-const HUMAN_TRACE_PATH = resolve(
-  process.cwd(),
-  "../../examples/ecommerce/flight-recorder/traces/compensation-failure.json",
-);
+const TRACE_ROOT = resolve(process.cwd(), "../../examples/ecommerce/flight-recorder/traces");
+
+function fixtureFetcher(index: unknown = loadIndexFixture()) {
+  return vi.fn<typeof fetch>().mockImplementation(async (url) => {
+    const name = new URL(String(url)).pathname.split("/").at(-1) ?? "";
+    return response(
+      name === "index.json"
+        ? JSON.stringify(index)
+        : readFileSync(resolve(TRACE_ROOT, name), "utf8"),
+    );
+  });
+}
 
 function response(body: string, status = 200): Response {
   return new Response(body, { headers: { "content-type": "application/json" }, status });
@@ -23,20 +27,28 @@ function response(body: string, status = 200): Response {
 describe("App", () => {
   it("loads a generic index and renders its verified real trace", async () => {
     const user = userEvent.setup();
-    const fetcher = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(response(JSON.stringify(loadIndexFixture())))
-      .mockResolvedValueOnce(response(readFileSync(TRACE_PATH, "utf8")))
-      .mockResolvedValueOnce(response(readFileSync(HUMAN_TRACE_PATH, "utf8")));
+    const fetcher = fixtureFetcher();
     const repository = new ScenarioRepository(new URL("https://recorder.test/traces/"), fetcher);
 
     render(<App repository={repository} />);
 
-    expect(screen.getByRole("status")).toHaveTextContent("Loading recorded evidence");
+    expect(screen.getByText(/Loading recorded evidence/)).toBeVisible();
     expect(await screen.findByText("Completed safely")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /refund cannot be verified/i }));
-    expect(await screen.findByText("Waiting for a human")).toBeInTheDocument();
-    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(await screen.findByText("Needs human review")).toBeInTheDocument();
+    expect(await screen.findByText("4 / 4 use cases passed")).toBeVisible();
+  });
+
+  it("opens the catalog default while keeping all scenarios available", async () => {
+    const index = { ...(loadIndexFixture() as object), default_run_id: "compensation-failure" };
+    const fetcher = fixtureFetcher(index);
+    const repository = new ScenarioRepository(new URL("https://recorder.test/traces/"), fetcher);
+
+    render(<App repository={repository} />);
+
+    expect(await screen.findByText("Needs human review")).toBeVisible();
+    expect(screen.getByText(/4 recorded scenarios/)).toBeVisible();
+    expect(String(fetcher.mock.calls[1]?.[0])).toMatch(/compensation-failure\.json$/);
   });
 
   it("shows a safe, actionable load failure", async () => {

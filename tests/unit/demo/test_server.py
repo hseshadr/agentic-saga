@@ -76,6 +76,63 @@ def test_should_return_no_body_when_request_is_head(tmp_path: Path) -> None:
     assert body == b""
 
 
+def _read_url(url: str) -> bytes:
+    with urlopen(url) as response:  # noqa: S310
+        assert response.headers["Cache-Control"] == "no-store"
+        return bytes(response.read())
+
+
+def test_should_serve_updated_ui_assets_without_changing_recordings(tmp_path: Path) -> None:
+    directory = _site(tmp_path)
+    static = tmp_path / "current-ui"
+    (static / "assets").mkdir(parents=True)
+    (static / "traces").mkdir()
+    (static / "index.html").write_text('<script src="/assets/first.js"></script>')
+    (static / "assets" / "first.js").write_text("first-build")
+    (static / "traces" / "index.json").write_text("must-not-replace-recordings")
+    expected_catalog = (directory / "traces" / "index.json").read_bytes()
+
+    with serve_recorder(directory, static_directory=static) as server:
+        first = _read_url(f"{server.url}/index.html")
+        assert _read_url(f"{server.url}/") == first
+        assert _read_url(f"{server.url}/assets/first.js") == b"first-build"
+        (static / "assets" / "second.js").write_text("second-build")
+        (static / "index.html").write_text('<script src="/assets/second.js"></script>')
+        assert _read_url(f"{server.url}/index.html") != first
+        assert _read_url(f"{server.url}/assets/second.js") == b"second-build"
+        assert _read_url(f"{server.url}/traces/index.json") == expected_catalog
+        assert server._thread.is_alive()
+
+
+def test_should_keep_static_override_path_and_symlink_guards(tmp_path: Path) -> None:
+    directory = _site(tmp_path)
+    static = tmp_path / "current-ui"
+    (static / "assets").mkdir(parents=True)
+    (static / "index.html").write_text("safe-ui")
+    outside = tmp_path / "private.json"
+    outside.write_text("private")
+    (static / "assets" / "leak.json").symlink_to(outside)
+
+    with serve_recorder(directory, static_directory=static) as server:
+        _assert_rejected(f"{server.url}/assets/leak.json", 404)
+        _assert_rejected(f"{server.url}/assets/%2e%2e/%2e%2e/private.json", 404)
+        _assert_rejected(f"{server.url}/assets/", 404)
+        request = Request(f"{server.url}/index.html", method="POST")  # noqa: S310
+        _assert_rejected(request, 405)
+        (static / "index.html").unlink()
+        (static / "index.html").symlink_to(outside)
+        _assert_rejected(f"{server.url}/index.html", 404)
+
+
+def test_should_reject_symlink_static_root(tmp_path: Path) -> None:
+    directory = _site(tmp_path)
+    static = tmp_path / "linked-ui"
+    static.symlink_to(directory, target_is_directory=True)
+
+    with pytest.raises(RecorderServerError, match="directory is unsafe"):
+        serve_recorder(directory, static_directory=static)
+
+
 def test_should_reject_path_escape_when_serving(tmp_path: Path) -> None:
     # Given
     directory = _site(tmp_path)

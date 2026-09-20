@@ -570,3 +570,39 @@ def test_human_verification_result_has_exact_trusted_shape() -> None:
     assert verified.trusted_actor == "operator_1"
     with pytest.raises(ValidationError, match="verified result"):
         HumanResolutionVerificationResult.model_validate({"verified": True})
+
+
+def test_accepts_dense_prerequisites_at_the_tool_limit() -> None:
+    tools = tuple(
+        WorkflowTool(
+            name=f"tool_{index}",
+            kind="read",
+            prerequisites=tuple(f"tool_{prior}" for prior in range(index)),
+        )
+        for index in range(100)
+    )
+    validated = SagaWorkflowInput(
+        saga_id=SAGA_ID,
+        goal=SagaGoal(goal_id="dense", text="Read safely.", context={}),
+        tools=tools,
+        max_agent_turns=100,
+        max_tool_calls=100,
+    )
+    assert len(validated.tools) == 100
+
+
+def test_shared_prerequisites_do_not_hide_a_disconnected_cycle() -> None:
+    tools = (
+        WorkflowTool(name="lookup", kind="read"),
+        WorkflowTool(name="first", kind="read", prerequisites=("lookup",)),
+        WorkflowTool(name="second", kind="read", prerequisites=("lookup", "last")),
+        WorkflowTool(name="last", kind="read", prerequisites=("second",)),
+    )
+    with pytest.raises(ValidationError, match="acyclic"):
+        SagaWorkflowInput(
+            saga_id=SAGA_ID,
+            goal=SagaGoal(goal_id="cycle", text="Read safely.", context={}),
+            tools=tools,
+            max_agent_turns=4,
+            max_tool_calls=4,
+        )

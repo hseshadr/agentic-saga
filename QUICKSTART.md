@@ -58,8 +58,19 @@ The packaged Flight Recorder replays redacted evidence at a human-readable pace:
 uv run --no-dev agentic-saga demo --scenario business-failure --open
 ```
 
-This is a read-only replay, not a live Workflow or provider call. Other captured outcomes are
-`happy-path`, `lost-response`, and `compensation-failure`.
+All four captured outcomes are available in the same page. `--scenario` selects the initial
+recording. The UI separates the recorded outcome from the state at the replay cursor and identifies
+the deterministic agent; these examples do not use JEV or call a model. The server remains open
+until Ctrl+C to keep the page available.
+
+To execute all four scenarios against your local Temporal server and inspect their fresh results:
+
+```bash
+uv run python -m examples.ecommerce.run all --open
+```
+
+The CLI's compensation-failure run includes a simulated authorized human resolution and finishes
+its rollback. The bundled recording stops at human review so you can inspect that unresolved state.
 
 ## Run Temporal locally
 

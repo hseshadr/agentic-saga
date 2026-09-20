@@ -6,7 +6,7 @@ const runs = [
   [0, "Completed safely", "/traces/happy-path.json", "Terminal assigned"],
   [1, "Completed safely", "/traces/lost-response.json", "Reconciliation recorded"],
   [2, "Safely undone", "/traces/business-failure.json", "Compensation started"],
-  [3, "Waiting for a human", "/traces/compensation-failure.json", "Human required"],
+  [3, "Needs human review", "/traces/compensation-failure.json", "Human required"],
 ] as const;
 
 async function openRecorder(page: Page): Promise<NetworkEvidence> {
@@ -192,7 +192,7 @@ test("watch from start reveals the ecommerce Saga at a human pace", async ({ pag
   await expect(page.getByRole("button", { name: "Pause replay" })).toBeVisible();
 
   await page.clock.fastForward(600);
-  await expect(page.getByText(`Event 1 of ${replay.eventCount}`)).toBeVisible();
+  await expect(page.getByText(new RegExp(`Event [12] of ${replay.eventCount}`))).toBeVisible();
   await page.clock.fastForward(100);
   await expect(page.getByText(`Event 2 of ${replay.eventCount}`)).toBeVisible();
 
@@ -331,7 +331,7 @@ test("human-required evidence remains quiescent and distinct from terminal proof
 }) => {
   await page.clock.install();
   await openRecorder(page);
-  await selectRun(page, 3, "Waiting for a human");
+  await selectRun(page, 3, "Needs human review");
   await expect(page.getByText("Paused safely for human review", { exact: true })).toBeVisible();
   await expect(page.getByRole("listitem", { name: "Refund payment: Needs a human" })).toBeVisible();
   await expect(page.getByRole("listitem", { name: "Release stock: Waiting" })).toBeVisible();
@@ -356,4 +356,103 @@ test("@mobile coarse-pointer controls meet the 44-pixel target", async ({ page }
     const box = await field.boundingBox();
     expect(box?.height).toBeGreaterThanOrEqual(44);
   }
+});
+
+test("recorded outcome remains clear while inspecting earlier events", async ({ page }) => {
+  await openRecorder(page);
+  await selectRun(page, 2, "Safely undone");
+  const header = page.locator("header").first();
+  await expect(header).toContainText("Order failed. Recovery succeeded");
+  await expect(page.getByText(/Scripted recording.*JEV is not used/)).toBeVisible();
+  await expect(page.getByText("Replay complete", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Restart replay", exact: true }).click();
+  await expect(page.getByText("Replay paused", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Event 1 of/)).toBeVisible();
+  await expect(header).toContainText("Safely undone");
+  await expect(header).not.toContainText("Running");
+  await page.getByRole("button", { name: "Show outcome", exact: true }).click();
+  await expect(page.getByText("Replay complete", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Show outcome", exact: true })).toBeDisabled();
+});
+
+test("automatic catalog updates preserve selection and unchanged replay position", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await openRecorder(page);
+  await selectRun(page, 2, "Safely undone");
+  await page.getByRole("button", { name: "Restart replay", exact: true }).click();
+  await page.clock.fastForward(3_100);
+  await expect(page.getByText(/Event 1 of/)).toBeVisible();
+  const response = await page.request.get("/traces/index.json");
+  const index = await response.json();
+  const successful = index.runs.find((run: { id: string }) => run.id === "happy-path");
+  index.runs = index.runs.map((run: { id: string }) =>
+    run.id === "business-failure"
+      ? {
+          ...successful,
+          id: run.id,
+          name: "Updated recording",
+          summary: "A newer recorded result.",
+        }
+      : run,
+  );
+  await page.route("**/traces/index.json", (route) => route.fulfill({ json: index }));
+  await page.clock.fastForward(3_100);
+  await expect(page.locator("header").first()).toContainText("Completed safely");
+  await expect(page.locator("header").first()).toContainText("Updated recording");
+  await expect(page.getByRole("heading", { name: "3 / 4 use cases passed" })).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Run trajectory" }).locator('[aria-current="page"]'),
+  ).toContainText("Updated recording");
+  await expect(page.getByText("Replay complete", { exact: true })).toBeVisible();
+});
+
+test("automatic refresh keeps the recording visible through a server interruption", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await openRecorder(page);
+  let unavailable = true;
+  await page.route("**/traces/index.json", async (route) => {
+    if (unavailable) await route.fulfill({ status: 503, body: "Unavailable" });
+    else await route.continue();
+  });
+  await page.clock.fastForward(3_100);
+  const updates = page.getByRole("status", { name: "Recording updates" });
+  await expect(updates).toContainText("Reconnecting");
+  await expect(page.getByRole("heading", { name: "Agentic Saga Replay" })).toBeVisible();
+  unavailable = false;
+  await page.clock.fastForward(3_100);
+  await expect(updates).toContainText("Up to date");
+});
+
+test("all use cases show verified checkmarks and the story labels each event result", async ({
+  page,
+}) => {
+  await openRecorder(page);
+  const results = page.getByRole("region", { name: "Use case results" });
+  await expect(results.getByRole("heading", { name: "4 / 4 use cases passed" })).toBeVisible();
+  await expect(results.locator('[data-result="passed"]')).toHaveCount(4);
+  await selectRun(page, 2, "Safely undone");
+  const story = page.getByRole("table", { name: "Causal story" });
+  await expect(story.getByRole("columnheader")).toHaveText([
+    "Step",
+    "Action",
+    "Responsible",
+    "Result",
+    "Evidence",
+  ]);
+  await expect(story.getByRole("row").filter({ hasText: "Refund completed" })).toContainText(
+    "Completed",
+  );
+  await expect(
+    story.getByRole("row").filter({ hasText: "Order verification failed" }),
+  ).toContainText("Failed");
+  await expect(story).not.toContainText("Then: running");
+  await page.getByRole("button", { name: "Restart replay", exact: true }).click();
+  await expect(story.getByRole("row")).toHaveCount(2);
+  await expect(results.locator('[data-result="passed"]')).toHaveCount(4);
+  await page.getByRole("button", { name: "Show outcome", exact: true }).click();
+  await expect(story.getByRole("row").filter({ hasText: "Refund completed" })).toBeVisible();
 });

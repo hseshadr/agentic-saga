@@ -12,7 +12,7 @@ export function SagaFlow(props: {
     <section aria-labelledby="ecommerce-saga-heading" className={styles.flow}>
       <header className={styles.heading}>
         <div>
-          <p className={styles.eyebrow}>Ecommerce example</p>
+          <p className={styles.eyebrow}>Ecommerce example · At this replay event</p>
           <h2 id="ecommerce-saga-heading">One order. Several systems. One safe outcome.</h2>
         </div>
         <div

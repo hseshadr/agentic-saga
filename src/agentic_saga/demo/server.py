@@ -40,7 +40,8 @@ class _LoopbackServer(ThreadingHTTPServer):
     daemon_threads = False
     request_queue_size = _MAX_CONCURRENT_HANDLERS
 
-    def configure_limits(self) -> None:
+    def configure_limits(self, static_root: Path | None = None) -> None:
+        self.static_root = static_root
         self._handler_slots = BoundedSemaphore(_MAX_CONCURRENT_HANDLERS)
         self._active_lock = Lock()
         self._active_requests: set[socket] = set()
@@ -219,7 +220,10 @@ class RecorderRequestHandler(SimpleHTTPRequestHandler):
         if target is None:
             self.send_error(404)
             return
-        self._send_file(target, head_only)
+        try:
+            self._send_file(target, head_only)
+        except FileNotFoundError:
+            self.send_error(404)
 
     def _target(self) -> Path | None:
         parsed = urlsplit(self.path)
@@ -232,8 +236,15 @@ class RecorderRequestHandler(SimpleHTTPRequestHandler):
         parts = relative.parts or ("index.html",)
         if not _has_safe_parts(parts):
             return None
-        target = self._root.joinpath(*parts)
-        return target if _is_safe_file(target, self._root) else None
+        root = self._file_root(parts)
+        target = root.joinpath(*parts)
+        return target if _is_safe_file(target, root) else None
+
+    def _file_root(self, parts: tuple[str, ...]) -> Path:
+        static = self._loopback_server().static_root
+        if static is not None and (parts == ("index.html",) or parts[0] == "assets"):
+            return static
+        return self._root
 
     def _send_file(self, target: Path, head_only: bool) -> None:
         mime = _MIME.get(target.suffix)
@@ -299,13 +310,20 @@ def _is_within(target: Path, root: Path) -> bool:
     return True
 
 
-def serve_recorder(directory: Path, *, port: int = 0, verbose: bool = False) -> RecorderServer:
-    """Serve a materialized recorder directory on loopback until shut down."""
+def serve_recorder(
+    directory: Path,
+    *,
+    port: int = 0,
+    verbose: bool = False,
+    static_directory: Path | None = None,
+) -> RecorderServer:
+    """Serve traces on loopback, optionally reading current UI assets from a separate root."""
     root = _require_directory(directory)
+    static_root = None if static_directory is None else _require_directory(static_directory)
     _require_port(port)
     handler = partial(RecorderRequestHandler, directory=str(root), verbose=verbose)
     httpd = _LoopbackServer((_LOOPBACK_HOST, port), handler)
-    httpd.configure_limits()
+    httpd.configure_limits(static_root)
     thread = Thread(target=httpd.serve_forever, name="saga-flight-recorder", daemon=True)
     thread.start()
     return RecorderServer(httpd, thread)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from graphlib import CycleError, TopologicalSorter
 from typing import Annotated, Literal, Self
 
 from pydantic import (
@@ -609,11 +610,7 @@ def _require_known_prerequisites(tools: tuple[WorkflowTool, ...]) -> None:
 
 def _require_acyclic_prerequisites(tools: tuple[WorkflowTool, ...]) -> None:
     graph = {tool.name: tool.prerequisites for tool in tools}
-    if not all(_acyclic_from(name, graph, frozenset()) for name in graph):
-        raise ValueError("workflow prerequisites must be acyclic")
-
-
-def _acyclic_from(name: str, graph: dict[str, tuple[str, ...]], path: frozenset[str]) -> bool:
-    if name in path:
-        return False
-    return all(_acyclic_from(item, graph, path | {name}) for item in graph[name])
+    try:
+        TopologicalSorter(graph).prepare()
+    except CycleError as error:
+        raise ValueError("workflow prerequisites must be acyclic") from error
