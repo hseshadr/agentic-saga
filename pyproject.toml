@@ -35,7 +35,6 @@ Issues = "https://github.com/hseshadr/agentic-saga/issues"
 [project.optional-dependencies]
 agent = [
   "pydantic-ai-slim[openrouter]==2.45.0",
-  "pydantic-deep==0.3.43",
   "python-dotenv>=1.1,<2",
 ]
 jev = [
@@ -51,7 +50,6 @@ agentic-saga = "agentic_saga.cli.main:entrypoint"
 [dependency-groups]
 dev = [
   "pydantic-ai-slim[openrouter]==2.45.0",
-  "pydantic-deep==0.3.43",
   "openrouter==1.2.1",
   "hatchling==1.27.0",
   "hypothesis>=6.130,<7",

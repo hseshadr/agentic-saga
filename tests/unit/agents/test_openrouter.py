@@ -9,7 +9,7 @@ from pydantic_ai.models.openrouter import OpenRouterModel
 
 from agentic_saga.agents import OpenRouterSettings, build_openrouter_driver
 from agentic_saga.agents import openrouter as adapter_module
-from tests.unit.agents.test_deepagents import _context
+from tests.unit.agents.test_pydanticai import _context
 
 _PRIMARY = "openai/gpt-oss-120b"
 _COMPARATOR = "openai/gpt-oss-20b"
@@ -100,7 +100,7 @@ def test_should_fail_closed_when_environment_key_is_empty(
         OpenRouterSettings.from_environment()
 
 
-def test_should_build_deep_agent_with_ordered_model_route() -> None:
+def test_should_build_native_tool_driver_with_ordered_model_route() -> None:
     # Given
     settings = OpenRouterSettings(api_key=SecretStr("test-key"))
 

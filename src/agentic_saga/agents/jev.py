@@ -25,7 +25,7 @@ from agentic_saga.agents.choice import (
     ChoiceAgentDriver,
     DecisionSelection,
 )
-from agentic_saga.agents.deepagents import AgentFailureCategory, AgentPlanningError
+from agentic_saga.agents.pydanticai import AgentFailureCategory, AgentPlanningError
 from agentic_saga.manifest import SagaContext
 
 type _ModelId = Annotated[

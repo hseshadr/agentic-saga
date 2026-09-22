@@ -13,7 +13,7 @@ from agentic_saga.agents.openrouter_decisions import (
 )
 from agentic_saga.contracts.actions import ToolCall
 from tests.unit.agents.test_choice import _candidate, _factory
-from tests.unit.agents.test_deepagents import _context, _descriptor, _observation
+from tests.unit.agents.test_pydanticai import _context, _descriptor, _observation
 
 pytestmark = [pytest.mark.live_model, pytest.mark.network]
 

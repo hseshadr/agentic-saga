@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import Awaitable, Callable
+from importlib import import_module
 from types import TracebackType
 from typing import cast
 
-import pydantic_deep as pydantic_deep_package  # type: ignore[import-untyped]
+import pydantic_ai as pydantic_ai_package
 import pytest
 from pydantic_ai import Agent as PydanticAgent
+from pydantic_ai import DeferredToolRequests
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models import ModelRequestParameters
@@ -16,9 +18,9 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
 
 from agentic_saga import SagaContext, SagaManifest
-from agentic_saga.agents import DeepAgentsDriver
-from agentic_saga.agents import deepagents as adapter_module
-from agentic_saga.agents.deepagents import (
+from agentic_saga.agents import PydanticAIDriver
+from agentic_saga.agents import pydanticai as adapter_module
+from agentic_saga.agents.pydanticai import (
     AgentDecision,
     AgentFailureCategory,
     AgentPlanningError,
@@ -221,7 +223,7 @@ async def test_should_return_strict_tool_call_without_executing_business_tool() 
         calls.append((system_context, turn_context))
         return _tool_call()
 
-    driver = DeepAgentsDriver(_context("inspect"), propose)
+    driver = PydanticAIDriver(_context("inspect"), propose)
 
     # When
     proposal = await driver.next_action(_observation(), (_descriptor("inspect"),))
@@ -243,16 +245,16 @@ async def test_should_bind_deterministic_protocol_envelope_to_model_intent() -> 
 
     context = _context("inspect", "reserve")
     observation = _observation()
-    first = await DeepAgentsDriver(context, inspect).next_action(
+    first = await PydanticAIDriver(context, inspect).next_action(
         observation, (_descriptor("inspect"),)
     )
-    repeated = await DeepAgentsDriver(context, inspect).next_action(
+    repeated = await PydanticAIDriver(context, inspect).next_action(
         observation, (_descriptor("inspect"),)
     )
-    changed = await DeepAgentsDriver(context, reserve).next_action(
+    changed = await PydanticAIDriver(context, reserve).next_action(
         observation, (_descriptor("reserve"),)
     )
-    later = await DeepAgentsDriver(context, reserve).next_action(
+    later = await PydanticAIDriver(context, reserve).next_action(
         observation.model_copy(update={"saga_seq": 4}), (_descriptor("reserve"),)
     )
 
@@ -274,7 +276,7 @@ async def test_should_reject_model_forged_protocol_envelope() -> None:
         return raw
 
     with pytest.raises(AgentPlanningError, match="invalid_response"):
-        await DeepAgentsDriver(_context("inspect"), propose).next_action(
+        await PydanticAIDriver(_context("inspect"), propose).next_action(
             _observation(), (_descriptor("inspect"),)
         )
 
@@ -308,7 +310,7 @@ async def test_should_render_manifest_observation_and_current_eligible_catalog()
         return _tool_call()
 
     context = _context("inspect", "reserve")
-    driver = DeepAgentsDriver(context, propose)
+    driver = PydanticAIDriver(context, propose)
 
     # When
     await driver.next_action(_observation(), (_descriptor("inspect"),))
@@ -331,7 +333,7 @@ async def test_system_context_should_explain_temporal_owned_recovery() -> None:
         calls.append(system_context)
         return _tool_call()
 
-    await DeepAgentsDriver(_context("inspect"), propose).next_action(
+    await PydanticAIDriver(_context("inspect"), propose).next_action(
         _observation(), (_descriptor("inspect"),)
     )
 
@@ -361,7 +363,7 @@ async def test_system_context_should_teach_rejection_refresh_and_budget_decision
         calls.append(system_context)
         return _tool_call()
 
-    await DeepAgentsDriver(_context("inspect"), propose).next_action(
+    await PydanticAIDriver(_context("inspect"), propose).next_action(
         _observation(), (_descriptor("inspect"),)
     )
 
@@ -385,7 +387,7 @@ async def test_should_reject_hallucinated_tool_before_kernel_effect_entry() -> N
         del system_context, turn_context
         return raw
 
-    driver = DeepAgentsDriver(_context("inspect"), propose)
+    driver = PydanticAIDriver(_context("inspect"), propose)
 
     # When / Then
     with pytest.raises(ValueError, match="invalid proposal"):
@@ -404,7 +406,7 @@ async def test_should_reject_descriptor_drift_before_calling_model() -> None:
         return _tool_call()
 
     changed = _descriptor("inspect").model_copy(update={"description": "Changed at runtime."})
-    driver = DeepAgentsDriver(_context("inspect"), propose)
+    driver = PydanticAIDriver(_context("inspect"), propose)
 
     # When / Then
     with pytest.raises(ValueError, match="descriptor catalog"):
@@ -419,7 +421,7 @@ async def test_should_reject_duplicate_descriptor_before_calling_model() -> None
         raise AssertionError("model must not be called")
 
     descriptor = _descriptor("inspect")
-    driver = DeepAgentsDriver(_context("inspect"), propose)
+    driver = PydanticAIDriver(_context("inspect"), propose)
     with pytest.raises(ValueError, match="descriptor catalog"):
         await driver.next_action(_observation(), (descriptor, descriptor))
 
@@ -436,7 +438,7 @@ async def test_should_reject_private_observation_before_calling_model() -> None:
         return _tool_call()
 
     private = _observation().model_copy(update={"projection": {"api_key": "private-value"}})
-    driver = DeepAgentsDriver(_context("inspect"), propose)
+    driver = PydanticAIDriver(_context("inspect"), propose)
 
     # When / Then
     with pytest.raises(ValueError, match="private material"):
@@ -457,7 +459,7 @@ async def test_should_reject_high_confidence_credential_in_observation() -> None
         context={"note": credential},
     )
     observation = _observation().model_copy(update={"goal": goal})
-    driver = DeepAgentsDriver(_context("inspect"), propose)
+    driver = PydanticAIDriver(_context("inspect"), propose)
     with pytest.raises(ValueError, match="private material") as captured:
         await driver.next_action(observation, (_descriptor("inspect"),))
     assert credential not in str(captured.value)
@@ -470,7 +472,7 @@ async def test_should_reject_forged_agent_context_before_calling_model() -> None
         raise AssertionError("model must not be called")
 
     forged = _context("inspect").model_copy(update={"agent_context": "{}"})
-    driver = DeepAgentsDriver(forged, propose)
+    driver = PydanticAIDriver(forged, propose)
     with pytest.raises(ValueError, match="authoritative"):
         await driver.next_action(_observation(), (_descriptor("inspect"),))
 
@@ -497,7 +499,7 @@ async def test_should_reject_private_descriptor_in_direct_context() -> None:
         update={"agent_context": canonical_json(payload).decode(), "tool_descriptors": (private,)}
     )
     with pytest.raises(ValueError, match="private material"):
-        await DeepAgentsDriver(unsafe, propose).next_action(_observation(), (private,))
+        await PydanticAIDriver(unsafe, propose).next_action(_observation(), (private,))
     assert called is False
 
 
@@ -520,7 +522,7 @@ async def test_should_reject_high_confidence_credential_in_direct_descriptor() -
         update={"agent_context": canonical_json(payload).decode(), "tool_descriptors": (private,)}
     )
     with pytest.raises(ValueError, match="private material") as captured:
-        await DeepAgentsDriver(unsafe, propose).next_action(_observation(), (private,))
+        await PydanticAIDriver(unsafe, propose).next_action(_observation(), (private,))
     assert credential not in str(captured.value)
 
 
@@ -540,7 +542,7 @@ async def test_should_reject_private_manifest_in_direct_context() -> None:
         update={"agent_context": canonical_json(payload).decode(), "manifest": manifest}
     )
     with pytest.raises(ValueError, match="invalid or private manifest") as captured:
-        await DeepAgentsDriver(unsafe, propose).next_action(
+        await PydanticAIDriver(unsafe, propose).next_action(
             _observation(), (_descriptor("inspect"),)
         )
     assert "private-provider-value" not in str(captured.value)
@@ -555,7 +557,7 @@ async def test_should_replace_raw_provider_error_with_safe_failure() -> None:
         raise RuntimeError(private_error)
 
     with pytest.raises(AgentPlanningError, match="internal") as captured:
-        await DeepAgentsDriver(_context("inspect"), propose).next_action(
+        await PydanticAIDriver(_context("inspect"), propose).next_action(
             _observation(), (_descriptor("inspect"),)
         )
     _assert_safe_error(captured.value, AgentFailureCategory.INTERNAL, private_error)
@@ -570,7 +572,7 @@ async def test_should_replace_malformed_secret_response_with_safe_failure() -> N
         return raw
 
     with pytest.raises(AgentPlanningError, match="invalid_response") as captured:
-        await DeepAgentsDriver(_context("inspect"), propose).next_action(
+        await PydanticAIDriver(_context("inspect"), propose).next_action(
             _observation(), (_descriptor("inspect"),)
         )
     _assert_safe_error(captured.value, AgentFailureCategory.INVALID_RESPONSE, "private-provider")
@@ -661,7 +663,7 @@ async def test_should_preserve_only_safe_provider_failure_category(
         del system_context, turn_context
         raise error
 
-    driver = DeepAgentsDriver(_context("inspect"), propose)
+    driver = PydanticAIDriver(_context("inspect"), propose)
     with pytest.raises(AgentPlanningError, match=category.value) as captured:
         await driver.next_action(_observation(), (_descriptor("inspect"),))
     _assert_safe_error(captured.value, category, private)
@@ -676,7 +678,7 @@ async def test_should_categorize_provider_error_when_status_properties_raise() -
 
     # When / Then
     with pytest.raises(AgentPlanningError) as captured:
-        await DeepAgentsDriver(_context("inspect"), propose).next_action(
+        await PydanticAIDriver(_context("inspect"), propose).next_action(
             _observation(), (_descriptor("inspect"),)
         )
     _assert_safe_error(captured.value, AgentFailureCategory.INTERNAL, "private-")
@@ -701,7 +703,7 @@ async def test_should_sanitize_deep_provider_response_before_pydantic_recurses()
 
     # When / Then
     with pytest.raises(AgentPlanningError) as captured:
-        await DeepAgentsDriver(_context("inspect"), propose).next_action(
+        await PydanticAIDriver(_context("inspect"), propose).next_action(
             _observation(), (_descriptor("inspect"),)
         )
     _assert_safe_error(captured.value, AgentFailureCategory.INVALID_RESPONSE, "next")
@@ -720,7 +722,7 @@ async def test_should_sanitize_non_json_provider_response_before_pydantic() -> N
 
     # When / Then
     with pytest.raises(AgentPlanningError) as captured:
-        await DeepAgentsDriver(_context("inspect"), propose).next_action(
+        await PydanticAIDriver(_context("inspect"), propose).next_action(
             _observation(), (_descriptor("inspect"),)
         )
     _assert_safe_error(
@@ -740,7 +742,7 @@ async def test_should_not_call_overridden_dump_on_agent_decision_subclass() -> N
 
     # When / Then
     with pytest.raises(AgentPlanningError) as captured:
-        await DeepAgentsDriver(_context("inspect"), propose).next_action(
+        await PydanticAIDriver(_context("inspect"), propose).next_action(
             _observation(), (_descriptor("inspect"),)
         )
     _assert_safe_error(captured.value, AgentFailureCategory.INVALID_RESPONSE, "private-model-dump")
@@ -757,7 +759,7 @@ async def test_should_reject_private_material_in_valid_provider_proposal() -> No
         del system_context, turn_context
         return raw
 
-    driver = DeepAgentsDriver(_context("inspect"), propose)
+    driver = PydanticAIDriver(_context("inspect"), propose)
     with pytest.raises(ValueError, match="private material") as captured:
         await driver.next_action(_observation(), (_descriptor("inspect"),))
     assert credential not in str(captured.value)
@@ -769,7 +771,7 @@ async def test_should_accept_verified_success_proposal() -> None:
         del system_context, turn_context
         return _finish()
 
-    proposal = await DeepAgentsDriver(_context("inspect"), propose).next_action(
+    proposal = await PydanticAIDriver(_context("inspect"), propose).next_action(
         _observation(),
         (_descriptor("inspect"),),
     )
@@ -786,7 +788,7 @@ async def test_should_reject_model_supplied_stale_sequence() -> None:
         del system_context, turn_context
         return raw
 
-    driver = DeepAgentsDriver(_context("inspect"), propose)
+    driver = PydanticAIDriver(_context("inspect"), propose)
     with pytest.raises(AgentPlanningError, match="invalid_response"):
         await driver.next_action(_observation(), (_descriptor("inspect"),))
 
@@ -801,7 +803,7 @@ async def test_should_render_dynamic_eligible_catalog_each_turn() -> None:
         catalogs.append([item["name"] for item in rendered["available_tools"]])
         return _tool_call(catalogs[-1][0])
 
-    driver = DeepAgentsDriver(_context("inspect", "reserve"), propose)
+    driver = PydanticAIDriver(_context("inspect", "reserve"), propose)
     await driver.next_action(_observation(), (_descriptor("inspect"),))
     await driver.next_action(_observation(), (_descriptor("reserve"),))
     assert catalogs == [["inspect"], ["reserve"]]
@@ -819,7 +821,7 @@ async def test_should_accept_public_runtime_policy_constraints() -> None:
     current = _descriptor("inspect").model_copy(
         update={"policy_constraints": {"sequence_bound": True}}
     )
-    await DeepAgentsDriver(_context("inspect"), propose).next_action(_observation(), (current,))
+    await PydanticAIDriver(_context("inspect"), propose).next_action(_observation(), (current,))
     rendered = json.loads(calls[0])
     assert rendered["available_tools"][0]["policy_constraints"] == {"sequence_bound": True}
 
@@ -833,7 +835,7 @@ async def test_should_reject_private_runtime_policy_constraints() -> None:
     current = _descriptor("inspect").model_copy(
         update={"policy_constraints": {"api_key": "private-provider-value"}}
     )
-    driver = DeepAgentsDriver(_context("inspect"), propose)
+    driver = PydanticAIDriver(_context("inspect"), propose)
     with pytest.raises(ValueError, match="private material"):
         await driver.next_action(_observation(), (current,))
 
@@ -846,7 +848,7 @@ async def test_should_render_identical_inputs_deterministically() -> None:
         calls.append((system_context, turn_context))
         return _tool_call()
 
-    driver = DeepAgentsDriver(_context("inspect"), propose)
+    driver = PydanticAIDriver(_context("inspect"), propose)
     await driver.next_action(_observation(), (_descriptor("inspect"),))
     await driver.next_action(_observation(), (_descriptor("inspect"),))
     assert calls[0] == calls[1]
@@ -864,7 +866,7 @@ async def test_should_cooperate_with_kernel_timeout_cancellation() -> None:
             cancelled.set()
         raise AssertionError("unreachable")
 
-    driver = DeepAgentsDriver(_context("inspect"), propose)
+    driver = PydanticAIDriver(_context("inspect"), propose)
     with pytest.raises(TimeoutError):
         async with asyncio.timeout(0.01):
             await driver.next_action(_observation(), (_descriptor("inspect"),))
@@ -872,9 +874,9 @@ async def test_should_cooperate_with_kernel_timeout_cancellation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pydantic_deep_should_call_one_native_eligible_proposal_tool() -> None:
+async def test_pydantic_ai_should_call_one_native_eligible_proposal_tool() -> None:
     model = TestModel(call_tools=["inspect"])
-    driver = DeepAgentsDriver._from_model(
+    driver = PydanticAIDriver._from_model(
         _context("inspect"),
         model,
         provider_id="test",
@@ -893,9 +895,9 @@ async def test_pydantic_deep_should_call_one_native_eligible_proposal_tool() -> 
 
 
 @pytest.mark.asyncio
-async def test_pydantic_deep_should_require_a_native_tool_call_instead_of_text() -> None:
+async def test_pydantic_ai_should_require_a_native_tool_call_instead_of_text() -> None:
     model = _TextUnlessToolRequiredModel(call_tools=[], custom_output_text="I would inspect first.")
-    driver = DeepAgentsDriver._from_model(
+    driver = PydanticAIDriver._from_model(
         _context("inspect"),
         model,
         provider_id="test",
@@ -912,7 +914,7 @@ async def test_pydantic_deep_should_require_a_native_tool_call_instead_of_text()
 @pytest.mark.asyncio
 async def test_should_correct_free_text_once_into_a_native_deferred_tool() -> None:
     model = _TextThenNativeToolModel(call_tools=[])
-    driver = DeepAgentsDriver._from_model(
+    driver = PydanticAIDriver._from_model(
         _context("inspect"),
         model,
         provider_id="test",
@@ -928,7 +930,7 @@ async def test_should_correct_free_text_once_into_a_native_deferred_tool() -> No
 @pytest.mark.asyncio
 async def test_should_never_exceed_two_model_requests_across_retry_categories() -> None:
     model = _InvalidToolThenTextThenToolModel()
-    driver = DeepAgentsDriver._from_model(
+    driver = PydanticAIDriver._from_model(
         _context("inspect"), model, provider_id="test", model_route=("test/native-tools",)
     )
 
@@ -939,13 +941,13 @@ async def test_should_never_exceed_two_model_requests_across_retry_categories() 
 
 
 def test_should_keep_arbitrary_prebuilt_model_construction_internal() -> None:
-    assert not hasattr(DeepAgentsDriver, "from_model")
+    assert not hasattr(PydanticAIDriver, "from_model")
 
 
 @pytest.mark.asyncio
 async def test_should_expose_only_eligible_business_and_verified_finish_tools() -> None:
     model = TestModel(call_tools=["reserve"])
-    driver = DeepAgentsDriver._from_model(
+    driver = PydanticAIDriver._from_model(
         _context("inspect", "reserve"),
         model,
         provider_id="test",
@@ -968,7 +970,7 @@ async def test_should_expose_only_eligible_business_and_verified_finish_tools() 
 @pytest.mark.asyncio
 async def test_should_scope_model_resources_to_each_durable_agent_turn() -> None:
     model = _ContextTrackingModel(call_tools=["inspect"])
-    driver = DeepAgentsDriver._from_model(
+    driver = PydanticAIDriver._from_model(
         _context("inspect"),
         model,
         provider_id="test",
@@ -984,7 +986,7 @@ async def test_should_scope_model_resources_to_each_durable_agent_turn() -> None
 @pytest.mark.asyncio
 async def test_should_bind_ready_finish_to_current_sequence() -> None:
     model = TestModel(call_tools=["finish_saga"])
-    driver = DeepAgentsDriver._from_model(
+    driver = PydanticAIDriver._from_model(
         _context("inspect"),
         model,
         provider_id="test",
@@ -1002,7 +1004,7 @@ async def test_should_bind_ready_finish_to_current_sequence() -> None:
 @pytest.mark.asyncio
 async def test_should_build_only_forward_and_ready_finish_tools() -> None:
     model = TestModel(call_tools=["inspect"])
-    driver = DeepAgentsDriver._from_model(
+    driver = PydanticAIDriver._from_model(
         _context("inspect"),
         model,
         provider_id="test",
@@ -1035,7 +1037,7 @@ def test_should_report_the_exact_state_dependent_native_tool_allowlist() -> None
 async def test_should_restrict_finish_schema_to_verified_success() -> None:
     observation = _observation()
     model = TestModel(call_tools=["finish_saga"])
-    driver = DeepAgentsDriver._from_model(
+    driver = PydanticAIDriver._from_model(
         _context("inspect"),
         model,
         provider_id="test",
@@ -1054,7 +1056,7 @@ async def test_should_restrict_finish_schema_to_verified_success() -> None:
 @pytest.mark.asyncio
 async def test_should_omit_premature_finish_tool() -> None:
     model = TestModel(call_tools=["inspect"])
-    driver = DeepAgentsDriver._from_model(
+    driver = PydanticAIDriver._from_model(
         _context("inspect"),
         model,
         provider_id="test",
@@ -1074,7 +1076,7 @@ async def test_should_omit_premature_finish_tool() -> None:
 @pytest.mark.asyncio
 async def test_should_reject_multiple_native_proposal_calls_without_executing_effects() -> None:
     model = TestModel(call_tools=["inspect", "finish_saga"])
-    driver = DeepAgentsDriver._from_model(
+    driver = PydanticAIDriver._from_model(
         _context("inspect"),
         model,
         provider_id="test",
@@ -1119,13 +1121,13 @@ async def test_should_reject_temporal_owned_controls_from_injected_model(
         del system_context, turn_context
         return raw
 
-    driver = DeepAgentsDriver(_context("inspect"), propose)
+    driver = PydanticAIDriver(_context("inspect"), propose)
 
     with pytest.raises(AgentPlanningError, match="invalid_response"):
         await driver.next_action(_observation(), (_descriptor("inspect"),))
 
 
-def test_should_strip_every_unneeded_pydantic_deep_capability(
+def test_should_construct_a_bare_pydantic_ai_agent_with_only_proposal_controls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, object] = {}
@@ -1143,44 +1145,26 @@ def test_should_strip_every_unneeded_pydantic_deep_capability(
         captured.update(kwargs)
         return created
 
-    monkeypatch.setattr(pydantic_deep_package, "create_deep_agent", create_agent)
-    DeepAgentsDriver._from_model(
+    monkeypatch.setattr(pydantic_ai_package, "Agent", create_agent)
+    model = TestModel(call_tools=["inspect"])
+    PydanticAIDriver._from_model(
         _context("inspect"),
-        TestModel(call_tools=["inspect"]),
+        model,
         provider_id="test",
         model_route=("test/native-tools",),
     )
 
-    disabled = (
-        "include_todo",
-        "include_filesystem",
-        "include_subagents",
-        "include_skills",
-        "include_builtin_subagents",
-        "include_plan",
-        "include_memory",
-        "include_teams",
-        "include_monitoring",
-        "include_improve",
-        "include_liteparse",
-        "include_checkpoints",
-        "include_history_archive",
-        "context_manager",
-        "context_discovery",
-        "patch_tool_calls",
-        "stuck_loop_detection",
-        "web_search",
-        "web_fetch",
-        "thinking",
-        "cost_tracking",
-        "forking",
-        "tool_search",
-    )
-    assert all(captured[name] is False for name in disabled)
-    assert captured["eviction_token_limit"] is None
-    assert captured["history_processors"] == ()
-    assert captured["tools"] == ()
-    assert captured["toolsets"] == ()
+    assert set(captured) == {
+        "model",
+        "instructions",
+        "output_type",
+        "capabilities",
+        "model_settings",
+        "retries",
+        "output_validator",
+    }
+    assert captured["model"] is model
+    assert captured["output_type"] == [str, DeferredToolRequests]
     capabilities = cast(tuple[object, ...], captured["capabilities"])
     assert [type(item).__name__ for item in capabilities] == ["RequireToolCall"]
     model_settings = cast(dict[str, object], captured["model_settings"])
@@ -1191,14 +1175,33 @@ def test_should_strip_every_unneeded_pydantic_deep_capability(
     assert model_settings["openrouter_cache_messages"] is False
     assert captured["retries"] == 1
     assert callable(captured["output_validator"])
-    assert "instrument" not in captured
     assert created.instrument is False
+
+
+def test_should_not_import_any_deep_agent_framework(monkeypatch: pytest.MonkeyPatch) -> None:
+    imported: list[str] = []
+    real_import = import_module
+
+    def record(name: str) -> object:
+        imported.append(name)
+        return real_import(name)
+
+    monkeypatch.setattr(adapter_module, "import_module", record)
+    adapter_module._load_pydantic_dependencies()
+
+    assert imported == [
+        "pydantic_ai",
+        "pydantic_ai.toolsets",
+        "pydantic_ai.tools",
+        "agentic_saga.agents._required_tool",
+    ]
+    assert not any(name.startswith("pydantic_deep") for name in imported)
 
 
 def test_should_disable_ambient_pydantic_ai_instrumentation() -> None:
     PydanticAgent.instrument_all(True)
     try:
-        driver = DeepAgentsDriver._from_model(
+        driver = PydanticAIDriver._from_model(
             _context("inspect"),
             TestModel(call_tools=["inspect"]),
             provider_id="test",
@@ -1211,7 +1214,7 @@ def test_should_disable_ambient_pydantic_ai_instrumentation() -> None:
     assert native.agent.instrument is False
 
 
-def test_should_fail_safely_when_deep_agents_extra_is_absent(
+def test_should_fail_safely_when_agent_extra_is_absent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def missing(name: str) -> object:

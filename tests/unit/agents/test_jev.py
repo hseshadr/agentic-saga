@@ -12,10 +12,10 @@ from typesafe_sdk import AsyncTypeSafeClient, Choice, RetryPolicy
 
 from agentic_saga.agents import jev as adapter_module
 from agentic_saga.agents.choice import DecisionSelection
-from agentic_saga.agents.deepagents import AgentFailureCategory, AgentPlanningError
 from agentic_saga.agents.jev import JevSettings, build_jev_driver
+from agentic_saga.agents.pydanticai import AgentFailureCategory, AgentPlanningError
 from tests.unit.agents.test_choice import _candidate, _factory
-from tests.unit.agents.test_deepagents import _context, _descriptor, _observation
+from tests.unit.agents.test_pydanticai import _context, _descriptor, _observation
 
 _MODEL = "jev-1.13.0"
 

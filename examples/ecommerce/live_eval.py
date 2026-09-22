@@ -11,7 +11,7 @@ from typing import Annotated, Literal
 from pydantic import StringConstraints
 
 from agentic_saga.agents import OpenRouterSettings, build_openrouter_driver
-from agentic_saga.agents.deepagents import AgentFailureCategory, AgentPlanningError
+from agentic_saga.agents.pydanticai import AgentFailureCategory, AgentPlanningError
 from agentic_saga.contracts.common import canonical_json
 from agentic_saga.contracts.runtime import AgentDriver, ExecutionBudget, ToolDescriptor
 from agentic_saga.manifest import SagaContext, SagaManifest

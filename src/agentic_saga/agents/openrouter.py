@@ -14,7 +14,7 @@ from pydantic import (
     field_validator,
 )
 
-from agentic_saga.agents.deepagents import DeepAgentsDriver, native_model_request_limit
+from agentic_saga.agents.pydanticai import PydanticAIDriver, native_model_request_limit
 from agentic_saga.manifest import SagaContext
 
 type _ModelId = Annotated[
@@ -87,12 +87,12 @@ class OpenRouterSettings(BaseModel):
 
 def build_openrouter_driver(
     context: SagaContext, settings: OpenRouterSettings | None = None
-) -> DeepAgentsDriver:
-    """Build a proposal-only Pydantic Deep driver with bounded OpenRouter limits."""
+) -> PydanticAIDriver:
+    """Build a proposal-only Pydantic AI driver with bounded OpenRouter limits."""
 
     selected = settings or OpenRouterSettings.from_environment()
     model = _build_model(context, selected)
-    return DeepAgentsDriver._from_model(
+    return PydanticAIDriver._from_model(
         context, model, provider_id="openrouter", model_route=selected.model_route
     )
 

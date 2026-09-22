@@ -7,7 +7,7 @@ Let an agent choose the next useful step. Let Temporal guarantee that the transa
 Agentic Saga is a small Python library for long-running, multi-system transactions. It combines:
 
 - **Temporal** for durable execution, retries, timers, recovery, and history;
-- **Pydantic Deep** or **Jev** for bounded, tool-based decisions; and
+- **Pydantic AI** or **Jev** for bounded, tool-based decisions; and
 - your typed business tools for effects, checks, reconciliation, and compensation.
 
 The agent is the smart orchestrator. It is not the transaction authority. Deterministic workflow
@@ -145,7 +145,7 @@ Agentic Saga deliberately does not reimplement a durable workflow engine.
 | --- | --- |
 | Temporal | Durable history, crash recovery, Activity retries, timers, Queries, and Updates |
 | Agentic Saga Workflow | Eligibility, prerequisites, global budgets, proof gates, reverse compensation, escalation |
-| Pydantic Deep | OpenRouter-backed native tool choice from bounded public context |
+| Pydantic AI | OpenRouter-backed native tool choice from bounded public context |
 | Jev adapter | Optional probability-bearing choice among application-built candidates |
 | Your integrations | Typed provider calls, idempotency, authorization, reconciliation, receipts |
 | Flight Recorder | Redacted, read-only explanation of the recorded execution |
@@ -209,11 +209,12 @@ Read [the context-manifest guide](docs/context-manifest.md).
 Start here. The included deterministic driver exercises the real Temporal Workflow and is the
 fastest way to prove provider semantics, compensation, and recovery without an LLM.
 
-### Pydantic Deep through OpenRouter
+### Pydantic AI through OpenRouter
 
-Pydantic Deep supplies the model/tool loop. Agentic Saga disables its unrelated filesystem,
-subagent, shell, memory, and web features, advertises only current native proposal tools, sets
-temperature to zero, and allows one bounded decision per Workflow turn.
+Pydantic AI supplies the model/tool loop as a bare `Agent` with no built-in tools. Agentic Saga
+advertises only current native proposal tools as deferred schemas, sets temperature to zero, and
+allows one bounded decision per Workflow turn. There is no deep-agent framework in the path: a
+Saga decision is a single tool choice, not an autonomous multi-step run.
 
 ```bash
 uv sync --extra agent --group dev
@@ -290,7 +291,7 @@ Temporal, an external provider, reconciliation, compensation, and verified human
 | --- | --- |
 | `src/agentic_saga/temporal/` | Workflow, Activities, typed client/Worker helpers, journal, trace projection |
 | `src/agentic_saga/contracts/` | Strict serializable values and public payload limits |
-| `src/agentic_saga/agents/` | Pydantic Deep, Jev, and OpenRouter decision adapters |
+| `src/agentic_saga/agents/` | Pydantic AI, Jev, and OpenRouter decision adapters |
 | `src/agentic_saga/manifest.py` | Bounded domain-neutral context manifests |
 | `examples/ecommerce/` | Realistic provider, Worker, scenarios, BDD features, and evaluation |
 | `web/flight-recorder/` | Accessible animated trace explorer |

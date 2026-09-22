@@ -20,7 +20,7 @@ All notable changes to Agentic Saga are documented here. The format follows
 - Stable operation identities for provider idempotency and lost-response reconciliation.
 - Four Temporal `pytest-bdd` scenarios covering verified success, automatic compensation,
   one-effect lost-response recovery, and a human-required compensation outcome.
-- Pydantic Deep with a pinned OpenRouter tool-calling route for optional agentic decisions.
+- Pydantic AI with a pinned OpenRouter tool-calling route for optional agentic decisions.
 - Optional TypeSafe AI Jev and OpenRouter Decisions adapters for bounded selection among
   application-built candidates.
 - Public `saga.yaml` context manifests with bounded parsing, registered-name validation, catalog
@@ -31,6 +31,9 @@ All notable changes to Agentic Saga are documented here. The format follows
 
 ### Changed
 
+- Replaced the Pydantic Deep wrapper with a bare Pydantic AI `Agent`: the adapter had disabled
+  every deep-agent capability, so the dependency is dropped and `DeepAgentsDriver` is now
+  `PydanticAIDriver` in `agentic_saga.agents.pydanticai`.
 - Replaced custom prerequisite traversal with Python's `graphlib` cycle validation and removed
   unused agent helpers and obsolete ecommerce test models.
 - Limited the model surface to currently eligible forward business tools plus
