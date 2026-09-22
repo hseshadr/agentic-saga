@@ -8,7 +8,7 @@ import pytest
 from pydantic import SecretStr
 
 from agentic_saga.agents import OpenRouterSettings
-from agentic_saga.agents.deepagents import AgentFailureCategory, AgentPlanningError
+from agentic_saga.agents.pydanticai import AgentFailureCategory, AgentPlanningError
 from agentic_saga.contracts.actions import AgentProposal, Finish, ToolCall
 from agentic_saga.contracts.common import JsonObject
 from agentic_saga.contracts.runtime import AgentDriver, SagaObservation, ToolDescriptor

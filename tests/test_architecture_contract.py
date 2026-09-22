@@ -92,7 +92,7 @@ def test_delivered_architecture_contains_the_exact_semantic_nodes() -> None:
         "Temporal Service",
         "Deterministic Workflow",
         "Agent Decision Activity",
-        "Pydantic Deep · Jev",
+        "Pydantic AI · Jev",
         "Human Verification Activity",
         "Flight Recorder",
     ):

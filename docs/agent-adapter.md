@@ -13,7 +13,7 @@ after the workflow has fresh proof for `succeeded_verified`.
 bounded public observation + eligible business schemas
                          |
                          v
-             Pydantic Deep / OpenRouter
+              Pydantic AI / OpenRouter
                          |
                          v
              typed, sequence-bound proposal
@@ -39,10 +39,10 @@ uv run python -m examples.ecommerce.eval
 ```
 
 The last command strictly validates all 24 transaction fixtures and makes no model or network call.
-The Pydantic Deep/OpenRouter dependencies are optional; importing core Agentic Saga does not load
+The Pydantic AI/OpenRouter dependencies are optional; importing core Agentic Saga does not load
 them.
 
-## Pydantic Deep with OpenRouter
+## Pydantic AI with OpenRouter
 
 ```python
 from agentic_saga.agents import OpenRouterSettings, build_openrouter_driver
@@ -67,13 +67,13 @@ triggers workflow-owned compensation. An unknown effect is reconciled before any
 Unresolved reconciliation or compensation moves the workflow to `HUMAN_REQUIRED`; a validated
 Workflow Update resumes it only after a verification Activity accepts public authorization.
 
-Pydantic Deep receives deferred schemas, never registered Python business callables. A native
+Pydantic AI receives deferred schemas, never registered Python business callables. A native
 `charge_payment(...)` response therefore cannot charge anything. The adapter accepts exactly one
 deferred call, supplies host-owned proposal identity and current sequence, and returns a typed
 proposal to Temporal for deterministic revalidation.
 
-The adapter disables Pydantic Deep's filesystem, execution, web, subagent, planning, memory, and
-other general-purpose capabilities. Temperature is zero. One validation correction is allowed,
+The adapter constructs a bare Pydantic AI `Agent` with no built-in tools, filesystem, subagents,
+planning, or memory; the only capability is a required tool call. Temperature is zero. One validation correction is allowed,
 with at most two provider requests per durable agent turn. Provider SDK retries are zero because
 Temporal owns retry policy.
 
@@ -135,7 +135,7 @@ uv run pytest tests/unit/agents/test_choice.py tests/unit/agents/test_jev.py \
 
 ## Opt-in live model evaluation
 
-The live evaluator calls the real Pydantic Deep/OpenRouter native-tool path with the same bounded
+The live evaluator calls the real Pydantic AI/OpenRouter native-tool path with the same bounded
 observation shape used by the Temporal decision Activity. It does not run business Activities and
 does not claim transaction correctness.
 

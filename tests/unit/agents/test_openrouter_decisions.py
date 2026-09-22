@@ -12,13 +12,13 @@ from openrouter import OpenRouter
 from pydantic import SecretStr, ValidationError
 
 from agentic_saga.agents import openrouter_decisions as adapter_module
-from agentic_saga.agents.deepagents import AgentFailureCategory, AgentPlanningError
 from agentic_saga.agents.openrouter_decisions import (
     OpenRouterDecisionsSettings,
     build_openrouter_decisions_driver,
 )
+from agentic_saga.agents.pydanticai import AgentFailureCategory, AgentPlanningError
 from tests.unit.agents.test_choice import _candidate, _factory
-from tests.unit.agents.test_deepagents import _context, _descriptor, _observation
+from tests.unit.agents.test_pydanticai import _context, _descriptor, _observation
 
 _MODEL = "typesafe/jev-1.13"
 _RESPONSE_MODEL = "typesafe/jev-1.13-20260917"

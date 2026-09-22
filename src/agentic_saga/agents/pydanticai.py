@@ -33,7 +33,7 @@ type _TerminalStatus = Literal["succeeded_verified"]
 _TOO_MANY_REQUESTS = 429
 _CLIENT_ERROR_RANGE = range(400, 500)
 _SERVER_ERROR_RANGE = range(500, 600)
-_PROPOSAL_ID_DOMAIN = "agentic-saga:deep-agent-proposal:v1"
+_PROPOSAL_ID_DOMAIN = "agentic-saga:native-tool-proposal:v1"
 _TOOLSET_ID = "agentic-saga-eligible-proposals"
 _FINISH_TOOL = "finish_saga"
 _CONTROL_TOOLS = frozenset({_FINISH_TOOL})
@@ -88,42 +88,7 @@ _AUTHORITY = "\n".join(
         ),
     )
 )
-_BUILTIN_AGENT_OPTIONS: Mapping[str, object] = MappingProxyType(
-    {
-        "tools": (),
-        "toolsets": (),
-        "capabilities": (),
-        "include_todo": False,
-        "include_filesystem": False,
-        "include_execute": False,
-        "include_subagents": False,
-        "include_skills": False,
-        "include_builtin_subagents": False,
-        "include_plan": False,
-        "include_memory": False,
-        "include_teams": False,
-        "include_monitoring": False,
-        "include_improve": False,
-        "include_liteparse": False,
-        "include_checkpoints": False,
-        "include_history_archive": False,
-        "context_manager": False,
-        "context_discovery": False,
-        "context_files": None,
-        "history_processors": (),
-        "eviction_token_limit": None,
-        "patch_tool_calls": False,
-        "stuck_loop_detection": False,
-        "periodic_reminder": False,
-        "web_search": False,
-        "web_fetch": False,
-        "thinking": False,
-        "cost_tracking": False,
-        "forking": False,
-        "tool_search": False,
-    }
-)
-_AGENT_RUN_OPTIONS: Mapping[str, object] = MappingProxyType(
+_AGENT_OPTIONS: Mapping[str, object] = MappingProxyType(
     {
         "model_settings": {
             "temperature": 0,
@@ -217,7 +182,6 @@ class _PydanticAgent(Protocol):
         self,
         prompt: str,
         *,
-        deps: object,
         toolsets: Sequence[object],
         usage_limits: object,
     ) -> _RunResult: ...
@@ -244,7 +208,6 @@ class _UsageLimitsFactory(Protocol):
 @dataclass(frozen=True)
 class _PydanticDependencies:
     create_agent: _CreateAgent
-    deps_factory: Callable[[], object]
     external_toolset: _ExternalToolsetFactory
     tool_definition: _ToolDefinitionFactory
     deferred_requests_type: type[object]
@@ -268,7 +231,6 @@ class _NativeProposalCall:
         async with self.agent:
             result = await self.agent.run(
                 _turn_context(observation, available_tools),
-                deps=self.dependencies.deps_factory(),
                 toolsets=(toolset,),
                 usage_limits=_usage_limits(self.dependencies),
             )
@@ -276,8 +238,8 @@ class _NativeProposalCall:
 
 
 @dataclass(frozen=True)
-class DeepAgentsDriver(AgentDriver):
-    """Translate one native Pydantic Deep tool call into one workflow proposal."""
+class PydanticAIDriver(AgentDriver):
+    """Translate one native Pydantic AI tool call into one workflow proposal."""
 
     context: SagaContext
     proposal_call: ProposalCall | _NativeProposalCall
@@ -292,7 +254,7 @@ class DeepAgentsDriver(AgentDriver):
         *,
         provider_id: str,
         model_route: tuple[str, ...],
-    ) -> DeepAgentsDriver:
+    ) -> PydanticAIDriver:
         call = _build_pydantic_call(context, model)
         return cls(context, call, provider_id, model_route)
 
@@ -449,7 +411,7 @@ def _create_agent(
     model: object,
     system: str,
 ) -> _PydanticAgent:
-    values = {**_BUILTIN_AGENT_OPTIONS, **_AGENT_RUN_OPTIONS}
+    values = dict(_AGENT_OPTIONS)
     values["model"] = model
     values["instructions"] = system
     values["output_type"] = [str, dependencies.deferred_requests_type]
@@ -560,10 +522,9 @@ def _finish_schema() -> dict[str, object]:
 
 
 def _load_pydantic_dependencies() -> _PydanticDependencies:
-    deep, ai, toolsets, tools = _import_pydantic_modules()
+    ai, toolsets, tools = _import_pydantic_modules()
     return _PydanticDependencies(
-        create_agent=cast(_CreateAgent, deep.create_deep_agent),
-        deps_factory=cast(Callable[[], object], deep.DeepAgentDeps),
+        create_agent=cast(_CreateAgent, ai.Agent),
         external_toolset=cast(_ExternalToolsetFactory, toolsets.ExternalToolset),
         tool_definition=cast(_ToolDefinitionFactory, tools.ToolDefinition),
         deferred_requests_type=cast(type[object], ai.DeferredToolRequests),
@@ -573,15 +534,14 @@ def _load_pydantic_dependencies() -> _PydanticDependencies:
     )
 
 
-def _import_pydantic_modules() -> tuple[ModuleType, ModuleType, ModuleType, ModuleType]:
+def _import_pydantic_modules() -> tuple[ModuleType, ModuleType, ModuleType]:
     try:
-        deep = import_module("pydantic_deep")
         ai = import_module("pydantic_ai")
         toolsets = import_module("pydantic_ai.toolsets")
         tools = import_module("pydantic_ai.tools")
     except ModuleNotFoundError:
         raise RuntimeError("install agentic-saga[agent] to use the agent adapter") from None
-    return deep, ai, toolsets, tools
+    return ai, toolsets, tools
 
 
 def _required_tool_capability() -> object:
@@ -738,4 +698,4 @@ def _same_tool_contract(expected: ToolDescriptor, current: ToolDescriptor) -> bo
     )
 
 
-__all__ = ["DeepAgentsDriver", "native_proposal_tool_names"]
+__all__ = ["PydanticAIDriver", "native_proposal_tool_names"]

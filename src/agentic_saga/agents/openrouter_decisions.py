@@ -13,7 +13,7 @@ from typing import Literal, Protocol, cast
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, ValidationError
 
 from agentic_saga.agents.choice import CandidateFactory, ChoiceAgentDriver, DecisionSelection
-from agentic_saga.agents.deepagents import AgentFailureCategory, AgentPlanningError
+from agentic_saga.agents.pydanticai import AgentFailureCategory, AgentPlanningError
 from agentic_saga.manifest import SagaContext
 
 _PINNED_MODEL: Literal["typesafe/jev-1.13"] = "typesafe/jev-1.13"

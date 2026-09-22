@@ -5,10 +5,8 @@ They are distributed under the MIT License. Development-only dependencies are no
 Flight Recorder and are not listed here.
 
 The optional Python agent integration installs, but does not bundle, exactly pinned
-`pydantic-deep==0.3.43` and `pydantic-ai-slim[openrouter]==2.45.0`. Both are MIT-licensed upstream
-projects. Agentic Saga disables Pydantic Deep's general-purpose filesystem, execution, web,
-planning, memory, skills, subagent, team, checkpoint, forking, context-discovery, and cost-tracking
-capabilities; it uses the typed model/tool protocol for deferred proposals only.
+`pydantic-ai-slim[openrouter]==2.45.0`, an MIT-licensed upstream project. Agentic Saga uses its
+typed model/tool protocol for deferred proposals only; no deep-agent framework is installed.
 
 The optional TypeSafe AI Jev integration installs, but does not bundle,
 `typesafe-sdk==0.7.0`, an MIT-licensed upstream project. Agentic Saga uses its asynchronous System

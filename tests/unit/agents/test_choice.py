@@ -9,10 +9,10 @@ from pydantic import ValidationError
 import agentic_saga.agents as agents_api
 import agentic_saga.agents.proposals as proposal_contracts
 from agentic_saga.agents.choice import ChoiceAgentDriver, DecisionSelection, ProposalCandidate
-from agentic_saga.agents.deepagents import AgentFailureCategory, AgentPlanningError
+from agentic_saga.agents.pydanticai import AgentFailureCategory, AgentPlanningError
 from agentic_saga.contracts.actions import Finish, ToolCall
 from agentic_saga.contracts.runtime import SagaObservation, ToolDescriptor
-from tests.unit.agents.test_deepagents import _context, _descriptor, _observation
+from tests.unit.agents.test_pydanticai import _context, _descriptor, _observation
 
 type CandidateFactory = Callable[
     [SagaObservation, Sequence[ToolDescriptor]],

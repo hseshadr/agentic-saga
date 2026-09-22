@@ -173,7 +173,7 @@ uv sync --extra agent --group dev
 implicitly; your application decides whether to load `.env`. Never send the key through Temporal
 payloads. Configure OpenRouter spend limits before live use.
 
-Pydantic Deep owns the model/tool-calling loop. Agentic Saga exposes only currently eligible
+Pydantic AI owns the model/tool-calling loop. Agentic Saga exposes only currently eligible
 proposal tools and bounds the decision Activity. The model never receives a callable business
 adapter, Temporal client, provider credential, or human authorization token.
 

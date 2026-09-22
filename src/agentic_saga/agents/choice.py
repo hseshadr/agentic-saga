@@ -9,13 +9,13 @@ from typing import Annotated, Never
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
-from agentic_saga.agents.deepagents import AgentFailureCategory, AgentPlanningError
 from agentic_saga.agents.proposals import (
     FinishIntent,
     ProposalIntent,
     ToolCallIntent,
     bind_proposal,
 )
+from agentic_saga.agents.pydanticai import AgentFailureCategory, AgentPlanningError
 from agentic_saga.contracts.actions import AgentProposal
 from agentic_saga.contracts.common import JsonPayloadError, require_bounded_json
 from agentic_saga.contracts.runtime import AgentDriver, SagaObservation, ToolDescriptor
