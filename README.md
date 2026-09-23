@@ -93,7 +93,7 @@ flowchart LR
 ```
 
 **[Explore the interactive architecture map →](docs/architecture/index.html)**
-(Archify, generated from [`docs/architecture/agentic-saga.architecture.json`](docs/architecture/agentic-saga.architecture.json)).
+(Archify, generated from [`docs/architecture/runtime.architecture.json`](docs/architecture/runtime.architecture.json)).
 Deep dive: [docs/temporal-safety-contract.md](docs/temporal-safety-contract.md).
 
 ### What is a Saga?

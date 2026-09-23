@@ -31,6 +31,12 @@ All notable changes to Agentic Saga are documented here. The format follows
 
 ### Changed
 
+- Rewrote the README to the portfolio template: a plain-language tagline (now also the package
+  description), a runnable 60-second example with real output, and the previous content below
+  the fold. The `Development Status` classifier is now Beta, and the source archive ships
+  `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, and `CITATION.cff` so every README link resolves.
+- Renamed the Archify spec to `docs/architecture/runtime.architecture.json`, the portfolio
+  convention.
 - Compensation no longer records a hardcoded invariant result. The Workflow previously appended
   a `compensation_verified` event claiming `obligations_reversed` passed without evaluating
   anything, and the Flight Recorder showed it as a valid proof. It now records

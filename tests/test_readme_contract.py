@@ -12,7 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).parents[1]
 README = (ROOT / "README.md").read_text(encoding="utf-8")
 # The Archify map in this repository is generated from this spec file.
-ARCHITECTURE_SPEC = "docs/architecture/agentic-saga.architecture.json"
+ARCHITECTURE_SPEC = "docs/architecture/runtime.architecture.json"
 MAX_TAGLINE = 120
 MAX_BADGES = 4
 REQUIRED_LABELS = (

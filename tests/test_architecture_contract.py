@@ -7,7 +7,7 @@ from typing import cast
 
 ROOT = Path(__file__).parents[1]
 ARCHITECTURE = ROOT / "docs" / "architecture"
-SPEC = ARCHITECTURE / "agentic-saga.architecture.json"
+SPEC = ARCHITECTURE / "runtime.architecture.json"
 PAGE = ARCHITECTURE / "index.html"
 
 
