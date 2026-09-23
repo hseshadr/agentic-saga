@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "agentic-saga"
 dynamic = ["version"]
-description = "Smart agent orchestration with deterministic Saga safety."
+description = "Helps Python developers let an AI agent run multi-step jobs like checkout, and safely undo finished steps if one fails."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 license = "Apache-2.0"
@@ -13,7 +13,7 @@ license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 keywords = ["agents", "saga-pattern", "distributed-transactions", "orchestration", "llm"]
 authors = [{ name = "Harish Seshadri" }]
 classifiers = [
-  "Development Status :: 2 - Pre-Alpha",
+  "Development Status :: 4 - Beta",
   "Operating System :: POSIX",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.12",
@@ -82,6 +82,9 @@ packages = ["src/agentic_saga"]
 include = [
   "/.env.example",
   "/CHANGELOG.md",
+  "/CITATION.cff",
+  "/CODE_OF_CONDUCT.md",
+  "/CONTRIBUTING.md",
   "/LICENSE",
   "/README.md",
   "/QUICKSTART.md",
