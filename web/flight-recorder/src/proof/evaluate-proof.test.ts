@@ -1,17 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { projectReplay } from "../replay/project-replay";
-import { loadTraceFixture } from "../test/load-trace-fixture";
+import { loadTraceFixture, type TraceFixtureName } from "../test/load-trace-fixture";
 import { parseRunTrace } from "../trace/parse-run-trace";
 import type { JsonObject, RunTrace, SagaStatus } from "../trace/schema";
 
-function projection(name: "business-failure" | "compensation-failure", cursor = 99) {
+function projection(name: TraceFixtureName, cursor = 99) {
   const parsed = parseRunTrace(loadTraceFixture(name));
   if (!parsed.ok) throw new Error("fixture must be valid");
   return projectReplay(parsed.trace, cursor);
 }
 
-function businessTrace(): RunTrace {
-  const parsed = parseRunTrace(loadTraceFixture("business-failure"));
+function happyTrace(): RunTrace {
+  const parsed = parseRunTrace(loadTraceFixture("happy-path"));
   if (!parsed.ok) throw new Error("fixture must be valid");
   return parsed.trace;
 }
@@ -25,15 +25,24 @@ function replaceInvariant(trace: RunTrace, rationale: JsonObject): RunTrace {
 
 describe("recorded proof evaluation", () => {
   it("binds each expected rule to its exact visible source and terminal target", () => {
-    const proof = projection("business-failure").proof;
+    const proof = projection("happy-path").proof;
 
-    expect(proof.expectedRuleIds).toEqual(["obligations_reversed"]);
+    expect(proof.expectedRuleIds).toEqual(["verify_order"]);
     expect(proof.validRuleIds).toEqual(proof.expectedRuleIds);
     expect(proof.invalidRuleIds).toEqual([]);
     expect(proof.missingRuleIds).toEqual([]);
     expect(proof.sourceEvent?.event_type).toBe("invariant_evaluated");
-    expect(proof.sourceEvent?.rationale.rule_id).toBe("obligations_reversed");
+    expect(proof.sourceEvent?.rationale.rule_id).toBe("verify_order");
     expect(proof.terminalVerified).toBe(true);
+  });
+
+  it("records no invariant proof for compensation, only the failed success check", () => {
+    const proof = projection("business-failure").proof;
+
+    expect(proof.expectedRuleIds).toEqual(["verify_order"]);
+    expect(proof.invalidRuleIds).toEqual(["verify_order"]);
+    expect(proof.sourceEvent?.rationale.target_status).toBe("succeeded_verified");
+    expect(proof.terminalVerified).toBe(false);
   });
 
   it("does not reveal proof before its invariant event", () => {
@@ -50,8 +59,8 @@ describe("recorded proof evaluation", () => {
   });
 
   it("rejects proof bound to a different terminal state than the replay", () => {
-    const trace = businessTrace();
-    const target: SagaStatus = "succeeded_verified";
+    const trace = happyTrace();
+    const target: SagaStatus = "compensated_verified";
     const source = trace.events.findLast(({ event_type }) => event_type === "invariant_evaluated");
     if (!source) throw new Error("fixture must include invariant evidence");
     const changed = replaceInvariant(trace, { ...source.rationale, target_status: target });
@@ -61,10 +70,10 @@ describe("recorded proof evaluation", () => {
   });
 
   it("rejects an all-passed claim that contradicts its recorded rule results", () => {
-    const trace = businessTrace();
+    const trace = happyTrace();
     const source = trace.events.findLast(({ event_type }) => event_type === "invariant_evaluated");
     if (!source) throw new Error("fixture must include invariant evidence");
-    const results = { obligations_reversed: false };
+    const results = { verify_order: false };
     const changed = replaceInvariant(trace, { ...source.rationale, all_passed: true, results });
 
     expect(projectReplay(changed, 99).terminalVerified).toBe(false);

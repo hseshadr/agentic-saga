@@ -122,7 +122,11 @@ class TraceProof(BaseModel):
 
 
 class RunTrace(BaseModel):
-    """Package a verified saga history, proofs, and final projection digest."""
+    """Package a hash-checked, unauthenticated saga history, proofs, and projection digest.
+
+    Validation checks internal consistency (contiguous sequence, status chain, input/output
+    hashes, proof sources). The trace is not signed, so it does not prove who produced it.
+    """
 
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
 

@@ -31,6 +31,19 @@ All notable changes to Agentic Saga are documented here. The format follows
 
 ### Changed
 
+- Compensation no longer records a hardcoded invariant result. The Workflow previously appended
+  a `compensation_verified` event claiming `obligations_reversed` passed without evaluating
+  anything, and the Flight Recorder showed it as a valid proof. It now records
+  `compensation_completed` (the compensated operation IDs, newest first, and the target status)
+  with no `all_passed`/`verified` claim, and traces no longer carry a compensation `TraceProof`.
+  Legacy `compensation_verified` events project as `compensation_completed` with the claims
+  stripped. The Flight Recorder verifies a compensated run from each undo step's own confirmed
+  outcome instead. The event is workflow-local state (no Temporal command), so existing
+  histories replay without a patch; the regenerated `business-failure` trace changed accordingly.
+- Documented manifest `checks` as declared agent-context labels that the runtime does not
+  evaluate, alongside the gates it does enforce; marked `TerminalRequirement`, `HumanDecision`,
+  `AuthorizedToolCall`, and `ToolDescriptor.policy_constraints` as reserved and not enforced; and
+  stated that traces and receipts are hash-checked but unsigned.
 - Replaced the Pydantic Deep wrapper with a bare Pydantic AI `Agent`: the adapter had disabled
   every deep-agent capability, so the dependency is dropped and `DeepAgentsDriver` is now
   `PydanticAIDriver` in `agentic_saga.agents.pydanticai`.

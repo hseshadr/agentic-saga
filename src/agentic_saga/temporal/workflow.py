@@ -304,14 +304,14 @@ class AgenticSagaWorkflow:
 
     async def _compensate(self) -> WorkflowState:
         await self._run_compensations()
-        self._record_compensation_proof(SagaStatus.COMPENSATED_VERIFIED)
+        self._record_compensation_completed(SagaStatus.COMPENSATED_VERIFIED)
         return self._set_status(SagaStatus.COMPENSATED_VERIFIED)
 
     async def _unwind_before_human(self, reason: str) -> WorkflowState:
         if not self._journal.entries:
             return self._require_human(reason)
         await self._run_compensations()
-        self._record_compensation_proof(SagaStatus.HUMAN_REQUIRED)
+        self._record_compensation_completed(SagaStatus.HUMAN_REQUIRED)
         return self._require_human(reason)
 
     async def _run_compensations(self) -> None:
@@ -322,19 +322,23 @@ class AgenticSagaWorkflow:
             if self._journal.human_required_reason is not None:
                 await self._wait_for_human()
 
-    def _record_compensation_proof(self, target: SagaStatus) -> None:
+    def _record_compensation_completed(self, target: SagaStatus) -> None:
+        # Records only what the loop above established: every journaled compensation
+        # reached a succeeded state, run newest-first. No invariant is evaluated here.
+        # This mutates workflow-local state only (no Temporal command), so the change
+        # from the former "compensation_verified" shape is replay-safe.
+        compensated = [
+            entry.forward_identity.operation_id for entry in reversed(self._journal.entries)
+        ]
         details = cast(
             JsonObject,
             {
-                "all_passed": True,
-                "invariant_version": "temporal-compensation-proof-v1",
-                "results": {"obligations_reversed": True},
-                "rule_id": "obligations_reversed",
+                "compensated_operation_ids": compensated,
+                "order": "reverse_forward",
                 "target_status": target.value,
-                "verified": True,
             },
         )
-        self._record_event("compensation_verified", details)
+        self._record_event("compensation_completed", details)
 
     async def _run_compensation_activity(
         self, request: CompensationActivityRequest

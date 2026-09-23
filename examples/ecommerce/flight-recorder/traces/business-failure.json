@@ -575,11 +575,11 @@
       "output_hash": "f4549a0c94560f216c3276b390d73c6bfee33c4d5254e434796f75b5dde665d9"
     },
     {
-      "event_id": "evt_88741c24f7ef723dc12b0672b75d65a1",
+      "event_id": "evt_91a33cad619e1c4e5ba8a328fcc40e6a",
       "saga_seq": 14,
       "recorded_at": "2026-01-01T00:00:14Z",
-      "authority": "proof",
-      "event_type": "invariant_evaluated",
+      "authority": "workflow",
+      "event_type": "compensation_completed",
       "actor": "temporal_workflow",
       "trace_id": "trace_485792ae9dea9609367a8ff389b2ecb5",
       "definition_version": "ecommerce-temporal-v1",
@@ -596,12 +596,12 @@
       "redacted_input": null,
       "redacted_output": null,
       "rationale": {
-        "all_passed": true,
-        "invariant_version": "temporal-compensation-proof-v1",
-        "results": {
-          "obligations_reversed": true
-        },
-        "rule_id": "obligations_reversed",
+        "compensated_operation_ids": [
+          "op_091135cb331e5754206429c33b84a0c107c0f493f1bd59a9fcf038329822fc19",
+          "op_069ca590bf7ed884637af115f1a5e59a45d97d415d10115ecad8dfaf66e7ef7a",
+          "op_ce1c448a3748e0cc551dc329985c85a9fcbce50502ac3837e67670ff54fc3611"
+        ],
+        "order": "reverse_forward",
         "target_status": "compensated_verified"
       },
       "policy_decision": null,
@@ -653,18 +653,7 @@
       "inputs": null,
       "result": "invalid",
       "explanation": "ledger_recorded_invariant_result"
-    },
-    {
-      "source_event_id": "evt_88741c24f7ef723dc12b0672b75d65a1",
-      "source_event_seq": 14,
-      "invariant_version": "temporal-compensation-proof-v1",
-      "evaluated_at_seq": 13,
-      "target_status": "compensated_verified",
-      "rule_id": "obligations_reversed",
-      "inputs": null,
-      "result": "valid",
-      "explanation": "ledger_recorded_invariant_result"
     }
   ],
-  "final_projection_hash": "26e7c74230f67010d695ae5344b8d7cbce0f1b36b2088e9bfee34c7e575baea9"
+  "final_projection_hash": "36aaa7aa21ba07f57eb9725822e4b15bad390ce182d175932ee5fb589ed5f80e"
 }

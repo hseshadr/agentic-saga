@@ -145,6 +145,8 @@ def _proof_result(event: TraceEvent) -> bool:
 
 
 def _rationale(event: WorkflowEvent) -> JsonObject:
+    if event.kind == _LEGACY_COMPENSATION_KIND:
+        return _legacy_compensation_rationale(event)
     if _event_type(event) != "invariant_evaluated":
         return _public_details(event.details)
     rule_id = _proof_rule_id(event)
@@ -160,6 +162,12 @@ def _rationale(event: WorkflowEvent) -> JsonObject:
         },
     )
     return _public_details(rationale)
+
+
+def _legacy_compensation_rationale(event: WorkflowEvent) -> JsonObject:
+    """Drop the unevaluated proof claims older Workflow builds hardcoded."""
+    target = _text_detail(event, "target_status")
+    return cast(JsonObject, {} if target is None else {"target_status": target})
 
 
 def _proof_rule_id(event: WorkflowEvent) -> str:
@@ -272,10 +280,16 @@ def _state_hash(state: WorkflowState) -> str:
     return sha256_json(cast(JsonObject, state.model_dump(mode="json")))
 
 
+# Earlier unreleased Workflow builds recorded a hardcoded "compensation_verified" event that
+# claimed an invariant result nothing evaluated. States replayed or queried from those
+# builds project as plain completion records, never as proofs.
+_LEGACY_COMPENSATION_KIND = "compensation_verified"
+
 _EVENT_TYPES = {
     "agent_decision": "agent_decision_recorded",
+    "compensation_completed": "compensation_completed",
     "compensation_result": "compensation_outcome_recorded",
-    "compensation_verified": "invariant_evaluated",
+    _LEGACY_COMPENSATION_KIND: "compensation_completed",
     "human_resolved": "human_resolved",
     "reconciliation_result": "reconciliation_recorded",
     "started": "saga_started",
@@ -284,7 +298,6 @@ _EVENT_TYPES = {
 _AUTHORITY_BY_KIND = {
     "agent_decision": TraceAuthority.AGENT,
     "compensation_result": TraceAuthority.COMPENSATION,
-    "compensation_verified": TraceAuthority.PROOF,
     "human_resolved": TraceAuthority.HUMAN,
 }
 

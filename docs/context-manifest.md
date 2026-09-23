@@ -4,6 +4,8 @@
 
 `saga.yaml` is a public context template for the agent. It describes the goal, registered
 capability names, safety guidance, decision budgets, named checks, and short example paths.
+The named checks are declared labels for the agent's context; the runtime does not evaluate them
+(see [What `checks` does and does not do](#what-checks-does-and-does-not-do)).
 
 It is deliberately **not** a workflow language. It has no transitions, conditions, embedded code,
 provider credentials, or executable tool definitions. Temporal owns durable execution; the
@@ -82,10 +84,36 @@ Compensation tools may be included in the catalog digest because they are regist
 but the Workflow never advertises them as forward agent choices. The Workflow invokes the paired
 compensation when recovery is required.
 
+## What `checks` does and does not do
+
+`checks` lists **declared labels**, not executable checks. Loading validates only that every
+name is unique, sorted, and present in the `policy_checks` / `invariant_checks` inventories you
+pass to `load_saga_context`; the labels then appear in `context.agent_context` so the agent can
+read what the application intends to hold. Nothing in the runtime evaluates `policy`,
+`success`, `compensation`, or `clean_abort`, and no trace or receipt records a result for them.
+
+The gates the Workflow **does** enforce are configured on each `WorkflowTool` and in the
+Workflow itself:
+
+| Enforced gate | Where | Effect |
+| --- | --- | --- |
+| `proof_for_success` | `WorkflowTool` | A read tool whose receipt must report `verified: true` before success |
+| Proof freshness | Workflow | Any later effect clears recorded proof; the proof read must run again |
+| `required_for_success` | `WorkflowTool` | The tool must have succeeded before success can be finished |
+| `prerequisites` | `WorkflowTool` | A tool is advertised only after its prerequisite tools succeeded |
+| `max_calls` and `budgets.tool_call_limit` | `WorkflowTool`, `saga.yaml` | Per-tool and global call limits |
+| Finish gate | Workflow | `finish_saga(succeeded_verified)` is offered only when all of the above hold |
+
+A failed or missing proof starts reverse compensation. When the last journaled compensation
+succeeds, the Workflow records a `compensation_completed` event: a statement that the
+compensations ran newest-first, each with its own recorded outcome. It is not an invariant
+result, and it is not a proof that the `compensation` labels hold.
+
 ## Load and validate it
 
-Register tools and named checks in application code, then load the manifest against those exact
-inventories:
+Register tools and the names of your checks in application code, then load the manifest against
+those exact inventories. The check inventories exist only to catch typos and drift in the declared
+labels; registering a name does not make the runtime evaluate it:
 
 ```python
 from pathlib import Path

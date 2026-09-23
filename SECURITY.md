@@ -115,5 +115,8 @@ The Flight Recorder is a loopback-only, read-only viewer, not an authenticated m
 It binds to `127.0.0.1` and serves packaged, redacted evidence. Same-user or root access is outside
 its boundary. Exported traces persist until the operator deletes every copy.
 
+Traces and receipts are unsigned. Trace validation checks internal consistency and content hashes,
+not authorship: anyone who can edit a trace file can rewrite it into another valid trace.
+
 Read the [operations contract](docs/operations.md) and
 [Temporal safety contract](docs/temporal-safety-contract.md) before production use.

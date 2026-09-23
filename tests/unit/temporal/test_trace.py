@@ -208,3 +208,65 @@ def test_projector_does_not_claim_read_receipts_are_confirmed_effects() -> None:
         "receipt": {"available": 4},
     }
     assert trace.proofs == ()
+
+
+def _compensated_state(kind: str, details: dict[str, object]) -> WorkflowState:
+    return WorkflowState(
+        saga_id=_SAGA_ID,
+        status=SagaStatus.COMPENSATED_VERIFIED,
+        events=(
+            _event(1, "started", {}, SagaStatus.RUNNING, SagaStatus.COMPENSATING),
+            _event(2, kind, details, SagaStatus.COMPENSATING, SagaStatus.COMPENSATING),
+            _event(
+                3,
+                "status_changed",
+                {"reason_code": None, "status": "compensated_verified"},
+                SagaStatus.COMPENSATING,
+                SagaStatus.COMPENSATED_VERIFIED,
+            ),
+        ),
+        compensations=(),
+    )
+
+
+def test_projector_records_completed_compensation_without_claiming_a_proof() -> None:
+    operation_id = "op_" + "b" * 64
+    details: dict[str, object] = {
+        "compensated_operation_ids": [operation_id],
+        "order": "reverse_forward",
+        "target_status": "compensated_verified",
+    }
+
+    trace = project_run_trace(
+        _compensated_state("compensation_completed", details),
+        definition_version="checkout-v1",
+    )
+
+    event = trace.events[1]
+    assert event.event_type == "compensation_completed"
+    assert event.authority == "workflow"
+    assert event.actor == "temporal_workflow"
+    assert event.rationale == {**details, "compensated_operation_ids": (operation_id,)}
+    assert trace.proofs == ()
+
+
+def test_projector_strips_unevaluated_claims_from_legacy_compensation_events() -> None:
+    legacy: dict[str, object] = {
+        "all_passed": True,
+        "invariant_version": "temporal-compensation-proof-v1",
+        "results": {"obligations_reversed": True},
+        "rule_id": "obligations_reversed",
+        "target_status": "compensated_verified",
+        "verified": True,
+    }
+
+    trace = project_run_trace(
+        _compensated_state("compensation_verified", legacy),
+        definition_version="checkout-v1",
+    )
+
+    event = trace.events[1]
+    assert event.event_type == "compensation_completed"
+    assert event.authority == "workflow"
+    assert event.rationale == {"target_status": "compensated_verified"}
+    assert trace.proofs == ()

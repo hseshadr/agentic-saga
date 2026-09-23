@@ -46,9 +46,14 @@ credential, idempotency key, or human authorization token.
 forward work
   -> succeeded_verified                         when final proof succeeds
   -> compensation in reverse dependency order  when the goal becomes unreachable
-      -> compensated_verified                   when every required undo is proven
+      -> compensated_verified                   when every journaled undo has a confirmed outcome
       -> human_required                         when an undo remains unresolved
 ```
+
+A confirmed outcome is a provider receipt, a reconciliation that confirms the undo, or a verified
+human resolution. `compensated_verified` rests on those per-step outcomes; the
+`compensation_completed` event that precedes it records that the journaled compensations ran in
+reverse order and is not an invariant evaluation.
 
 An ordinary business failure does not require a human. The Workflow compensates automatically.
 Human escalation begins only after reconciliation cannot prove a safe automatic action.

@@ -63,7 +63,11 @@ class ExecutionBudget(BaseModel):
 
 
 class TerminalRequirement(BaseModel):
-    """Name the invariant version and rules required for one terminal status."""
+    """Name the invariant version and rules required for one terminal status.
+
+    Reserved; not enforced by the runtime yet. No Workflow or Activity reads this model,
+    so declaring one does not gate any terminal status.
+    """
 
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
 
@@ -109,7 +113,12 @@ class SagaGoal(BaseModel):
 
 
 class ToolDescriptor(BaseModel):
-    """Expose an agent-safe description of an available read or effect tool."""
+    """Expose an agent-safe description of an available read or effect tool.
+
+    ``policy_constraints`` is reserved; not enforced by the runtime yet. It is checked for
+    private material and rendered into the agent's context as a hint, but no Workflow gate
+    reads it.
+    """
 
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
 

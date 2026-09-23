@@ -26,7 +26,7 @@
       "mode": "scripted",
       "presentation": "ecommerce",
       "trace_ref": "business-failure.json",
-      "trace_sha256": "662983d14d875c724136e424787ece738109f1bb6abea97170798db0ea08c95e"
+      "trace_sha256": "e9a360b3ccf7aed5010e5a2470292621be67655a80ea353318c8657556b12749"
     },
     {
       "id": "compensation-failure",

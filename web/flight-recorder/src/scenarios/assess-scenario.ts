@@ -1,4 +1,5 @@
 import { evaluateProof } from "../proof/evaluate-proof";
+import { evaluateRecovery, terminalVerified } from "../proof/evaluate-recovery";
 import type { RunTrace, TraceEvent } from "../trace/schema";
 import type { ScenarioIndexEntry } from "./schema";
 
@@ -21,10 +22,12 @@ export function supportsScenario(entry: ScenarioIndexEntry): boolean {
 
 export function assessScenario(entry: ScenarioIndexEntry, trace: RunTrace): ScenarioAssessment {
   const proof = evaluateProof(trace.events, trace.proofs, trace.outcome, true);
+  const recovery = evaluateRecovery(trace.events, trace.outcome, true);
+  const verified = terminalVerified(trace.outcome, proof.terminalVerified, recovery);
   if (!supportsScenario(entry)) {
     return {
       state: "unavailable",
-      label: proof.terminalVerified ? "Verified" : "No assessment",
+      label: verified ? "Verified" : "No assessment",
       detail: "No expected scenario result is defined for this recording.",
     };
   }
@@ -45,8 +48,7 @@ export function assessScenario(entry: ScenarioIndexEntry, trace: RunTrace): Scen
   if (trace.outcome !== expected) {
     return failed(`Expected ${expected}; the recording ends as ${trace.outcome}.`);
   }
-  if (!proof.terminalVerified)
-    return failed("The expected outcome has no complete terminal proof.");
+  if (!verified) return failed(missingEvidence(expected));
   if (entry.id === "lost-response" && !hasReconciledPayment(trace.events)) {
     return failed("No provider evidence confirms the payment after its reply was lost.");
   }
@@ -62,10 +64,17 @@ export function assessScenario(entry: ScenarioIndexEntry, trace: RunTrace): Scen
   };
 }
 
+function missingEvidence(expected: string): string {
+  return expected === "compensated_verified"
+    ? "The recovery lacks a confirmed compensation outcome for every undone change."
+    : "The expected outcome has no complete terminal proof.";
+}
+
 function passedDetail(id: string): string {
   if (id === "lost-response") return "Payment reconciled; order completed and verified.";
-  if (id === "compensation-failure") return "Human review resolved the refund; recovery verified.";
-  if (id === "business-failure") return "All earlier changes undone and verified.";
+  if (id === "compensation-failure")
+    return "Human review resolved the refund; every undo has a confirmed outcome.";
+  if (id === "business-failure") return "All earlier changes undone; each undo has a receipt.";
   return "Order completed and verified.";
 }
 

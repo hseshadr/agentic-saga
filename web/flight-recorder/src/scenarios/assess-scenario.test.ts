@@ -20,13 +20,20 @@ function entry(name: TraceFixtureName) {
   return result;
 }
 
+function forwardEffect(trace: RunTrace, tool: string): string {
+  const effect = trace.events.find(
+    (event) => event.tool_name === tool && event.event_type === "effect_outcome_recorded",
+  );
+  if (!effect?.operation_id) throw new Error(`Expected a confirmed ${tool} effect`);
+  return effect.operation_id;
+}
+
 function resolvedCompensation(): RunTrace {
   const paused = trace("compensation-failure");
   const recovered = trace("business-failure");
   const refund = paused.events.findLast((event) => event.tool_name === "refund_payment");
   const pause = paused.events.at(-1);
-  const proof = recovered.proofs.at(-1);
-  if (!refund || !pause || !proof) throw new Error("Expected refund and proof evidence");
+  if (!refund || !pause) throw new Error("Expected refund and pause evidence");
   const resolution: TraceEvent = {
     ...pause,
     event_id: "evt_humanresolution0123456789",
@@ -37,27 +44,27 @@ function resolvedCompensation(): RunTrace {
     after_status: "compensating",
     operation_id: refund.operation_id,
   };
+  const compensated = ["schedule_fulfillment", "charge_payment", "reserve_inventory"].map((tool) =>
+    forwardEffect(paused, tool),
+  );
   const suffix = recovered.events.slice(-3).map((event, index) => ({
     ...event,
     trace_id: paused.run_id,
     saga_seq: resolution.saga_seq + index + 1,
+    compensates_operation_id:
+      event.tool_name === "release_inventory"
+        ? forwardEffect(paused, "reserve_inventory")
+        : event.compensates_operation_id,
+    rationale:
+      event.event_type === "compensation_completed"
+        ? { ...event.rationale, compensated_operation_ids: compensated }
+        : event.rationale,
   }));
-  const source = suffix.find((event) => event.event_type === "invariant_evaluated");
-  if (!source) throw new Error("Expected terminal proof source");
   return {
     ...paused,
     outcome: "compensated_verified",
     finished_at: recovered.finished_at,
     events: [...paused.events, resolution, ...suffix],
-    proofs: [
-      ...paused.proofs,
-      {
-        ...proof,
-        source_event_id: source.event_id,
-        source_event_seq: source.saga_seq,
-        evaluated_at_seq: source.saga_seq - 1,
-      },
-    ],
   };
 }
 
@@ -78,9 +85,20 @@ describe("scenario assessment", () => {
   });
 
   it("requires terminal proof, not just a successful outcome name", () => {
-    for (const name of ["happy-path", "business-failure", "lost-response"] as const) {
+    for (const name of ["happy-path", "lost-response"] as const) {
       expect(assessScenario(entry(name), { ...trace(name), proofs: [] }).state).toBe("failed");
     }
+  });
+
+  it("requires a confirmed outcome for every undo step, not a compensated outcome name", () => {
+    const recovered = trace("business-failure");
+    const events = recovered.events.filter(
+      (event) => event.event_type !== "compensation_outcome_recorded",
+    );
+    expect(assessScenario(entry("business-failure"), { ...recovered, events })).toMatchObject({
+      state: "failed",
+      detail: "The recovery lacks a confirmed compensation outcome for every undone change.",
+    });
   });
 
   it("rejects outcomes that do not match the scenario expectation", () => {
@@ -135,7 +153,7 @@ describe("scenario assessment", () => {
     );
   });
 
-  it("rejects missing or unrelated human resolution even with terminal proof", () => {
+  it("rejects missing or unrelated human resolution even with completed recovery", () => {
     const resolved = resolvedCompensation();
     const events = resolved.events.map((event) =>
       event.event_type === "human_resolved" ? { ...event, operation_id: null } : event,
@@ -146,9 +164,12 @@ describe("scenario assessment", () => {
     expect(assessScenario(entry("compensation-failure"), trace("business-failure")).state).toBe(
       "failed",
     );
-    expect(assessScenario(entry("compensation-failure"), { ...resolved, proofs: [] }).state).toBe(
-      "failed",
+    const unrecorded = resolved.events.filter(
+      (event) => event.event_type !== "compensation_completed",
     );
+    expect(
+      assessScenario(entry("compensation-failure"), { ...resolved, events: unrecorded }).state,
+    ).toBe("failed");
   });
 
   it("keeps recorded work in progress pending", () => {

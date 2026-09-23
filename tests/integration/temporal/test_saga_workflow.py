@@ -253,9 +253,15 @@ async def test_business_failure_compensates_in_reverse_order(
 
     assert result.status is SagaStatus.COMPENSATED_VERIFIED
     assert result.events[-1].after_status is SagaStatus.COMPENSATED_VERIFIED
-    assert result.events[-2].kind == "compensation_verified"
-    assert result.events[-2].details["target_status"] == "compensated_verified"
-    assert result.events[-2].details["verified"] is True
+    assert result.events[-2].kind == "compensation_completed"
+    assert result.events[-2].details == {
+        "compensated_operation_ids": tuple(
+            entry.forward_identity.operation_id for entry in reversed(result.compensations)
+        ),
+        "order": "reverse_forward",
+        "target_status": "compensated_verified",
+    }
+    assert not any(event.kind == "compensation_verified" for event in result.events)
     assert [call.tool_name() for call in activities.calls] == [
         "reserve",
         "charge",
@@ -371,7 +377,7 @@ async def test_failed_compensation_blocks_remaining_recovery_and_proof_until_res
         state = await _wait_for_human(handle)
         assert state.human_required_reason == "provider_confirmed_no_effect"
         assert [item.state for item in state.compensations] == ["pending", "unresolved"]
-        assert not any(event.kind == "compensation_verified" for event in state.events)
+        assert not any(event.kind == "compensation_completed" for event in state.events)
         assert [call.tool_name() for call in activities.calls] == [
             "reserve",
             "charge",
@@ -391,7 +397,7 @@ async def test_failed_compensation_blocks_remaining_recovery_and_proof_until_res
     assert all(item.state == "succeeded" for item in result.compensations)
     assert activities.calls[-1].tool_name() == "release"
     kinds = [event.kind for event in result.events]
-    assert kinds.index("human_resolved") < kinds.index("compensation_verified")
+    assert kinds.index("human_resolved") < kinds.index("compensation_completed")
     assert len(activities.verification_calls) == 1
 
 

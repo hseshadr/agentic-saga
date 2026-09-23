@@ -42,6 +42,9 @@ function title(value: string): string {
 }
 
 function proofLabel(projection: ReplayProjection): string {
+  const { compensatedOperationIds, confirmedOperationIds, record } = projection.recovery;
+  if (record)
+    return `${confirmedOperationIds.length} / ${compensatedOperationIds.length} undo steps confirmed`;
   const { expectedRuleIds, validRuleIds } = projection.proof;
   const state = projection.terminalVerified ? "valid" : "visible";
   return `${validRuleIds.length} / ${expectedRuleIds.length} checks ${state}`;

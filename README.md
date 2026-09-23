@@ -184,7 +184,7 @@ tools:
     - charge_payment
     - schedule_fulfillment
     - verify_order
-checks:
+checks: # declared labels for agent context; not evaluated by the runtime
   policy: []
   success: [order_verified]
   compensation: [effects_compensated]
@@ -199,6 +199,11 @@ escalation:
 Compensation tools are registered with their forward effects; they are not offered to the agent as
 forward choices. The Workflow invokes them when recovery is required. The same manifest shape can
 describe ticket booking, travel reservations, provisioning, or any other Saga.
+
+`checks` names are validated against the inventories you register, then passed to the agent as
+context; nothing evaluates them. The enforced gates live on each `WorkflowTool`
+(`proof_for_success`, `required_for_success`, `prerequisites`, `max_calls`) and in the Workflow
+(global budgets, proof freshness, and the finish gate).
 
 Read [the context-manifest guide](docs/context-manifest.md).
 
