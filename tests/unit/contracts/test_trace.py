@@ -41,7 +41,13 @@ def test_should_strictly_validate_real_business_failure_trace() -> None:
 
     assert trace.outcome is SagaStatus.COMPENSATED_VERIFIED
     assert trace.events[-1].after_status is trace.outcome
-    assert trace.proofs[-1].result == "valid"
+    assert [(proof.rule_id, proof.result) for proof in trace.proofs] == [
+        ("verify_order", "invalid")
+    ]
+    completed = [event for event in trace.events if event.event_type == "compensation_completed"]
+    assert len(completed) == 1
+    assert completed[0].authority is TraceAuthority.WORKFLOW
+    assert "all_passed" not in completed[0].rationale
 
 
 def test_trace_authority_exactly_matches_current_temporal_emitters() -> None:

@@ -10,6 +10,7 @@ export interface StoryViewProps {
 const maximumStoryEvents = 200;
 const summaries: Readonly<Record<string, string>> = {
   agent_turn_reserved: "Agent turn reserved",
+  compensation_completed: "Undo steps ran in reverse order; not an invariant proof",
   compensation_intent_recorded: "Undo requested; outcome not yet recorded",
   compensation_started: "Recovery started",
   dispatch_started: "Provider request sent; outcome not yet recorded",

@@ -134,6 +134,7 @@ function announcesTransition(event: TraceEvent): boolean {
 
 function replayWaypoints(trace: RunTrace): ReadonlySet<number> {
   const waypoints = new Set([
+    "compensation_completed",
     "compensation_started",
     "human_required",
     "invariant_evaluated",

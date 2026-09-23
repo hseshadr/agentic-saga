@@ -44,6 +44,12 @@ type AgentProposal = Annotated[
 
 
 class AuthorizedToolCall[CommandT: BaseModel](BaseModel):
+    """Bind one command to its stable operation identity.
+
+    Reserved; not enforced by the runtime yet. The Temporal Workflow builds its own Activity
+    requests and never constructs or checks this model.
+    """
+
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
 
     operation_id: OperationId
@@ -54,6 +60,12 @@ class AuthorizedToolCall[CommandT: BaseModel](BaseModel):
 
 
 class HumanDecision(BaseModel):
+    """Describe a human approval, rejection, or reconciliation decision.
+
+    Reserved; not enforced by the runtime yet. Human recovery is accepted only through the
+    Workflow's ``resolve_compensation`` Update and its application-owned verification Activity.
+    """
+
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
 
     decision_id: _BoundedName

@@ -23,6 +23,7 @@ _VISIBLE = frozenset(
         "reconciliation_recorded",
         "compensation_started",
         "compensation_outcome_recorded",
+        "compensation_completed",
         "invariant_evaluated",
         "human_required",
         "human_resolved",

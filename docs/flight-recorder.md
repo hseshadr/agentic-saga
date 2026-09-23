@@ -92,7 +92,9 @@ point in history.
 - **Ledger** filters only safe identifiers and receipt references, and renders at most 25 rows per
   page. It never searches payloads or structured rationale.
 - **Proof** binds each rule to its exact invariant event, version, sequence, and target state.
-  `HUMAN_REQUIRED` is a quiescent stop, not terminal proof.
+  A compensated run instead shows the Workflow's `compensation_completed` record and counts an
+  undo step only when its own compensation outcome is confirmed; that record is not an invariant
+  proof. `HUMAN_REQUIRED` is a quiescent stop, not terminal proof.
 
 The selected event, replay cursor, and view are local browser state. Changing runs resets them
 predictably; the recorder does not create stale URL deep links. Flight Path and Story cap their DOM

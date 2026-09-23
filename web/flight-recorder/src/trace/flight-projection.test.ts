@@ -70,10 +70,7 @@ describe("projectFlight", () => {
   it("binds proof rows to their recorded invariant event without inventing proposals", () => {
     const result = projection();
 
-    expect(result.proofs.map(({ rule_id }) => rule_id)).toEqual([
-      "verify_order",
-      "obligations_reversed",
-    ]);
+    expect(result.proofs.map(({ rule_id }) => rule_id)).toEqual(["verify_order"]);
     expect(new Set(result.proofs.map((proof) => proof.source_event_id))).toEqual(
       new Set(
         result.orderedEvents
@@ -84,6 +81,11 @@ describe("projectFlight", () => {
     expect(result.orderedEvents.some((item) => item.event.event_type === "proposal_accepted")).toBe(
       false,
     );
+    const completed = result.orderedEvents.find(
+      (item) => item.event.event_type === "compensation_completed",
+    );
+    expect(completed?.lane).toBe("guard");
+    expect(completed?.label).toBe("Compensation completed");
   });
 
   it("projects real human-required evidence as a distinct fault signal", () => {

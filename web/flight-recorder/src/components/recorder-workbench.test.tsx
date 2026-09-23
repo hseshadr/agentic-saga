@@ -81,7 +81,7 @@ describe("RecorderWorkbench", () => {
     expect(screen.getByText(/Order failed. Recovery succeeded/)).toBeVisible();
     expect(screen.getByText(/JEV is not used/)).toBeVisible();
     expect(screen.getByText("Replay complete")).toBeVisible();
-    expect(screen.getByText("1 / 1 checks valid")).toBeInTheDocument();
+    expect(screen.getByText("3 / 3 undo steps confirmed")).toBeInTheDocument();
     const events = screen.getByRole("list", { name: "Ledger events in causal order" });
     const signals = within(events).getAllByRole("button");
     expect(signals.slice(0, 4).map((signal) => signal.getAttribute("aria-label"))).toEqual([
@@ -104,7 +104,7 @@ describe("RecorderWorkbench", () => {
     await user.click(screen.getByRole("button", { name: "Restart replay" }));
 
     expect(screen.getByText("Recorded outcome").parentElement).toHaveTextContent("Safely undone");
-    expect(screen.getByText("1 / 1 checks valid")).toBeVisible();
+    expect(screen.getByText("3 / 3 undo steps confirmed")).toBeVisible();
     expect(screen.getByText("Replay paused")).toBeVisible();
     expect(screen.queryByText("Running")).not.toBeInTheDocument();
     expect(screen.getByRole("list", { name: "Ledger events in causal order" })).toHaveTextContent(

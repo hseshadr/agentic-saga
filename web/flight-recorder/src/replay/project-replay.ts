@@ -1,4 +1,9 @@
 import { evaluateProof, type ProofEvaluation } from "../proof/evaluate-proof";
+import {
+  evaluateRecovery,
+  type RecoveryEvaluation,
+  terminalVerified,
+} from "../proof/evaluate-recovery";
 import { type FlightProjection, projectFlight } from "../trace/flight-projection";
 import type { RunTrace, SagaStatus, TraceEvent, TraceProof } from "../trace/schema";
 
@@ -11,6 +16,7 @@ export interface ReplayProjection {
   readonly humanRequired: boolean;
   readonly proof: ProofEvaluation;
   readonly proofs: readonly TraceProof[];
+  readonly recovery: RecoveryEvaluation;
   readonly terminalVerified: boolean;
 }
 
@@ -25,6 +31,7 @@ export function projectReplay(trace: RunTrace, requestedCursor: number): ReplayP
   const currentStatus = currentEvent.after_status;
   const atEnd = cursor === trace.events.length - 1;
   const proof = evaluateProof(events, visibleProofs, currentStatus, atEnd);
+  const recovery = evaluateRecovery(events, currentStatus, atEnd);
   const proofs = proof.records;
   const flight = projectFlight({ ...trace, events, proofs: [...proofs] });
   return {
@@ -36,6 +43,7 @@ export function projectReplay(trace: RunTrace, requestedCursor: number): ReplayP
     humanRequired: currentStatus === "human_required",
     proof,
     proofs,
-    terminalVerified: proof.terminalVerified,
+    recovery,
+    terminalVerified: terminalVerified(currentStatus, proof.terminalVerified, recovery),
   };
 }
