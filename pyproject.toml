@@ -8,7 +8,7 @@ dynamic = ["version"]
 description = "Helps Python developers let an AI agent run multi-step jobs like checkout, and safely undo finished steps if one fails."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
-license = "Apache-2.0"
+license = "MIT"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 keywords = ["agents", "saga-pattern", "distributed-transactions", "orchestration", "llm"]
 authors = [{ name = "Harish Seshadri" }]

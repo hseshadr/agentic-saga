@@ -535,6 +535,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License / Citation
 
-Apache-2.0 — see [LICENSE](LICENSE). Bundled frontend dependencies and notices are listed in
+MIT — see [LICENSE](LICENSE). Bundled frontend dependencies and notices are listed in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). To cite this project, use
 [CITATION.cff](CITATION.cff).
