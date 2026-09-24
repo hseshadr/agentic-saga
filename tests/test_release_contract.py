@@ -781,3 +781,14 @@ def test_release_proof_requires_frozen_hashed_offline_inputs() -> None:
     assert '--find-links "$wheelhouse"' in verify
     assert '--python "$release_python"' in verify
     assert "--python 3.13" not in verify
+
+
+def test_project_is_mit_licensed_by_sole_author() -> None:
+    license_text = (ROOT / "LICENSE").read_text()
+    assert license_text.startswith("MIT License\n")
+    assert "Copyright (c) 2026 Harish Seshadri" in license_text
+    pyproject = (ROOT / "pyproject.toml").read_text()
+    assert 'license = "MIT"' in pyproject
+    assert "Apache" not in pyproject
+    assert "license: MIT" in (ROOT / "CITATION.cff").read_text()
+    assert "MIT — see [LICENSE](LICENSE)" in (ROOT / "README.md").read_text()
