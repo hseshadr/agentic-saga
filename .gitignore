@@ -26,3 +26,6 @@ test-results/
 mutants/
 .superpowers/
 .artifacts/
+
+# JetBrains IDE settings — local editor state, never part of the package.
+.idea/
