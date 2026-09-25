@@ -6,10 +6,10 @@ import asyncio
 import re
 from collections.abc import Awaitable
 from dataclasses import dataclass
-from typing import Annotated, Final
+from typing import Final, Self
 
 import dagger
-from dagger import Ignore, check, dag, function, object_type
+from dagger import check, dag, field, function, object_type
 
 PYTHON_IMAGES: Final = (
     (
@@ -374,16 +374,24 @@ async def _runtime_matrix(
 class AgenticSaga:
     """Run Agentic Saga's fixed repository-owned verification commands."""
 
+    source: dagger.Directory = field()
+
+    @classmethod
+    def create(cls, workspace: dagger.Workspace) -> Self:
+        """Own the source: the engine-detected workspace, never a caller directory."""
+        instance = cls.__new__(cls)
+        instance.source = workspace.directory("/", exclude=SOURCE_IGNORE_PATTERNS)
+        return instance
+
     @function
     @check
     async def ci(
         self,
-        source: Annotated[dagger.Directory, Ignore(SOURCE_IGNORE_PATTERNS)],
         commit_sha: str,
         git_auth_header: dagger.Secret | None = None,
     ) -> str:
         """Run guarded Temporal, frontend, and measured release gates."""
-        verified = await _release_source(source, commit_sha, git_auth_header)
+        verified = await _release_source(self.source, commit_sha, git_auth_header)
         artifacts, frontend = await _shared_outputs(verified)
         await _runtime_matrix(verified, artifacts, frontend)
         manifest = await _artifact_manifest(artifacts)
@@ -392,12 +400,11 @@ class AgenticSaga:
     @function
     async def security(
         self,
-        source: Annotated[dagger.Directory, Ignore(SOURCE_IGNORE_PATTERNS)],
         commit_sha: str,
         git_auth_header: dagger.Secret | None = None,
     ) -> str:
         """Run guarded locked Python and frontend dependency audits."""
-        verified = await _release_source(source, commit_sha, git_auth_header)
+        verified = await _release_source(self.source, commit_sha, git_auth_header)
         await _dependency_audit(verified, commit_sha, git_auth_header)
         await _node(verified).with_exec(["pnpm", "audit"]).sync()
         return "Agentic Saga dependency audits passed"
