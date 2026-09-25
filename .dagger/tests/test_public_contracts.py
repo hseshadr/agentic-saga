@@ -14,6 +14,7 @@ from pathlib import Path
 from types import ModuleType
 from typing import cast
 
+import dagger
 import pytest
 import yaml
 from dagger import Container, Directory, dag
@@ -66,7 +67,6 @@ VALID_MANIFEST = "\n".join(
     )
 )
 PUBLIC_INPUTS = (
-    ("source", "Annotated[dagger.Directory, Ignore(SOURCE_IGNORE_PATTERNS)]"),
     ("commit_sha", "str"),
     ("git_auth_header", "dagger.Secret | None"),
 )
@@ -289,9 +289,7 @@ def _assert_workflow_boundary(name: str, workflow: str) -> None:
         for step in steps
         if step.get("uses") == f"dagger/dagger-for-github@{DAGGER_ACTION_SHA}"
     ]
-    expected_args = (
-        f"{argument} --source=. --commit-sha=${{{{ github.sha }}}} {SAFE_AUTH_ARGUMENT_EXPRESSION}"
-    )
+    expected_args = f"{argument} --commit-sha=${{{{ github.sha }}}} {SAFE_AUTH_ARGUMENT_EXPRESSION}"
     arguments = [
         cast(dict[str, str], step["with"])["args"]
         for step in steps
@@ -330,6 +328,107 @@ def _assert_dagger_vcs_inputs(root: Path, config: str) -> None:
     assert _git(root, "ls-files", "--", DAGGER_LOCK) == (DAGGER_LOCK,)
     assert DAGGER_LOCK in include, "Dagger module lock must be an explicit module input"
     _assert_generated_paths_are_untracked(root)
+
+
+class RecordingWorkspace:
+    """Stand in for the engine-detected workspace and record the requested tree."""
+
+    def __init__(self, tree: Directory) -> None:
+        self.tree = tree
+        self.requests: list[tuple[str, tuple[str, ...]]] = []
+
+    def directory(self, path: str, *, exclude: list[str]) -> Directory:
+        self.requests.append((path, tuple(exclude)))
+        return self.tree
+
+
+def _saga(tree: Directory) -> main.AgenticSaga:
+    return main.AgenticSaga.create(cast(dagger.Workspace, RecordingWorkspace(tree)))
+
+
+def test_should_construct_source_from_the_filtered_workspace_root() -> None:
+    # Given an engine workspace stand-in.
+    tree = dag.directory()
+    workspace = RecordingWorkspace(tree)
+
+    # When the module constructor runs.
+    saga = main.AgenticSaga.create(cast(dagger.Workspace, workspace))
+
+    # Then the module owns the workspace root, filtered by the secret-safe ignore list.
+    assert saga.source is tree
+    assert workspace.requests == [("/", tuple(main.SOURCE_IGNORE_PATTERNS))]
+
+
+def _caller_directory_inputs(source: str) -> tuple[str, ...]:
+    adapter = _adapter_class(_tree(source))
+    return tuple(
+        f"{method.name}.{argument.arg}"
+        for method in _public_methods(adapter)
+        for argument in (*method.args.posonlyargs, *method.args.args, *method.args.kwonlyargs)
+        if argument.arg == "source" or "Directory" in _annotation(argument)
+    )
+
+
+def _assert_no_caller_supplied_source(source: str) -> None:
+    inputs = _caller_directory_inputs(source)
+    assert inputs == (), f"public functions cannot accept a caller-supplied source: {inputs}"
+
+
+def _source_constructor(adapter: ast.ClassDef) -> ast.FunctionDef | None:
+    return next(
+        (
+            member
+            for member in adapter.body
+            if isinstance(member, ast.FunctionDef) and member.name == "create"
+        ),
+        None,
+    )
+
+
+def _assert_module_owned_source(source: str) -> None:
+    adapter = _adapter_class(_tree(source))
+    fields = [ast.unparse(member) for member in adapter.body if isinstance(member, ast.AnnAssign)]
+    constructor = _source_constructor(adapter)
+    assert fields == ["source: dagger.Directory = field()"], "module must own one source field"
+    assert constructor is not None, "module must construct source from the engine workspace"
+    body = ast.unparse(constructor)
+    assert _parameters(constructor.args.args[1:]) == (("workspace", "dagger.Workspace"),)
+    assert "workspace.directory('/', exclude=SOURCE_IGNORE_PATTERNS)" in body, (
+        "module source must be the filtered workspace root"
+    )
+
+
+def test_should_not_accept_a_caller_supplied_source_on_any_public_function() -> None:
+    # Given the adapter source.
+    source = MODULE.read_text()
+
+    # When every public Dagger function signature is inspected.
+    # Then no entry point lets a caller hand CI or security a different tree.
+    _assert_no_caller_supplied_source(source)
+
+
+def test_should_own_source_through_the_engine_workspace() -> None:
+    # Given the adapter source.
+    source = MODULE.read_text()
+
+    # When the module's source construction is inspected.
+    # Then the tree comes from the detected workspace, filtered, and never from a caller.
+    _assert_module_owned_source(source)
+
+
+def test_should_reject_a_reintroduced_caller_supplied_source() -> None:
+    # Given a copied adapter whose CI entry point accepts a caller directory again.
+    source = MODULE.read_text().replace(
+        "async def ci(\n        self,\n",
+        "async def ci(\n        self,\n        source: dagger.Directory,\n",
+        1,
+    )
+    assert source != MODULE.read_text(), "mutation must apply"
+
+    # When the no-caller-source contract is applied.
+    # Then the reintroduced parameter is rejected.
+    with pytest.raises(AssertionError, match="caller-supplied source"):
+        _assert_no_caller_supplied_source(source)
 
 
 def test_should_expose_only_ci_and_security_with_the_closed_typed_boundary() -> None:
@@ -425,7 +524,7 @@ def test_should_filter_secret_prone_context_before_external_modules() -> None:
     source = MODULE.read_text()
     patterns = main.SOURCE_IGNORE_PATTERNS
 
-    assert "Annotated[dagger.Directory, Ignore(SOURCE_IGNORE_PATTERNS)]" in source
+    assert "workspace.directory('/', exclude=SOURCE_IGNORE_PATTERNS)" in ast.unparse(_tree(source))
     assert '".env"' in source
     assert '"**/.env"' in source
     assert patterns.index(".env.*") < patterns.index("!.env.example")
@@ -435,7 +534,7 @@ def test_should_filter_secret_prone_context_before_external_modules() -> None:
     method = next(item for item in _public_methods(adapter) if item.name == "security")
     security = ast.unparse(method)
     assert "await _guard(source" in release
-    assert "verified = await _release_source(source" in security
+    assert "verified = await _release_source(self.source" in security
     assert "_dependency_audit(verified" in security
     assert "_node(verified)" in security
 
@@ -758,7 +857,8 @@ def _assert_shared_build_contract(module: ModuleType, monkeypatch: pytest.Monkey
 def test_should_reject_missing_exact_source_resolution() -> None:
     # Given a copied adapter that bypasses canonical source resolution.
     source = MODULE.read_text().replace(
-        "verified = await _release_source(source, commit_sha, git_auth_header)", "verified = source"
+        "verified = await _release_source(self.source, commit_sha, git_auth_header)",
+        "verified = self.source",
     )
 
     # When the sole permitted call-graph boundary is checked.
@@ -853,7 +953,7 @@ def test_should_orchestrate_ci_with_plain_async_collaborators(
     monkeypatch.setattr(main, "_artifact_manifest", manifest, raising=False)
 
     # When public CI is awaited.
-    result = asyncio.run(main.AgenticSaga().ci(source, "a" * 40, auth_header))
+    result = asyncio.run(_saga(source).ci("a" * 40, auth_header))
 
     # Then the resolved source flows into both later orchestration phases.
     assert result == f"Agentic Saga canonical Dagger gate passed\nSHA256SUMS\n{VALID_MANIFEST}"
@@ -877,7 +977,7 @@ def test_should_propagate_security_audit_failure_before_frontend_work(
     # When the public security entry point is awaited.
     # Then its dependency-audit failure remains visible without starting a Dagger container.
     with pytest.raises(RuntimeError, match="locked audit failed"):
-        asyncio.run(main.AgenticSaga().security(dag.directory(), "a" * 40, object()))
+        asyncio.run(_saga(dag.directory()).security("a" * 40, object()))
 
 
 def test_should_create_shared_outputs_from_real_lazy_dagger_containers(
