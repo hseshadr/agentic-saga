@@ -76,7 +76,11 @@ AUTH_PREDICATE = (
     "github.event.pull_request.head.repo.full_name == github.repository) && "
     "secrets.DAGGER_GIT_HTTP_AUTH_HEADER != ''"
 )
-SAFE_AUTH_ARGUMENT_EXPRESSION = f"${{{{ {AUTH_PREDICATE} && '{AUTH_ARGUMENT}' || '' }}}}"
+# Inverted contract (was: args carried `${{ <predicate> && '<auth flag>' || '' }}`, pasting an
+# event expression into dagger-for-github's bash). The predicate now renders into the
+# USE_GIT_AUTH env var and args only test it, so no expression reaches the script.
+SAFE_AUTH_SWITCH_EXPRESSION = f"${{{{ {AUTH_PREDICATE} && 'true' || '' }}}}"
+SAFE_AUTH_ARGUMENT = f"${{USE_GIT_AUTH:+{AUTH_ARGUMENT}}}"
 SAFE_AUTH_ENV_EXPRESSION = (
     f"${{{{ {AUTH_PREDICATE} && secrets.DAGGER_GIT_HTTP_AUTH_HEADER || '' }}}}"
 )
@@ -289,7 +293,7 @@ def _assert_workflow_boundary(name: str, workflow: str) -> None:
         for step in steps
         if step.get("uses") == f"dagger/dagger-for-github@{DAGGER_ACTION_SHA}"
     ]
-    expected_args = f"{argument} --commit-sha=${{{{ github.sha }}}} {SAFE_AUTH_ARGUMENT_EXPRESSION}"
+    expected_args = f"{argument} --commit-sha=${{{{ github.sha }}}} {SAFE_AUTH_ARGUMENT}"
     arguments = [
         cast(dict[str, str], step["with"])["args"]
         for step in steps
@@ -297,7 +301,10 @@ def _assert_workflow_boundary(name: str, workflow: str) -> None:
     ]
     assert len(checkout) == 1
     assert len(dagger_steps) == 1
-    assert dagger_steps[0]["env"] == {"DAGGER_GIT_HTTP_AUTH_HEADER": SAFE_AUTH_ENV_EXPRESSION}
+    assert dagger_steps[0]["env"] == {
+        "DAGGER_GIT_HTTP_AUTH_HEADER": SAFE_AUTH_ENV_EXPRESSION,
+        "USE_GIT_AUTH": SAFE_AUTH_SWITCH_EXPRESSION,
+    }
     assert arguments == [expected_args], "workflow must contain one sole Dagger invocation"
     assert dagger_steps[0]["with"] == {"version": "0.21.8", "verb": "call", "args": expected_args}
 
