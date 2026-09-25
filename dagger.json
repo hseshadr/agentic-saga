@@ -13,13 +13,13 @@
   "dependencies": [
     {
       "name": "foundation",
-      "source": "github.com/hseshadr/ci/modules/portfolio-foundation@5cf3b7550442bb06d1cce1f146e48c064dcf511c",
-      "pin": "5cf3b7550442bb06d1cce1f146e48c064dcf511c"
+      "source": "github.com/hseshadr/ci/modules/portfolio-foundation@9d491851fc5c65ad4a388ed2dd7bb4def4e1f007",
+      "pin": "9d491851fc5c65ad4a388ed2dd7bb4def4e1f007"
     },
     {
       "name": "python-package",
-      "source": "github.com/hseshadr/ci/modules/python-package@5cf3b7550442bb06d1cce1f146e48c064dcf511c",
-      "pin": "5cf3b7550442bb06d1cce1f146e48c064dcf511c"
+      "source": "github.com/hseshadr/ci/modules/python-package@9d491851fc5c65ad4a388ed2dd7bb4def4e1f007",
+      "pin": "9d491851fc5c65ad4a388ed2dd7bb4def4e1f007"
     }
   ],
   "source": ".dagger"
