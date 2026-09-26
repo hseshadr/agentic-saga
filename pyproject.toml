@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "agentic-saga"
 dynamic = ["version"]
-description = "Helps Python developers let an AI agent run multi-step jobs like checkout, and safely undo finished steps if one fails."
+description = "A Python library that lets an AI agent run multi-step jobs like a checkout, and undoes finished steps if one fails."
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 license = "MIT"
@@ -91,6 +91,10 @@ include = [
   "/SECURITY.md",
   "/THIRD_PARTY_NOTICES.md",
   "/PROVENANCE.md",
+  "/docs/ARCHITECTURE.md",
+  "/docs/GETTING_STARTED.md",
+  "/docs/NORTHSTAR-REVIEW.md",
+  "/docs/adr",
   "/docs/agent-adapter.md",
   "/docs/architecture",
   "/docs/context-manifest.md",

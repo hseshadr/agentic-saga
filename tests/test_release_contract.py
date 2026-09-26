@@ -30,6 +30,9 @@ EXPECTED_TRACES = {
 }
 REQUIRED_SDIST_DOCUMENTS = {
     "CHANGELOG.md",
+    "README.md",
+    "docs/ARCHITECTURE.md",
+    "docs/GETTING_STARTED.md",
     "docs/architecture/runtime.architecture.json",
     "docs/architecture/index.html",
     "docs/flight-recorder.md",

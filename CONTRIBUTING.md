@@ -2,6 +2,8 @@
 
 ## Development setup
 
+New here? Start with [Getting started for developers](docs/GETTING_STARTED.md).
+
 Agentic Saga supports Python 3.12 and 3.13 on POSIX systems. Install the locked Python development
 toolchain:
 
